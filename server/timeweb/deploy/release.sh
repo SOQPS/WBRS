@@ -52,7 +52,7 @@ set +a
    && $CLRS_DOMAIN == *.* && $CLRS_DOMAIN != *..* ]] || die 'invalid staging domain'
 [[ -n ${CLRS_API_ENV_FILE:-} && $CLRS_API_ENV_FILE == /* ]] || die 'API env path must be absolute'
 [[ -n ${CLRS_DATABASE_CA_HOST_FILE:-} && $CLRS_DATABASE_CA_HOST_FILE == /* ]] \
-  || die 'PostgreSQL CA path must be absolute'
+  || die 'database CA path must be absolute'
 
 if [[ $action == rollback ]]; then
   [[ -f $state_dir/previous-image ]] || die 'no previous verified image recorded'
@@ -69,9 +69,9 @@ fi
 [[ -f $CLRS_API_ENV_FILE && -r $CLRS_API_ENV_FILE && ! -L $CLRS_API_ENV_FILE ]] \
   || die 'private API env file is unavailable'
 [[ -f $CLRS_DATABASE_CA_HOST_FILE && -r $CLRS_DATABASE_CA_HOST_FILE && ! -L $CLRS_DATABASE_CA_HOST_FILE ]] \
-  || die 'PostgreSQL CA file is unavailable'
+  || die 'database CA file is unavailable'
 ca_mode=$(file_mode "$CLRS_DATABASE_CA_HOST_FILE")
-(( (8#$ca_mode & 004) != 0 )) || die 'PostgreSQL CA file must be readable by the non-root API process'
+(( (8#$ca_mode & 004) != 0 )) || die 'database CA file must be readable by the non-root API process'
 api_mode=$(file_mode "$CLRS_API_ENV_FILE")
 api_owner=$(file_owner "$CLRS_API_ENV_FILE")
 [[ $api_owner == 0 ]] || die 'API env file must be owned by root'

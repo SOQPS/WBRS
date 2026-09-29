@@ -12,7 +12,7 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     volumes:
-      - ${CLRS_DATABASE_CA_HOST_FILE:?Use an absolute CA path outside the repository}:/run/secrets/postgres-ca.pem:ro
+      - ${CLRS_DATABASE_CA_HOST_FILE:?Use an absolute CA path outside the repository}:/run/secrets/database-ca.pem:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:

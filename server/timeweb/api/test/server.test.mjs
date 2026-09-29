@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createApp, createDatabaseProbe } from '../server.mjs';
 
@@ -29,6 +32,9 @@ test('only liveness and readiness are exposed', async () => {
   const hidden = await request(createApp({ checkDatabase: async () => true }), '/users');
   assert.equal(hidden.status, 404);
   assert.deepEqual(await hidden.json(), { status: 'not_found' });
+
+  const admin = await request(createApp({ checkDatabase: async () => true }), '/admin');
+  assert.equal(admin.status, 404);
 
   const method = await request(
     createApp({ checkDatabase: async () => true }),
@@ -85,4 +91,69 @@ test('an unsafe TLS mode never attempts a connection', async () => {
     ForbiddenClient,
   );
   assert.equal(await probe(), false);
+});
+
+test('MySQL readiness checks only clrs_staging with verified TLS and a bounded query', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'clrs-mysql-probe-'));
+  const caPath = join(directory, 'ca.pem');
+  writeFileSync(caPath, 'synthetic CA for injected test driver');
+  try {
+    let config;
+    let query;
+    let destroyed = false;
+    const connect = async (options) => {
+      config = options;
+      return {
+        async query(value) {
+          query = value;
+          return [[{ '1': 1 }], []];
+        },
+        destroy() { destroyed = true; },
+      };
+    };
+    const probe = createDatabaseProbe(
+      {
+        DATABASE_URL: 'mysql://tester:example@db.example.test/clrs_staging?sslmode=verify-full',
+        DATABASE_CA_FILE: caPath,
+      },
+      undefined,
+      connect,
+    );
+    assert.equal(await probe(), true);
+    assert.equal(config.database, 'clrs_staging');
+    assert.equal(config.port, 3306);
+    assert.equal(config.ssl.rejectUnauthorized, true);
+    assert.equal(config.ssl.verifyIdentity, true);
+    assert.equal(config.ssl.ca, 'synthetic CA for injected test driver');
+    assert.equal(config.connectTimeout <= 2000, true);
+    assert.deepEqual(query, { sql: 'SELECT 1', timeout: 2000 });
+    assert.equal(destroyed, true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('MySQL probe refuses missing CA, unsafe TLS and a different or implicit database', async () => {
+  let connectionAttempts = 0;
+  const connect = async () => { connectionAttempts += 1; };
+  const directory = mkdtempSync(join(tmpdir(), 'clrs-mysql-probe-'));
+  const caPath = join(directory, 'ca.pem');
+  writeFileSync(caPath, 'synthetic CA for injected test driver');
+  try {
+    for (const [url, ca] of [
+      ['mysql://tester:example@db.example.test/clrs_staging', undefined],
+      ['mysql://tester:example@db.example.test/clrs_staging?sslmode=disable', caPath],
+      ['mysql://tester:example@db.example.test/default_db', caPath],
+      ['mysql://tester:example@db.example.test/', caPath],
+      ['mysql://tester:example@127.0.0.1/clrs_staging', caPath],
+    ]) {
+      const probe = createDatabaseProbe(
+        { DATABASE_URL: url, DATABASE_CA_FILE: ca }, undefined, connect,
+      );
+      assert.equal(await probe(), false);
+    }
+    assert.equal(connectionAttempts, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
