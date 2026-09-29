@@ -1,0 +1,294 @@
+{
+  "version": "1.0.25+39",
+  "checkedAtUtc": "2026-09-28T20:54:24.436410+00:00",
+  "apkBinding": {
+    "package": "com.lrs.sandbox",
+    "versionName": "1.0.25",
+    "versionCode": 39,
+    "apkPath": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/CLRS-1.0.25-39-QA.apk",
+    "sha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+    "installedBaseSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+    "verifiedAt": "2026-09-28T20:24:43.250967+00:00",
+    "environment": "demo-clrs-local",
+    "productionProof": false,
+    "viewportDp": [
+      360,
+      640
+    ],
+    "wmSize": "Physical size: 1080x2280\nOverride size: 720x1280",
+    "wmDensity": "Physical density: 440\nOverride density: 320"
+  },
+  "productionBackendVerified": false,
+  "appDataClearedBetweenAccounts": false,
+  "environment": {
+    "project": "demo-clrs-local",
+    "viewportDp": [
+      360,
+      640
+    ],
+    "fictionalAccountsOnly": true,
+    "cloudWrites": 0,
+    "dartChangedAfterBuild": false
+  },
+  "geoOnlySave": {
+    "passed": true,
+    "legacyBefore": {
+      "about": "Я",
+      "hobbi": "Книги",
+      "country": null,
+      "region": null
+    },
+    "saved": {
+      "country": "Армения",
+      "countryCode": "AM",
+      "region": "Erevan",
+      "city": "Erevan",
+      "languageGroup": "ru",
+      "countrySegment": "T-4"
+    },
+    "draftKeptInEditor": "Geo draft A125",
+    "editorRemainedOpen": true,
+    "protectedFieldsUnchanged": true,
+    "protectedFields": [
+      "about",
+      "hobbi",
+      "rost",
+      "balance",
+      "profilePic",
+      "fullName",
+      "age",
+      "deti"
+    ],
+    "backendAboutStill": "Я",
+    "expectedPresenceChange": {
+      "online": true
+    },
+    "evidence": [
+      "screenshots/geo_draft_before_save.png",
+      "screenshots/geo_draft_after_save.png",
+      "after_geo_save.json"
+    ]
+  },
+  "friends": {
+    "passed": true,
+    "nickName": "Maple125",
+    "differentLegacyFullName": "Wrong Legal B125",
+    "legacyFallback": "Legacy Friend125",
+    "search": "Maple",
+    "searchVisibleOnlyNickname": true,
+    "evidence": [
+      "screenshots/friends_nick_and_legacy.png",
+      "screenshots/friends_search_nickname.png"
+    ]
+  },
+  "reactions": {
+    "passed": true,
+    "postLikeCount": 1,
+    "commentLikeCount": 1,
+    "postLikeDocumentCount": 1,
+    "commentLikeDocumentCount": 1,
+    "confirmedOwnerUid": "6ORJMqOVmswc3PXKhus8WEmJOFSU",
+    "uiReleased": true,
+    "evidence": [
+      "screenshots/post_reaction_confirmed.png",
+      "screenshots/comment_reaction_confirmed.png",
+      "after_reactions.json"
+    ],
+    "hangingNetworkScenarios": "Already covered by targeted tests, not repeated on Android"
+  },
+  "translation": {
+    "enToRu": {
+      "passed": true,
+      "original": "We are walking by the river this evening.",
+      "result": "Мы гуляем по реке этим вечером."
+    },
+    "ruToEn": {
+      "passed": true,
+      "original": "Сегодня вечером мы гуляем у реки.",
+      "result": "Tonight we walk by the river."
+    },
+    "showOriginalPassed": true,
+    "provider": "Google ML Kit on Android",
+    "liveServerApiVerified": false,
+    "remoteFallbackEnabled": false,
+    "serbian": {
+      "expectedLimitationConfirmed": true,
+      "translated": false,
+      "originalRetained": true,
+      "displayedError": "Prevod za ovaj jezik nije dostupan."
+    },
+    "evidence": [
+      "screenshots/translation_en_to_ru.png",
+      "screenshots/translation_original_restored.png",
+      "screenshots/translation_ru_to_en.png",
+      "screenshots/translation_sr_explicit_unsupported.png"
+    ]
+  },
+  "accountSwitch": {
+    "status": "passed_with_local_environment_recovery",
+    "aLogoutPassed": true,
+    "bLoginConfirmed": true,
+    "appDataCleared": false,
+    "authIdentityUidsRetained": true,
+    "authRecovery": "auth_recovery.json",
+    "firestoreReseeded": false,
+    "bUid": "odxLRoyYFlYK2eoDplWHR5JjqayW",
+    "bName": "Feature B125",
+    "bAge": 36,
+    "bGroup": "синяя",
+    "bRegion": "Москва",
+    "bHeight": "184",
+    "bBalance": 15,
+    "bAbout": "Distinct fictional B125 profile.",
+    "bInterests": "Fictional B125 walking and music.",
+    "bPhotoCount": 3,
+    "bFriendsVisible": [
+      "Oak125"
+    ],
+    "aOwnProfileOrFriendListAbsent": true,
+    "firstScreen": "Common People/search screen, then own B profile",
+    "publicACardInSearchExpected": true,
+    "allVideoFramesAudited": false,
+    "productionAccountSwitchVerified": false,
+    "initialRetryFailure": "Local Auth9099 and Storage9199 had stopped; password matched; recovered only synthetic Auth identities",
+    "evidence": [
+      "screenshots/a_logout_login_page.png",
+      "screenshots/b_first_home.png",
+      "screenshots/b_own_profile.png",
+      "screenshots/b_own_facts.png",
+      "screenshots/b_own_friends.png",
+      "after_b_login.json",
+      "auth_recovery.json",
+      "account_switch.json"
+    ]
+  },
+  "screenshots": {
+    "a_logout_login_page": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/a_logout_login_page.png",
+      "screenSha256": "f7fe5360de589bf33e9990b9ee5b0323e91b9ca117d1b6f61e42b1e0eacac223",
+      "capturedAt": "2026-09-28T20:47:24.470788+00:00"
+    },
+    "a_profile_before": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/a_profile_before.png",
+      "screenSha256": "4af4ec3365931de30e01fe05b829b724eb8b56111bf762369590ef2c353d2cbd",
+      "capturedAt": "2026-09-28T20:32:36.248441+00:00"
+    },
+    "b_first_home": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/b_first_home.png",
+      "screenSha256": "5bc3eb85e10a8d5d918bee0abca1c9067ee6e13c753551a232310f397030967a",
+      "capturedAt": "2026-09-28T20:59:46.636979+00:00"
+    },
+    "b_login_keyboard_attempt": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/b_login_keyboard_attempt.png",
+      "screenSha256": "d4b7ef19ecb5aa4be8d986eae69d1a5a5072156548fdc7cffa23858b8e2e6d3c",
+      "capturedAt": "2026-09-28T20:49:40.840113+00:00",
+      "status": "login_not_yet_confirmed"
+    },
+    "b_own_facts": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/b_own_facts.png",
+      "screenSha256": "6ddfd4de6063edd2c7b9363605be195e95c52eb68327e7d63b9d44bbe6b6db7e",
+      "capturedAt": "2026-09-28T21:00:56.670382+00:00"
+    },
+    "b_own_friends": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/b_own_friends.png",
+      "screenSha256": "d74d8d0b5cf373f4283ba8424048f01ad4a26ee13da56d13b03f053760f3eb2b",
+      "capturedAt": "2026-09-28T21:01:19.455329+00:00"
+    },
+    "b_own_profile": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/b_own_profile.png",
+      "screenSha256": "592846d7de5e2ee683f171761ccf4c752437809be9949dac2e2bb44e375275a9",
+      "capturedAt": "2026-09-28T20:59:54.513238+00:00"
+    },
+    "comment_reaction_confirmed": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/comment_reaction_confirmed.png",
+      "screenSha256": "5562b01460a29768ce9a4bdee5264de24c6ef46b20a7ae22ddd3c391cb79ba78",
+      "capturedAt": "2026-09-28T20:39:18.836899+00:00"
+    },
+    "friends_nick_and_legacy": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/friends_nick_and_legacy.png",
+      "screenSha256": "9e1ec6913d08b0b421aba328a2878074911efb2be14d8eb25ee8c4884300acf4",
+      "capturedAt": "2026-09-28T20:36:47.182803+00:00"
+    },
+    "friends_search_nickname": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/friends_search_nickname.png",
+      "screenSha256": "4f9f8fe7392e41be25bfb2b707edcacc7a12c41aaaf595452499789b1d210f69",
+      "capturedAt": "2026-09-28T20:37:30.138598+00:00"
+    },
+    "geo_draft_after_save": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/geo_draft_after_save.png",
+      "screenSha256": "73960003c532e93b1506e2d50f26a541715cd934b3a3e03fde6b0e41289dd471",
+      "capturedAt": "2026-09-28T20:35:49.479487+00:00"
+    },
+    "geo_draft_before_save": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/geo_draft_before_save.png",
+      "screenSha256": "cce68718b8da721210f903f990426ddbe1277f57cb8aa836c8df67a0f86900bc",
+      "capturedAt": "2026-09-28T20:34:47.674175+00:00"
+    },
+    "post_reaction_confirmed": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/post_reaction_confirmed.png",
+      "screenSha256": "e1cda4807a5f07693fff8b35d5f6b546d3f0a87bafcda776e5584de0d0fc62d9",
+      "capturedAt": "2026-09-28T20:38:45.011368+00:00"
+    },
+    "translation_en_to_ru": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/translation_en_to_ru.png",
+      "screenSha256": "53b48f2d8fb9ae30aede89ae689e2af4cd4787e5a58ed18551a996c8631d4452",
+      "capturedAt": "2026-09-28T20:40:23.573916+00:00"
+    },
+    "translation_original_restored": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/translation_original_restored.png",
+      "screenSha256": "2777b6f1e178222a248bfde7ceda91bd3494873366b52e4550dd484c74229f6a",
+      "capturedAt": "2026-09-28T20:40:46.817065+00:00"
+    },
+    "translation_ru_to_en": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/translation_ru_to_en.png",
+      "screenSha256": "8cd208bda5be393a4cab253d550e1051b8c46e3db278a464c325c8f4c94331a6",
+      "capturedAt": "2026-09-28T20:42:59.567094+00:00"
+    },
+    "translation_sr_explicit_unsupported": {
+      "apkSha256": "9887f941cedcbd15e9cac22d068321b963f11abb753f20d0c399cfe10ad8ad3e",
+      "version": "1.0.25+39",
+      "screen": "/Users/anaakovleva/Documents/Codex/2026-09-21/ds/artifacts/clrs_feature_completion_2026-09-28/android/screenshots/translation_sr_explicit_unsupported.png",
+      "screenSha256": "94fe22b67d80b4aac985c0893215f32095ee2feb384aff9a04cafd162ee31afc",
+      "capturedAt": "2026-09-28T20:45:40.428659+00:00"
+    }
+  },
+  "status": "agreed_narrow_native_scenarios_passed",
+  "finishedAtUtc": "2026-09-28T21:02:29.423329+00:00",
+  "limits": [
+    "Local demo proof only, not production Auth/rules/push/privacy.",
+    "Real Serbian translation still unsupported; no server provider call.",
+    "Video retained but frame-by-frame transient UI absence not asserted."
+  ]
+}

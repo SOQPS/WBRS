@@ -1,0 +1,24 @@
+{
+  "name": "clrs-translation-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/handler.js && node --check src/quota.js && node --check src/cache.js && node --check src/provider.js && node --check src/serbian_latin.js && node --check src/push.js && node --check src/push_functions.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-translate": "3.1140.0",
+    "firebase-admin": "14.4.0",
+    "firebase-functions": "7.4.0"
+  },
+  "overrides": {
+    "gaxios": {
+      "uuid": "11.1.1"
+    }
+  }
+}

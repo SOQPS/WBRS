@@ -1,2 +1,0 @@
-/Users/denisdmitriev/StudioProjects/LRS/android/app/.cxx/RelWithDebInfo/6m6do712/armeabi-v7a/CMakeFiles/edit_cache.dir
-/Users/denisdmitriev/StudioProjects/LRS/android/app/.cxx/RelWithDebInfo/6m6do712/armeabi-v7a/CMakeFiles/rebuild_cache.dir

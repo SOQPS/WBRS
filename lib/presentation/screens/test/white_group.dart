@@ -1,6 +1,9 @@
 // ignore_for_file: non_constant_identifier_names
 
 import 'package:flutter/material.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
 
@@ -64,123 +67,74 @@ class _WhitePageState extends State<WhitePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          decoration: const BoxDecoration(boxShadow: [
-            BoxShadow(
-              color: Colors.green,
-            )
-          ]),
-          child: Image.asset(
-            'assets/fon.jpg',
-            height: MediaQuery.of(context).size.height,
-            width: MediaQuery.of(context).size.width,
-            fit: BoxFit.cover,
-            scale: 0.6,
-          ),
-        ),
-        Scaffold(
-            backgroundColor: Colors.transparent,
-            appBar: AppBar(
-              iconTheme: const IconThemeData(color: Colors.white),
-              backgroundColor: Colors.transparent,
-              title: const Text(
-                'Ответьте на вопросы',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-            body: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
-                  child: Column(
-                    children: [
-                      SizedBox(
-                        child: ListView.builder(
-                            physics: const NeverScrollableScrollPhysics(),
-                            shrinkWrap: true,
-                            itemCount: colors.length,
-                            itemBuilder: (_, int index) {
-                              return QuestionBuilder(index);
-                            }),
-                      ),
-                      const SizedBox(
-                        height: 30,
-                      ),
-                      ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              whiteGroup = counter;
-                            });
-                            nextScreenReplace(context, const OrangePage());
-                          },
-                          child: const Text('Дальше'))
-                    ],
-                  ),
-                ))),
-      ],
-    );
-  }
-
-  QuestionBuilder(int index) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            SizedBox(
-                width: MediaQuery.of(context).size.width * 0.5,
-                child: Text(questions[index],
-                    style: const TextStyle(color: Colors.white))),
-            SizedBox(
-              width: MediaQuery.of(context).size.width * 0.35,
-              child: Row(
+    return ClrsScaffold(
+        backgroundAsset: 'assets/final_design/family_back.png',
+        appBar: AppBar(
+            title: Text(context.tr('Ответьте на вопросы'),
+                maxLines: 2, style: const TextStyle(fontSize: 18)),
+            toolbarHeight:
+                MediaQuery.textScalerOf(context).scale(18) > 25 ? 96 : 72),
+        body: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+              child: Column(
                 children: [
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        colors[index] = Colors.green;
-                        counter++;
-                      });
-                    },
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: colors[index] == Colors.red
-                            ? Colors.grey
-                            : colors[index]),
-                    child: const Text(
-                      '+',
-                      style: TextStyle(fontSize: 25),
-                    ),
+                  SizedBox(
+                    child: ListView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        shrinkWrap: true,
+                        itemCount: colors.length,
+                        itemBuilder: (_, int index) {
+                          return _questionBuilder(index);
+                        }),
                   ),
                   const SizedBox(
-                    width: 5,
+                    height: 30,
                   ),
                   ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        colors[index] = Colors.red;
-                      });
-                    },
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: colors[index] == Colors.green
-                            ? Colors.grey
-                            : colors[index]),
-                    child: const Text(
-                      '-',
-                      style: TextStyle(fontSize: 25),
-                    ),
-                  ),
+                      onPressed: () {
+                        setState(() {
+                          whiteGroup = counter;
+                        });
+                        nextScreenReplace(context, const OrangePage());
+                      },
+                      child: Text(context.tr('Дальше')))
                 ],
               ),
-            ),
-          ],
-        ),
-        const SizedBox(
-          height: 10,
-        )
-      ],
-    );
+            )));
   }
+
+  Widget _questionBuilder(int index) => Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: ClrsPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(children: [
+            Expanded(
+                child: Text(context.tr(questions[index]),
+                    style:
+                        const TextStyle(color: LrsTheme.text, fontSize: 14))),
+            const SizedBox(width: 8),
+            IconButton(
+                tooltip: context.tr('Да'),
+                onPressed: () => setState(() {
+                      colors[index] = LrsTheme.peach;
+                      counter++;
+                    }),
+                style: IconButton.styleFrom(
+                    backgroundColor: colors[index] == LrsTheme.peach
+                        ? LrsTheme.peach
+                        : Colors.black26),
+                icon: const Icon(Icons.add)),
+            IconButton(
+                tooltip: context.tr('Нет'),
+                onPressed: () => setState(() {
+                      colors[index] = Colors.red;
+                    }),
+                style: IconButton.styleFrom(
+                    backgroundColor: colors[index] == Colors.red
+                        ? Colors.red
+                        : Colors.black26),
+                icon: const Icon(Icons.remove)),
+          ])));
 }

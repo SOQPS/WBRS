@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="CLRS Local Test"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:label">
+        <meta-data android:name="firebase_crashlytics_collection_enabled"
+            android:value="false" tools:replace="android:value" />
+        <meta-data android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+    </application>
+</manifest>

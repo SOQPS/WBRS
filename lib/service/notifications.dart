@@ -1,138 +1,60 @@
-// ignore_for_file: empty_catches, avoid_print
-
+import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:googleapis_auth/auth_io.dart';
-import 'package:flutter/services.dart' as s;
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:wbrs/service/app_backend.dart';
 
+/// FCM admin credentials belong exclusively on a trusted server.
 class NotificationsService {
-  void sendPushMessage(
-      String token, Map body, String title, unreadMsgCount, chatRoomId) async {
-    try {
-      var resp = await getAccessToken();
-      var res = await http.post(
-          Uri.parse(
-              'https://fcm.googleapis.com/v1/projects/chatapp-4e347/messages:send'),
-          headers: <String, String>{
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $resp'
-          },
-          body: jsonEncode(<String, dynamic>{
-            'message': <String, dynamic>{
-              'token': token,
-              'data': <String, dynamic>{
-                'android_channel_id': 'wbrs',
-                'click_action': 'FLUTTER_NOTIFICATION_CLICK',
-                'status': 'done',
-                'icon': '@mipmap/ic_launcher',
-                'sound': 'default',
-                'payload': jsonEncode(body),
-                'unreadMsgCount': unreadMsgCount.toString(),
-              },
-              'notification': <String, dynamic>{
-                'title': title,
-                'body': body['message'],
-              },
-            }
-          }));
+  static const _endpoint = String.fromEnvironment('CLRS_PUSH_ENDPOINT');
+  Future<void> sendPushMessage(String token, Map body, String title,
+          dynamic unreadMsgCount, dynamic chatRoomId) =>
+      _enqueue(body, chatRoomId.toString(), 'chat');
+  Future<void> sendPushMessageGroup(String token, Map body, String title,
+          dynamic unreadMsgCount, dynamic groupRoomId) =>
+      _enqueue(body, groupRoomId.toString(), 'group');
 
-      if (res.statusCode == 200) {
-        debugPrint('Уведомление успешно отправлено');
-      } else {
-        FirebaseCrashlytics.instance.recordError(
-          'FCM notification failed',
-          StackTrace.current,
-          reason: 'Ошибка API FCM',
-          information: ['код_статуса: ${res.statusCode}', 'ответ: ${res.body}'],
-        );
-        debugPrint('Ошибка при отправке уведомления: ${res.statusCode}');
-        debugPrint(res.body);
-      }
-    } catch (e) {
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        StackTrace.current,
-        reason: 'Ошибка отправки push-уведомления',
-        information: ['токен: $token', 'id_чата: $chatRoomId'],
-      );
-      debugPrint(e.toString());
-    }
+  Future<void> _enqueue(Map body, String entityId, String kind) {
+    // The message is already committed. Its server trigger owns delivery;
+    // this optional, deduplicated hint must not hold the chat composer open.
+    unawaited(_send(body, entityId, kind));
+    return Future<void>.value();
   }
 
-  void sendPushMessageGroup(
-      String token, Map body, String title, unreadMsgCount, groupRoomId) async {
+  Future<void> _send(Map body, String entityId, String kind) async {
+    if (AppBackend.useEmulators || _endpoint.isEmpty) return;
+    final messageId = body['messageId'];
+    if (messageId is! String || messageId.isEmpty) return;
+    final uri = Uri.tryParse(_endpoint);
+    if (uri == null || uri.scheme != 'https') return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
     try {
-      var resp = await getAccessToken();
-      var res = await http.post(
-          Uri.parse(
-              'https://fcm.googleapis.com/v1/projects/chatapp-4e347/messages:send'),
-          headers: <String, String>{
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $resp'
-          },
-          body: jsonEncode(<String, dynamic>{
-            'message': <String, dynamic>{
-              'token': token,
-              'data': <String, dynamic>{
-                'android_channel_id': 'wbrs',
-                'click_action': 'FLUTTER_NOTIFICATION_CLICK',
-                'status': 'done',
-                'icon': '@mipmap/ic_launcher',
-                'sound': 'default',
-                'priority': 'high',
-                'time_to_live': '86400',
-                'payload': jsonEncode(body),
-              },
-              'notification': <String, dynamic>{
-                'title': title,
-                'body': body['message'],
-              },
-            }
-          }));
-      if (res.statusCode == 200) {
-        debugPrint('Уведомление успешно отправлено');
-      } else {
-        FirebaseCrashlytics.instance.recordError(
-          'FCM group notification failed',
-          StackTrace.current,
-          reason: 'Ошибка API FCM для группы',
-          information: ['код_статуса: ${res.statusCode}', 'ответ: ${res.body}'],
-        );
-        debugPrint('Ошибка при отправке уведомления: ${res.statusCode}');
-        debugPrint(res.body);
+      final idToken =
+          await user.getIdToken().timeout(const Duration(seconds: 5));
+      if (idToken == null || FirebaseAuth.instance.currentUser?.uid != user.uid) {
+        return;
       }
-    } catch (e) {
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        StackTrace.current,
-        reason: 'Ошибка отправки группового push-уведомления',
-        information: ['токен: $token', 'id_группы: $groupRoomId'],
-      );
-      debugPrint(e.toString());
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json'
+            },
+            body: jsonEncode({
+              'kind': kind,
+              'entityId': entityId,
+              'messageId': messageId
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('CLRS: push request failed (${response.statusCode}).');
+      }
+    } catch (_) {
+      debugPrint('CLRS: push server unavailable.');
     }
-  }
-}
-
-const List<String> _scopes = [
-  'https://www.googleapis.com/auth/firebase.messaging',
-];
-
-Future getAccessToken() async {
-  try {
-    final serviceAccountJson =
-        json.decode(await s.rootBundle.loadString('assets/credentials.json'));
-    final credentials = ServiceAccountCredentials.fromJson(serviceAccountJson);
-    final client = await clientViaServiceAccount(credentials, _scopes);
-
-    return client.credentials.accessToken.data;
-  } catch (e) {
-    FirebaseCrashlytics.instance.recordError(
-      e,
-      StackTrace.current,
-      reason: 'Ошибка получения токена доступа',
-    );
-    rethrow;
   }
 }

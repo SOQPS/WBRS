@@ -1,424 +1,497 @@
-// ignore_for_file: use_build_context_synchronously
-
-import 'dart:convert';
-import 'dart:developer';
-import 'dart:io';
+import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
-import 'package:mysql1/mysql1.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sizer/sizer.dart';
-import 'package:wbrs/app/helper/helper_function.dart';
-import 'package:wbrs/presentation/screens/auth/login_screen/login_page.dart';
-import 'package:wbrs/presentation/screens/home/home_page.dart';
-import 'package:wbrs/presentation/screens/profile/profile_page.dart';
-import 'package:wbrs/presentation/screens/test/red_group.dart';
-import 'package:wbrs/shared/constants.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/material.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:wbrs/app/widgets/splash.dart';
-import 'package:wbrs/app/widgets/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:sizer/sizer.dart';
+import 'package:wbrs/app/helper/global.dart';
+import 'package:wbrs/firebase_options.dart';
+import 'package:wbrs/presentation/screens/auth/session_gate.dart';
+import 'package:wbrs/presentation/screens/chat_screen/chatscreen.dart';
+import 'package:wbrs/presentation/screens/list_of_meets/show/about_meet.dart';
+import 'package:wbrs/presentation/screens/notifications_center/notification_destination_page.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/service/app_backend.dart';
+import 'package:wbrs/service/session_service.dart';
+import 'package:wbrs/service/content_translation_service.dart';
+import 'package:wbrs/service/push_target.dart';
+import 'package:wbrs/service/push_language_sync.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/localization/locale_controller.dart';
+import 'package:wbrs/core/utils/account_destination.dart';
 
-import 'presentation/screens/list_of_meets/show/about_meet.dart';
-import 'presentation/screens/chat_screen/chatscreen.dart';
-import 'firebase_options.dart';
-import 'app/helper/global.dart';
+final _navigatorKey = GlobalKey<NavigatorState>();
+final _localNotifications = FlutterLocalNotificationsPlugin();
+void Function(String)? _localTapHandler;
+String? _initialLocalPayload;
 
+@pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  log('Handling a background message ${message.messageId}');
+  if (AppBackend.useEmulators) return;
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 }
 
-listenNotify(context) async {
-  const AndroidInitializationSettings('@mipmap/ic_launcher');
-  const DarwinInitializationSettings();
-
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-    late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-        FlutterLocalNotificationsPlugin();
-    BigTextStyleInformation bigTextStyleInformation = BigTextStyleInformation(
-      message.notification!.body.toString(),
-      htmlFormatBigText: true,
-      contentTitle: message.notification!.title.toString(),
-      htmlFormatContentTitle: true,
-    );
-
-    AndroidNotificationDetails androidNotificationDetails =
-        AndroidNotificationDetails(
-          'wbrs',
-          'wbrs',
-          importance: Importance.max,
-          styleInformation: bigTextStyleInformation,
-          priority: Priority.max,
-          playSound: true,
-        );
-
-    NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidNotificationDetails,
-    );
-
-    try {
-      await flutterLocalNotificationsPlugin.show(
-        0,
-        message.notification?.title,
-        message.notification?.body,
-        platformChannelSpecifics,
-        payload: message.notification!.body,
-      );
-    } on Exception catch (e) {
-      showSnackbar(context, Colors.red, e);
-    }
-  });
-
-  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
-    Map body = jsonDecode(message.data['payload']);
-    if (body['isChat'] == true) {
-      nextScreenReplace(
-        context,
-        ChatScreen(
-          chatWithUsername: body['chatWith'],
-          photoUrl: body['photoUrl'],
-          id: body['id'],
-          chatId: body['chatId'],
-        ),
-      );
-    } else {
-      body['users'] = body['users']
-          .toString()
-          .replaceAll('[', '')
-          .replaceAll(']', '');
-      List users = body['users'].toString().split(',');
-      nextScreenReplace(
-        context,
-        AboutMeet(
-          id: body['groupId'],
-          users: users,
-          name: body['groupName'],
-          is_user_join: body['isUserJoin'].toString() == 'true',
-        ),
-      );
-    }
-  });
-}
-
-migrate() {
-  firebaseFirestore.collection('users').get().then((value) {
-    for (var element in value.docs) {
-      firebaseFirestore.collection('users').doc(element.id).update({
-        'chatWithId': '',
-      });
-    }
-  });
-}
-
-void main() async {
-  late final FirebaseApp app;
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const _Startup());
+}
 
-  app = await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+class _Startup extends StatefulWidget {
+  const _Startup();
+  @override
+  State<_Startup> createState() => _StartupState();
+}
 
-  FlutterError.onError = (details) {
-    FirebaseCrashlytics.instance.recordError(
-      details.exceptionAsString(),
-      details.stack,
-      fatal: true,
-    );
-  };
-  FirebaseAuth.instanceFor(app: app);
-  await SharedPreferences.getInstance();
-  await FirebaseMessaging.instance.getInitialMessage();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-    alert: true, // Required to display a heads up notification
-    badge: true,
-    sound: true,
-  );
-  FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-  const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  const DarwinInitializationSettings initializationSettingsIOS =
-      DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
+class _StartupState extends State<_Startup> {
+  late Future<void> _ready = _initializeForUi();
+  Future<void> _initializeForUi() {
+    final ready = _initialize();
+    // A retry can fail before the next frame subscribes FutureBuilder. Keep
+    // that failure handled immediately; FutureBuilder still displays it.
+    ready.ignore();
+    return ready;
+  }
+
+  Future<void> _initialize() async {
+    if (!LocaleController.instance.initialized) {
+      await LocaleController.instance.initialize();
+    }
+    await AppBackend.initialize().timeout(const Duration(seconds: 20));
+    FlutterError.onError = AppBackend.useEmulators
+        ? FlutterError.presentError
+        : FirebaseCrashlytics.instance.recordFlutterFatalError;
+    if (!AppBackend.useEmulators) {
+      FirebaseMessaging.onBackgroundMessage(
+          _firebaseMessagingBackgroundHandler);
+    }
+    try {
+      await _localNotifications.initialize(
+          const InitializationSettings(
+            android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+            iOS: DarwinInitializationSettings(),
+          ), onDidReceiveNotificationResponse: (response) {
+        final payload = response.payload;
+        if (payload == null) return;
+        if (_localTapHandler != null) {
+          _localTapHandler!(payload);
+        } else {
+          _initialLocalPayload = payload;
+        }
+      }).timeout(const Duration(seconds: 10));
+      final launch =
+          await _localNotifications.getNotificationAppLaunchDetails();
+      if (launch?.didNotificationLaunchApp == true)
+        _initialLocalPayload = launch?.notificationResponse?.payload;
+    } catch (_) {
+      debugPrint('CLRS: local notifications unavailable.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: LocaleController.instance,
+        builder: (context, _) => FutureBuilder<void>(
+            future: _ready,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.done &&
+                  !snapshot.hasError) {
+                return const MyApp();
+              }
+              return MaterialApp(
+                debugShowCheckedModeBanner: false,
+                theme: LrsTheme.theme,
+                locale: LocaleController.instance.locale,
+                supportedLocales: ClrsLocalizations.supportedLocales,
+                localizationsDelegates: ClrsLocalizations.delegates,
+                localeResolutionCallback: ClrsLocalizations.resolveLocale,
+                home: Builder(
+                    builder: (context) => ClrsScaffold(
+                          body: SafeArea(
+                              child: Center(
+                                  child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const ClrsBrandHeader(centered: true),
+                                  if (snapshot.hasError)
+                                    ClrsPanel(
+                                        child: Column(children: [
+                                      Text(
+                                          context.tr(
+                                              'Не удалось запустить CLRS. Проверьте подключение и повторите попытку.'),
+                                          textAlign: TextAlign.center),
+                                      const SizedBox(height: 20),
+                                      ElevatedButton(
+                                          onPressed: () => setState(() {
+                                                _ready = _initializeForUi();
+                                              }),
+                                          child: Text(context.tr('Повторить'))),
+                                    ]))
+                                  else
+                                    const CircularProgressIndicator(),
+                                ]),
+                          ))),
+                        )),
+              );
+            }),
       );
-  const InitializationSettings initializationSettings = InitializationSettings(
-    android: initializationSettingsAndroid,
-    iOS: initializationSettingsIOS,
-  );
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
-  runApp(const MyApp());
 }
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
-
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
-  bool _isSignedIn = false;
-  bool _isRegistrationEnd = false;
-  bool _loading = true;
-  bool _hasInternet = true;
-
-  FirebaseMessaging firebaseMessaging = FirebaseMessaging.instance;
-
-  late AndroidNotificationChannel channel;
-  FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  // ignore: prefer_typing_uninitialized_variables
-  var doc;
-
-  updateUserStatus(value) async {
-    if (!_isRegistrationEnd) return;
-    try {
-      await firebaseFirestore
-          .collection('users')
-          .doc(firebaseAuth.currentUser!.uid)
-          .update({'online': value});
-      if (!value) {
-        await firebaseFirestore
-            .collection('users')
-            .doc(firebaseAuth.currentUser!.uid)
-            .update({'lastOnlineTS': DateTime.now()});
-      }
-    } catch (e) {
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        StackTrace.current,
-        reason: 'Ошибка обновления статуса пользователя',
-        information: ['статус: $value'],
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    //WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) {
-      updateUserStatus(false);
-    } else {
-      updateUserStatus(true);
-    }
-  }
-
-  initFunction() async {
-    //await checkInternet();
-    selectedIndex = 1;
-    await getUserLoggedInStatus();
-    if (_isSignedIn) {
-      updateUserStatus(true);
-      getUserInfo();
-      getUserRegistrationStatus();
-    }
-    firebaseMessaging.requestPermission();
-  }
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+  late final PushLanguageSync _pushLanguageSync;
+  String? _translationUserId;
 
   @override
   void initState() {
     super.initState();
-    initFunction();
-    listenNotify(context);
+    _pushLanguageSync = PushLanguageSync(
+      firestore: firebaseFirestore,
+      currentUid: () => firebaseAuth.currentUser?.uid,
+      readyUid: () => SessionService.readyUserId.value,
+      isMounted: () => mounted,
+    );
+    _translationUserId = firebaseAuth.currentUser?.uid;
     WidgetsBinding.instance.addObserver(this);
-  }
-
-  initNotify() {
-    const AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings();
-
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      BigTextStyleInformation bigTextStyleInformation = BigTextStyleInformation(
-        message.notification!.body.toString(),
-        htmlFormatBigText: true,
-        contentTitle: message.notification!.title.toString(),
-        htmlFormatContentTitle: true,
-      );
-
-      AndroidNotificationDetails androidNotificationDetails =
-          AndroidNotificationDetails(
-            'wbrs',
-            'wbrs',
-            importance: Importance.max,
-            styleInformation: bigTextStyleInformation,
-            priority: Priority.max,
-            playSound: true,
-          );
-
-      NotificationDetails platformChannelSpecifics = NotificationDetails(
-        android: androidNotificationDetails,
-      );
-
-      try {
-        await flutterLocalNotificationsPlugin.show(
-          0,
-          message.notification?.title,
-          message.notification?.body,
-          platformChannelSpecifics,
-          payload: message.notification?.body,
-        );
-      } on Exception catch (e) {
-        showSnackbar(context, Colors.red, e);
+    SessionService.readyUserId.addListener(_onSessionReady);
+    LocaleController.instance.addListener(_syncPushLanguage);
+    _syncPushLanguage();
+    _localTapHandler = (payload) {
+      final message = RemoteMessage(data: {'payload': payload});
+      if (_profileReady) {
+        _openMessage(message);
+      } else {
+        _pendingMessage = message;
       }
-    });
-    firebaseFirestore
-        .collection('users')
-        .doc(firebaseAuth.currentUser!.uid)
-        .update({'chatWithId': ''});
-  }
-
-  Future<String> getAndroidVersion() async {
-    const channel = MethodChannel('app_info');
-    try {
-      final version = await channel.invokeMethod('getVersion');
-      return version as String;
-    } catch (e) {
-      return 'N/A';
+    };
+    if (_initialLocalPayload != null) {
+      _pendingMessage = RemoteMessage(data: {'payload': _initialLocalPayload!});
+      _initialLocalPayload = null;
+    }
+    _subscriptions.add(
+      firebaseAuth.authStateChanges().listen((user) {
+        if (_translationUserId != user?.uid) {
+          _translationUserId = user?.uid;
+          _pushLanguageSync.invalidate();
+          ContentTranslationService.instance.clear();
+          _profileReady = false;
+          _pendingMessage = null;
+        }
+        if (user != null) {
+          if (!AppBackend.useEmulators) _refreshToken(user.uid);
+        } else {
+          _profileReady = false;
+          _pendingMessage = null;
+        }
+      }),
+    );
+    if (!AppBackend.useEmulators) {
+      _subscriptions.add(
+        firebaseMessaging.onTokenRefresh.listen((token) async {
+          final uid = firebaseAuth.currentUser?.uid;
+          if (uid != null) await _saveToken(uid, token);
+        }),
+      );
+      _subscriptions.add(FirebaseMessaging.onMessage.listen(_showMessage));
+      _subscriptions.add(
+        FirebaseMessaging.onMessageOpenedApp.listen(_openMessage),
+      );
+      firebaseMessaging.getInitialMessage().then((message) {
+        // Keep the intended destination until profile loading has completed.
+        if (message != null && mounted) {
+          if (_profileReady) {
+            _openMessage(message);
+          } else {
+            _pendingMessage = message;
+          }
+        }
+      });
+      firebaseMessaging.requestPermission();
     }
   }
 
-  getUserInfo() async {
-    doc = await firebaseFirestore
-        .collection('users')
-        .doc(firebaseAuth.currentUser!.uid)
-        .get();
+  RemoteMessage? _pendingMessage;
+  bool _profileReady = false;
 
-    globalBalance = doc.get('balance');
-    group = doc.get('группа');
-    initNotify();
+  void _onSessionReady() {
+    _profileReady = SessionService.readyUserId.value != null &&
+        SessionService.readyUserId.value == firebaseAuth.currentUser?.uid;
+    _syncPushLanguage();
+    if (!_profileReady) return;
+    final state = WidgetsBinding.instance.lifecycleState;
+    _updatePresence(state == null || state == AppLifecycleState.resumed);
+    final message = _pendingMessage;
+    _pendingMessage = null;
+    if (message != null) _openMessage(message);
   }
 
-  checkInternet() async {
+  void _syncPushLanguage() {
+    unawaited(_pushLanguageSync.sync(
+        LocaleController.instance.locale.languageCode));
+  }
+
+  Future<void> _saveToken(String uid, String token) async {
+    if (firebaseAuth.currentUser?.uid != uid) return;
     try {
-      final result = await InternetAddress.lookup('example.com');
-      if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
-        return true;
-      }
-    } on SocketException catch (_) {
-      setState(() {
-        _hasInternet = false;
+      await firebaseFirestore.collection('TOKENS').doc(uid).set({
+        'token': token,
       });
+    } catch (error, stack) {
+      FirebaseCrashlytics.instance.recordError(
+        error,
+        stack,
+        reason: 'FCM token',
+      );
+    }
+  }
+
+  Future<void> _refreshToken(String uid) async {
+    try {
+      final token = await firebaseMessaging.getToken();
+      if (token != null && firebaseAuth.currentUser?.uid == uid) {
+        await _saveToken(uid, token);
+      }
+    } catch (error, stack) {
+      FirebaseCrashlytics.instance.recordError(
+        error,
+        stack,
+        reason: 'FCM registration',
+      );
+    }
+  }
+
+  Future<void> _showMessage(RemoteMessage message) async {
+    final notification = message.notification;
+    final uid = firebaseAuth.currentUser?.uid;
+    if (uid == null || !_profileReady || notification == null) return;
+    if (!await _pushTargetsCurrentAccount(message, uid) ||
+        firebaseAuth.currentUser?.uid != uid) return;
+    await _localNotifications.show(
+      message.messageId.hashCode & 0x7fffffff,
+      notification.title,
+      notification.body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'wbrs',
+          'CLRS',
+          importance: Importance.max,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+      payload: message.data['payload']?.toString(),
+    );
+  }
+
+  Future<bool> _pushTargetsCurrentAccount(
+      RemoteMessage message, String uid) async {
+    try {
+      if (message.data['recipientUid'] != null &&
+          message.data['recipientUid'] != uid) return false;
+      final body = PushTarget.parse(message.data['payload']);
+      if (body == null || !PushTarget.recipientMatches(body, uid)) return false;
+      final profile = await firebaseFirestore
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.server));
+      if (firebaseAuth.currentUser?.uid != uid ||
+          !profile.exists ||
+          accountDestination(profile.data()) != AccountDestination.search) {
+        return false;
+      }
+      if (body['kind'] == 'social') {
+        final id = PushTarget.socialNotificationId(body, uid);
+        if (id == null) return false;
+        final notice = await firebaseFirestore
+            .collection('users')
+            .doc(uid)
+            .collection('notifications')
+            .doc(id)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 10));
+        return firebaseAuth.currentUser?.uid == uid && notice.exists;
+      }
+      if (body['isChat'] == true) {
+        final id = body['chatId']?.toString() ?? '';
+        if (id.isEmpty || id.contains('/')) return false;
+        final chat = await firebaseFirestore
+            .collection('chats')
+            .doc(id)
+            .get(const GetOptions(source: Source.server));
+        return firebaseAuth.currentUser?.uid == uid &&
+            chat.exists &&
+            PushTarget.chatMatches(chat.data()!, uid);
+      }
+      final id = body['groupId']?.toString() ?? '';
+      if (id.isEmpty || id.contains('/')) return false;
+      final meet = await firebaseFirestore
+          .collection('meets')
+          .doc(id)
+          .get(const GetOptions(source: Source.server));
+      return firebaseAuth.currentUser?.uid == uid &&
+          meet.exists &&
+          PushTarget.meetingMatches(meet.data()!, profile.data()!, body, uid);
+    } catch (_) {
+      // A notification with an unverified target must not expose another
+      // account's message on the lock screen.
       return false;
     }
   }
 
-  getUserLoggedInStatus() async {
-    if (firebaseAuth.currentUser != null) {
-      DocumentSnapshot data = await firebaseFirestore
-          .collection('users')
-          .doc(firebaseAuth.currentUser!.uid)
-          .get();
-
-      if (data.exists) {
-        if (data.get('status') == 'blocked') {
-          showSnackbar(context, Colors.red, 'Ваш аккаунт заблокирован');
-          await firebaseAuth.signOut();
-          nextScreenReplace(context, const LoginPage());
-        }
-      } else {
-        if (firebaseAuth.currentUser != null) {
-          await firebaseAuth.currentUser!.delete();
-        }
-        showSnackbar(context, Colors.red, 'Ваш аккаунт удален');
-        nextScreenReplace(context, const LoginPage());
-      }
+  Future<void> _openMessage(RemoteMessage message) async {
+    if (!_profileReady) {
+      _pendingMessage = message;
+      return;
     }
-    await HelperFunctions.getUserLoggedInStatus().then((value) {
-      if (value != null) {
-        setState(() {
-          _isSignedIn = value;
-          if (firebaseAuth.currentUser == null) {
-            _isSignedIn = false;
-          }
-        });
+    final uid = firebaseAuth.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      if (!await _pushTargetsCurrentAccount(message, uid)) return;
+      final profile = await firebaseFirestore
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.server));
+      if (!profile.exists ||
+          accountDestination(profile.data()) != AccountDestination.search ||
+          firebaseAuth.currentUser?.uid != uid) return;
+      final body = PushTarget.parse(message.data['payload']);
+      if (body == null) return;
+      Widget destination;
+      if (body['kind'] == 'social') {
+        final id = PushTarget.socialNotificationId(body, uid);
+        if (id == null) return;
+        final notice = await firebaseFirestore
+            .collection('users')
+            .doc(uid)
+            .collection('notifications')
+            .doc(id)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 10));
+        if (!notice.exists || firebaseAuth.currentUser?.uid != uid) return;
+        destination = NotificationDestinationPage(notification: notice.data()!);
+      } else if (body['isChat'] == true) {
+        final chatId = body['chatId']?.toString();
+        if (chatId == null || chatId.contains('/')) return;
+        final chat = await firebaseFirestore
+            .collection('chats')
+            .doc(chatId)
+            .get(const GetOptions(source: Source.server));
+        if (!chat.exists || !PushTarget.chatMatches(chat.data()!, uid)) return;
+        final chatData = chat.data()!;
+        final otherRaw =
+            chatData['user1'] == uid ? chatData['user2'] : chatData['user1'];
+        final otherId = otherRaw?.toString();
+        if (otherId == null || otherId.isEmpty || otherId.contains('/')) return;
+        final other = await firebaseFirestore
+            .collection('users')
+            .doc(otherId)
+            .get(const GetOptions(source: Source.server));
+        if (!other.exists) return;
+        destination = ChatScreen(
+          chatWithUsername: other.data()?['fullName']?.toString() ?? '',
+          photoUrl: other.data()?['profilePic']?.toString() ?? '',
+          id: otherId,
+          chatId: chatId,
+        );
+      } else {
+        final id = body['groupId']?.toString();
+        if (id == null || id.contains('/')) return;
+        final meet = await firebaseFirestore
+            .collection('meets')
+            .doc(id)
+            .get(const GetOptions(source: Source.server));
+        if (!meet.exists) return;
+        if (!PushTarget.meetingMatches(
+            meet.data()!, profile.data()!, body, uid)) return;
+        final users = meet.data()?['users'] is List
+            ? meet.data()!['users'] as List
+            : const [];
+        destination = AboutMeet(
+          id: id,
+          users: users,
+          name: meet.data()?['name']?.toString() ?? '',
+          is_user_join: users.contains(uid),
+        );
       }
-    });
+      if (!mounted || firebaseAuth.currentUser?.uid != uid) return;
+      _navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => destination),
+      );
+    } catch (error, stack) {
+      if (!AppBackend.useEmulators)
+        FirebaseCrashlytics.instance.recordError(
+          error,
+          stack,
+          reason: 'Notification navigation',
+        );
+    }
   }
 
-  getUserRegistrationStatus() async {
-    var collection = await firebaseFirestore
-        .collection('users')
-        .doc(firebaseAuth.currentUser!.uid)
-        .get();
-
-    if (collection.data()!.containsKey('isRegistrationEnd')) {
-      _isRegistrationEnd = await collection.get('isRegistrationEnd');
-
-      if (_isRegistrationEnd) {
-        setState(() {
-          _loading = false;
-        });
-      }
-    } else {
-      setState(() {
-        _loading = false;
+  int _presenceRevision = 0;
+  Future<void> _updatePresence(bool online) async {
+    final revision = ++_presenceRevision;
+    final uid = firebaseAuth.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final ref = firebaseFirestore.collection('users').doc(uid);
+      final profile = await ref.get().timeout(const Duration(seconds: 10));
+      if (!profile.exists ||
+          firebaseAuth.currentUser?.uid != uid ||
+          revision != _presenceRevision) return;
+      await ref.update({
+        'online': online,
+        if (!online) 'lastOnlineTS': FieldValue.serverTimestamp(),
       });
-    }
+    } catch (_) {}
   }
 
   @override
-  Widget build(BuildContext context) {
-    TextTheme tema = GoogleFonts.latoTextTheme(Theme.of(context).textTheme);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return OrientationBuilder(
-          builder: (context, orientation) {
-            return Sizer(
-              builder: (context, orientation, deviceType) {
-                return MaterialApp(
-                  theme: ThemeData(
-                    fontFamily: 'Roboto',
-                    primaryColor: Constants().primaryColor,
-                    scaffoldBackgroundColor: Colors.white,
-                    textTheme: tema,
-                  ),
-                  debugShowCheckedModeBanner: false,
-                  routes: {
-                    'profile': (context) {
-                      return ProfilePage(
-                        group: getUserGroup(),
-                        email: firebaseAuth.currentUser!.email.toString(),
-                        userName: firebaseAuth.currentUser!.displayName
-                            .toString(),
-                        about: doc.get('about'),
-                        age: doc.get('age').toString(),
-                        rost: doc.get('rost'),
-                        hobbi: doc.get('hobbi'),
-                        city: doc.get('city'),
-                        deti: doc.get('deti'),
-                        pol: doc.get('pol'),
-                      );
-                    },
-                  },
-                  home: _isSignedIn
-                      ? _loading
-                            ? const SplashScreen()
-                            : _isRegistrationEnd
-                            ? const HomePage()
-                            : const FirstGroupRed()
-                      : const LoginPage(),
-                );
-              },
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _updatePresence(state == AppLifecycleState.resumed);
+  }
+
+  @override
+  void dispose() {
+    _localTapHandler = null;
+    SessionService.readyUserId.removeListener(_onSessionReady);
+    LocaleController.instance.removeListener(_syncPushLanguage);
+    _pushLanguageSync.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: LocaleController.instance,
+        builder: (context, _) => Sizer(
+          builder: (context, orientation, deviceType) {
+            return MaterialApp(
+              navigatorKey: _navigatorKey,
+              locale: LocaleController.instance.locale,
+              supportedLocales: ClrsLocalizations.supportedLocales,
+              localizationsDelegates: ClrsLocalizations.delegates,
+              localeResolutionCallback: ClrsLocalizations.resolveLocale,
+              theme: LrsTheme.theme.copyWith(
+                textTheme: LrsTheme.theme.textTheme.apply(fontFamily: 'Lato'),
+              ),
+              debugShowCheckedModeBanner: false,
+              home: const SessionGate(enforceRememberMe: true),
             );
           },
-        );
-      },
-    );
-  }
+        ),
+      );
 }

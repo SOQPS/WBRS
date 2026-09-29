@@ -1,0 +1,291 @@
+// Security design + executable local fixture. NOT deployment-ready replacement.
+// Review deployed rules, migrate private/public profiles and client transactions
+// before merging. Default deny also deliberately protects unknown collections.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function own(uid) { return signedIn() && request.auth.uid == uid; }
+    function admin() { return signedIn() && request.auth.token.get('admin', false) == true; }
+    function published(postId) {
+      return get(/databases/$(database)/documents/posts/$(postId)).data.status == 'published';
+    }
+    function author() {
+      return admin() || (signedIn() &&
+        get(/databases/$(database)/documents/author_grants/$(request.auth.uid)).data.status == 'approved');
+    }
+    function chatMember(chatId) {
+      let chat = get(/databases/$(database)/documents/chats/$(chatId)).data;
+      return signedIn() && request.auth.uid in [chat.user1, chat.user2];
+    }
+    function meetMember(meetId) {
+      let meet = get(/databases/$(database)/documents/meets/$(meetId)).data;
+      return signedIn() && request.auth.uid in meet.users;
+    }
+    function publicProfileKeys() {
+      return ['uid', 'fullName', 'profilePic', 'profilePicThumb', 'age', 'rost',
+        'about', 'hobbi', 'deti', 'temperament', 'city', 'country', 'countryCode',
+        'languageGroup', 'countrySegment', 'region', 'images', 'pol',
+        'relationStatus', 'группа', 'group', 'language', 'online', 'lastOnlineTS'];
+    }
+    function ownProfileChanges() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+        publicProfileKeys().concat(['profileDetailsSaved', 'isRegistrationEnd',
+          'registrationNoticePending', 'chatWithId', 'interests', 'testAnswers']));
+    }
+
+    // Legacy users contain balance, roles, chat state and sometimes email.
+    // Firestore cannot redact fields: never expose the whole document to others.
+    match /users/{uid} {
+      allow get: if own(uid) || admin();
+      allow list: if admin();
+      allow create: if own(uid) && request.resource.data.uid == uid &&
+        request.resource.data.keys().hasOnly(publicProfileKeys().concat([
+          'balance', 'isUnVisible', 'status', 'isRegistrationEnd',
+          'registrationNoticePending', 'profileDetailsSaved'])) &&
+        request.resource.data.balance == 27 &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.isUnVisible == false &&
+        request.resource.data.isRegistrationEnd == false;
+      allow update: if own(uid) && request.resource.data.uid == uid && ownProfileChanges();
+      allow delete: if false;
+
+      match /images/{imageId} {
+        allow read: if signedIn();
+        allow create, update: if own(uid) &&
+          request.resource.data.keys().hasOnly(['url', 'thumbnailUrl']) &&
+          request.resource.data.url is string;
+        allow delete: if own(uid);
+      }
+      match /notifications/{noticeId} {
+        allow read: if own(uid);
+        allow update: if own(uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+          request.resource.data.read is bool;
+        allow create, delete: if false; // Trusted backend owns event production.
+      }
+      match /friend_requests/{senderUid} {
+        allow get: if own(uid) || own(senderUid);
+        allow list: if own(uid);
+        allow create: if own(senderUid) && senderUid != uid &&
+          request.resource.data.keys().hasOnly([
+            'fromUid', 'fromName', 'fromPhoto', 'группа', 'createdAt', 'status']) &&
+          request.resource.data.fromUid == senderUid &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.createdAt == request.time &&
+          getAfter(/databases/$(database)/documents/users/$(senderUid)/friend_requests_sent/$(uid)).data.toUid == uid;
+        allow update: if false;
+        allow delete: if own(uid) || own(senderUid);
+      }
+      match /friend_requests_sent/{targetUid} {
+        allow get: if own(uid) || own(targetUid);
+        allow list: if own(uid);
+        allow create: if own(uid) && uid != targetUid &&
+          request.resource.data.keys().hasOnly([
+            'toUid', 'toName', 'toPhoto', 'группа', 'createdAt', 'status']) &&
+          request.resource.data.toUid == targetUid &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.createdAt == request.time &&
+          getAfter(/databases/$(database)/documents/users/$(targetUid)/friend_requests/$(uid)).data.fromUid == uid;
+        allow update: if false;
+        allow delete: if own(uid) || own(targetUid);
+      }
+      match /friends/{friendUid} {
+        function validAcceptance() {
+          let recipient = request.auth.uid;
+          let sender = recipient == uid ? friendUid : uid;
+          return recipient in [uid, friendUid] &&
+            get(/databases/$(database)/documents/users/$(recipient)/friend_requests/$(sender)).data.status == 'pending' &&
+            !existsAfter(/databases/$(database)/documents/users/$(recipient)/friend_requests/$(sender)) &&
+            getAfter(/databases/$(database)/documents/users/$(friendUid)/friends/$(uid)).data.uid == uid;
+        }
+        allow get: if own(uid) || own(friendUid);
+        allow list: if own(uid);
+        allow create: if signedIn() && uid != friendUid &&
+          request.resource.data.keys().hasOnly([
+            'uid', 'fullName', 'profilePic', 'profilePicThumb', 'группа', 'createdAt']) &&
+          request.resource.data.uid == friendUid &&
+          request.resource.data.createdAt == request.time && validAcceptance();
+        allow update: if false;
+        allow delete: if (own(uid) || own(friendUid)) &&
+          !existsAfter(/databases/$(database)/documents/users/$(friendUid)/friends/$(uid));
+      }
+      match /wall/{shareId} {
+        allow read: if signedIn();
+        allow create: if own(uid) &&
+          request.resource.data.keys().hasOnly(['sharedPostId', 'sharedCommentId', 'createdAt']) &&
+          request.resource.data.createdAt == request.time &&
+          published(request.resource.data.sharedPostId);
+        allow update: if false;
+        allow delete: if own(uid);
+      }
+      match /received_gifts/{giftId} {
+        allow read: if own(uid) || admin();
+        allow write: if false; // Validated inventory transfer by trusted backend.
+      }
+    }
+    // The server projects approved safe fields from users into this collection.
+    match /public_profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /private_users/{uid} {
+      allow read: if admin();
+      allow write: if false;
+    }
+    match /TOKENS/{uid} {
+      allow get: if own(uid);
+      allow list: if false;
+      allow create, update: if own(uid) &&
+        request.resource.data.keys().hasOnly(['token', 'tokens', 'updatedAt', 'uid']);
+      allow delete: if own(uid);
+    }
+
+    function validRoleRequest(uid, role) {
+      return own(uid) && request.resource.data.keys().hasOnly([
+        'uid', 'fullName', 'requestedRole', 'status', 'createdAt'].concat(
+          role == 'author' ? ['proposedText', 'proposedImageUrl', 'proposalId'] : [])) &&
+        request.resource.data.uid == uid &&
+        request.resource.data.requestedRole == role &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdAt == request.time &&
+        (role != 'author' || (request.resource.data.proposedText is string &&
+          request.resource.data.proposedText.size() > 0 && request.resource.data.proposedText.size() <= 10000 &&
+          request.resource.data.proposedImageUrl is string && request.resource.data.proposalId is string));
+    }
+    function reviewRequest() {
+      return admin() && resource.data.status == 'pending' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewedAt']) &&
+        request.resource.data.status in ['approved', 'rejected'] &&
+        request.resource.data.reviewedBy == request.auth.uid &&
+        request.resource.data.reviewedAt == request.time;
+    }
+    match /author_requests/{uid} {
+      allow get: if own(uid) || admin();
+      allow list: if admin();
+      allow create: if validRoleRequest(uid, 'author');
+      allow update: if reviewRequest() ||
+        (resource.data.status == 'rejected' && validRoleRequest(uid, 'author'));
+      allow delete: if false;
+    }
+    match /moderator_requests/{uid} {
+      allow get: if own(uid) || admin();
+      allow list: if admin();
+      allow create: if validRoleRequest(uid, 'moderator');
+      allow update: if reviewRequest() ||
+        (resource.data.status == 'rejected' && validRoleRequest(uid, 'moderator'));
+      allow delete: if false;
+    }
+    match /author_grants/{uid} {
+      allow get: if own(uid) || admin();
+      allow list, write: if admin();
+    }
+    match /moderator_grants/{uid} {
+      allow get: if own(uid) || admin();
+      allow list, write: if admin();
+    }
+    match /posts/{postId} {
+      allow read: if signedIn() && (resource.data.status == 'published' || admin());
+      allow create: if signedIn() && author() &&
+        request.resource.data.keys().hasOnly(['authorUid', 'authorName', 'authorPhoto',
+          'authorGroup', 'text', 'imageUrl', 'createdAt', 'status', 'likeCount',
+          'commentCount', 'shareCount', 'nativeLanguage']) &&
+        request.resource.data.authorUid == request.auth.uid &&
+        request.resource.data.status == 'published' &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.text is string && request.resource.data.text.size() <= 20000 &&
+        request.resource.data.likeCount == 0 && request.resource.data.commentCount == 0 &&
+        request.resource.data.shareCount == 0;
+      allow update: if admin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'imageUrl', 'status']);
+      allow delete: if admin();
+      match /likes/{uid} {
+        allow get: if own(uid);
+        allow list: if admin();
+        allow create: if own(uid) && published(postId) &&
+          request.resource.data.keys().hasOnly(['uid', 'createdAt']) &&
+          request.resource.data.uid == uid && request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if own(uid);
+      }
+      match /comments/{commentId} {
+        allow read: if signedIn() && published(postId);
+        allow create: if signedIn() && published(postId) &&
+          request.resource.data.keys().hasOnly(['authorUid', 'authorName', 'authorPhoto',
+            'authorGroup', 'text', 'imageUrl', 'parentId', 'createdAt', 'likeCount', 'notificationRecipient']) &&
+          request.resource.data.authorUid == request.auth.uid &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.text is string && request.resource.data.text.size() <= 10000 &&
+          request.resource.data.likeCount == 0 &&
+          (request.resource.data.parentId == null ||
+            exists(/databases/$(database)/documents/posts/$(postId)/comments/$(request.resource.data.parentId)));
+        allow update: if false;
+        allow delete: if admin() || (signedIn() && resource.data.authorUid == request.auth.uid);
+        match /likes/{uid} {
+          allow get: if own(uid);
+          allow list: if admin();
+          allow create: if own(uid) && published(postId) &&
+            exists(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)) &&
+            request.resource.data.keys().hasOnly(['uid', 'createdAt']) &&
+            request.resource.data.uid == uid && request.resource.data.createdAt == request.time;
+          allow update: if false;
+          allow delete: if own(uid);
+        }
+      }
+    }
+    match /moderation_reports/{reportId} {
+      allow get: if admin() || (signedIn() && resource.data.reporterUid == request.auth.uid);
+      allow list, update: if admin();
+      allow create: if signedIn() && request.resource.data.reporterUid == request.auth.uid &&
+        request.resource.data.keys().hasOnly(['reporterUid', 'entityType', 'entityId', 'createdAt', 'status']) &&
+        request.resource.data.status == 'new' && request.resource.data.createdAt == request.time;
+      allow delete: if false;
+    }
+    match /chats/{chatId} {
+      allow get: if signedIn() && (!exists(/databases/$(database)/documents/chats/$(chatId)) || chatMember(chatId));
+      allow list: if signedIn() && request.auth.uid in [resource.data.user1, resource.data.user2];
+      allow create: if signedIn() && request.resource.data.user1 != request.resource.data.user2 &&
+        request.auth.uid in [request.resource.data.user1, request.resource.data.user2] &&
+        request.resource.data.keys().hasOnly(['user1', 'user2', 'chatId', 'unreadMessage',
+          'lastMessage', 'lastMessageSendTs', 'lastMessageSendBy', 'lastMessageSendByID', 'usersWOutNotifications']);
+      allow update: if chatMember(chatId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadMessage',
+          'lastMessage', 'lastMessageSendTs', 'lastMessageSendBy', 'lastMessageSendByID', 'lastSharedKind', 'usersWOutNotifications']);
+      allow delete: if false;
+      match /chats/{messageId} {
+        allow read: if chatMember(chatId);
+        allow create: if chatMember(chatId) &&
+          request.resource.data.sendByID == request.auth.uid &&
+          request.resource.data.sender == request.auth.uid && request.resource.data.type == 'text' &&
+          request.resource.data.message is string && request.resource.data.message.size() <= 20000;
+        allow update: if chatMember(chatId) && resource.data.sendByID != request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']) &&
+          request.resource.data.isRead == true;
+        allow delete: if false;
+      }
+    }
+    match /meets/{meetId} {
+      allow read: if signedIn() && (resource.data.type != 'индивидуальная' ||
+        resource.data.admin == request.auth.uid ||
+        resource.data.get('invitedUid', '') == request.auth.uid ||
+        request.auth.uid in resource.data.users);
+      allow create: if signedIn() && request.resource.data.admin == request.auth.uid &&
+        request.resource.data.users == [request.auth.uid];
+      allow update: if signedIn() && resource.data.admin == request.auth.uid &&
+        request.resource.data.admin == resource.data.admin;
+      allow delete: if signedIn() && resource.data.admin == request.auth.uid;
+      // Membership changes + event notices are a single trusted server operation.
+      match /membership_requests/{id} {
+        allow get: if signedIn() && resource.data.uid == request.auth.uid;
+        allow list, write: if false;
+      }
+      match /messages/{messageId} {
+        allow read: if meetMember(meetId);
+        allow create: if meetMember(meetId) && request.resource.data.sender == request.auth.uid &&
+          request.resource.data.sendByID == request.auth.uid && request.resource.data.type == 'text';
+        allow update, delete: if false;
+      }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

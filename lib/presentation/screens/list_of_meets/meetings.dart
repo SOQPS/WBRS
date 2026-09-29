@@ -1,467 +1,503 @@
-// ignore_for_file: non_constant_identifier_names
-
+import 'package:wbrs/shared/translatable_text.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/shared/meeting_form.dart' show parseMeetingDateTime;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
-import 'package:wbrs/app/helper/helper_function.dart';
-import 'package:wbrs/presentation/screens/list_of_meets/show/about_individual_meet.dart';
-import 'package:wbrs/presentation/screens/list_of_meets/show/about_meet.dart';
-import 'package:wbrs/presentation/screens/create_meet/create_meet.dart';
 import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 import 'package:wbrs/app/widgets/drawer.dart';
-import 'package:wbrs/app/widgets/widgets.dart';
-
-import '../../../app/pages/filter_pages/cities.dart';
+import 'package:wbrs/presentation/screens/create_meet/create_meet.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/geo_catalog.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'show/about_meet.dart';
+import 'show/about_individual_meet.dart';
 
 class MeetingPage extends StatefulWidget {
   const MeetingPage({super.key});
-
   @override
   State<MeetingPage> createState() => _MeetingPageState();
 }
 
 class _MeetingPageState extends State<MeetingPage> {
+  static const _pageSize = 30;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _meets;
+  late final Query<Map<String, dynamic>> _meetQuery;
+  late final String? _ownerUid;
+  late final Future<List<GeoCountry>> _catalog;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> _olderMeets = [];
+  QueryDocumentSnapshot<Map<String, dynamic>>? _olderCursor;
+  bool _olderLoaded = false, _hasMoreOlder = true, _loadingMore = false;
+  bool _olderError = false;
+  GeoCountry? _country;
+  String? _region;
+  bool _opening = false;
   @override
   void initState() {
     super.initState();
-    meets = firebaseFirestore
+    selectedIndex = 3;
+    _ownerUid = firebaseAuth.currentUser?.uid;
+    _catalog = GeoCatalog.load();
+    _meetQuery = firebaseFirestore
         .collection('meets')
-        .orderBy('timeStamp', descending: true)
-        .snapshots();
-    if (meetCity != '') {
-      meets = firebaseFirestore
-          .collection('meets')
-          .where('city', isEqualTo: meetCity)
-          .orderBy('timeStamp', descending: true)
-          .snapshots();
+        .orderBy('timeStamp', descending: true);
+    _meets = _meetQuery.limit(_pageSize + 1).snapshots();
+  }
+
+  Future<void> _loadMore(
+      QueryDocumentSnapshot<Map<String, dynamic>> cursor) async {
+    if (_loadingMore || firebaseAuth.currentUser?.uid != _ownerUid) return;
+    setState(() {
+      _loadingMore = true;
+      _olderError = false;
+    });
+    try {
+      final page = await _meetQuery
+          .startAfterDocument(_olderCursor ?? cursor)
+          .limit(_pageSize + 1)
+          .get()
+          .timeout(const Duration(seconds: 20));
+      if (!mounted || firebaseAuth.currentUser?.uid != _ownerUid) return;
+      final next = page.docs.take(_pageSize).toList();
+      setState(() {
+        _olderMeets.addAll(next);
+        if (next.isNotEmpty) _olderCursor = next.last;
+        _olderLoaded = true;
+        _hasMoreOlder = page.docs.length > _pageSize;
+      });
+    } catch (_) {
+      if (mounted && firebaseAuth.currentUser?.uid == _ownerUid) {
+        setState(() => _olderError = true);
+      }
+    } finally {
+      if (mounted && firebaseAuth.currentUser?.uid == _ownerUid) {
+        setState(() => _loadingMore = false);
+      }
     }
   }
 
-  TextEditingController city = TextEditingController(text: meetCity);
-  Stream<QuerySnapshot>? meets;
-  late int kolvo_users;
-
   @override
-  void dispose() {
-    super.dispose();
-    city.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    double width = MediaQuery.of(context).size.width;
-    double height = MediaQuery.of(context).size.height;
-    return Stack(
-      children: [
-        Container(
-          decoration: const BoxDecoration(boxShadow: []),
-          child: Image.asset(
-            'assets/fon.jpg',
-            height: MediaQuery.of(context).size.height,
-            width: MediaQuery.of(context).size.width,
-            fit: BoxFit.cover,
-            scale: 0.6,
-          ),
-        ),
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            iconTheme: const IconThemeData(color: Colors.white),
-            actions: [
-              IconButton(
-                onPressed: () {
-                  nextScreenReplace(context, const CreateMeetPage());
-                },
-                icon: const Icon(Icons.add),
-              ),
-            ],
-            title: const Text('Встречи', style: TextStyle(color: Colors.white)),
-            backgroundColor: Colors.transparent,
-          ),
-          bottomNavigationBar: const MyBottomNavigationBar(),
-          drawer: const MyDrawer(),
-          body: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: const BoxDecoration(),
-            child: Column(
-              children: [
-                TextButton(
-                  onPressed: () {
-                    showModalBottomSheet(
-                      backgroundColor: grey,
-                      context: context,
-                      builder: (context) {
-                        return Container(
-                          padding: const EdgeInsets.all(15),
-                          child: const Column(
-                            children: [
-                              Text(
-                                'Аннотация на встречи:',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                              Text(
-                                '1. Вы один(одна) и хотите пригласить кого-то. Создавайте индивидуальную встречу, укажите в описании куда идёте, что будете делать.',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                              Text(
-                                '2. Вас, например, двое. Один создаёт коллективную встречу, и  пишет: ждём двух девушек, и что вы предлагаете. (К примеру, пьём кофе на набережной и т.п.)',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                              Text(
-                                '3. Вы - компания и хотите устроить что-то масштабное. Один пусть создаёт коллективную встречу, опишите кратко предложение.',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                              Text(
-                                '4. Когда кто-нибудь вступит, придет уведомление как создателю.',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
-                  child: const Text(
-                    'Как создать встречу',
-                    style: TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                ),
-                Container(
-                  margin: EdgeInsets.symmetric(horizontal: width * 0.03),
-                  constraints: BoxConstraints(maxHeight: height * 0.04),
-                  padding: EdgeInsets.symmetric(
-                    vertical: 5,
-                    horizontal: width * 0.011,
-                  ),
-                  decoration: const BoxDecoration(
-                    color: Colors.white54,
-                    borderRadius: BorderRadius.all(Radius.circular(8)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: width * 0.74,
-                        child: Autocomplete<String>(
-                          optionsMaxHeight:
-                              MediaQuery.of(context).size.height * 0.2,
-                          optionsViewBuilder: (context, onSelected, options) {
-                            return cityDropdown(context, options, onSelected);
-                          },
-                          initialValue: TextEditingValue(text: meetCity),
-                          optionsBuilder: (textEditingValue) {
-                            if (textEditingValue.text == '') {
-                              return [];
-                            }
-                            return cities
-                                .where(
-                                  (city) => city.toLowerCase().startsWith(
-                                    textEditingValue.text.toLowerCase(),
-                                  ),
-                                )
-                                .toList()
-                              ..sort((a, b) => a.compareTo(b));
-                          },
-                          onSelected: (String val) {
-                            setState(() {
-                              city.text = val
-                                  .split(RegExp(r'(?! )\s{2,}'))
-                                  .join(' ')
-                                  .split(RegExp(r'\s+$'))
-                                  .join('');
-                              meetCity = city.text;
-                              meets = firebaseFirestore
-                                  .collection('meets')
-                                  .where(
-                                    'city',
-                                    isEqualTo: city.text
-                                        .split(RegExp(r'(?! )\s{2,}'))
-                                        .join(' ')
-                                        .split(RegExp(r'\s+$'))
-                                        .join(''),
-                                  )
-                                  .snapshots();
-                            });
-                          },
-                          fieldViewBuilder:
-                              (context, controller, focusNode, onSubmitted) {
-                                return TextField(
-                                  controller: controller,
-                                  style: const TextStyle(color: Colors.white),
-                                  focusNode: focusNode,
-                                  decoration: const InputDecoration(
-                                    alignLabelWithHint: false,
-                                    border: InputBorder.none,
-                                    hintText: 'Введите ваш город',
-                                    hintStyle: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w400,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                  onSubmitted: (String value) {
-                                    onSubmitted();
-                                  },
-                                  onChanged: (value) {
-                                    setState(() {
-                                      city.text = value
-                                          .split(RegExp(r'(?! )\s{2,}'))
-                                          .join(' ')
-                                          .split(RegExp(r'\s+$'))
-                                          .join('');
-                                      meetCity = city.text;
-                                      meets = firebaseFirestore
-                                          .collection('meets')
-                                          .where(
-                                            'city',
-                                            isEqualTo: city.text
-                                                .split(RegExp(r'(?! )\s{2,}'))
-                                                .join(' ')
-                                                .split(RegExp(r'\s+$'))
-                                                .join(''),
-                                          )
-                                          .snapshots();
-                                    });
-                                  },
-                                );
-                              },
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          setState(() {
-                            if (city.text == '') {
-                              meets = firebaseFirestore
-                                  .collection('meets')
-                                  .snapshots();
-                            } else {
-                              meets = firebaseFirestore
-                                  .collection('meets')
-                                  .where(
-                                    'city',
-                                    isEqualTo: city.text
-                                        .split(RegExp(r'(?! )\s{2,}'))
-                                        .join(' ')
-                                        .split(RegExp(r'\s+$'))
-                                        .join(''),
-                                  )
-                                  .snapshots();
-                            }
-                          });
-                        },
-                        padding: EdgeInsets.zero,
-                        icon: const Icon(Icons.search),
-                        iconSize: 20,
-                        splashRadius: 1,
-                        splashColor: Colors.black,
-                      ),
-                    ],
-                  ),
-                ),
-                StreamBuilder<Object>(
-                  stream: meets,
-                  builder: (context, AsyncSnapshot snapshot) {
-                    if (snapshot.connectionState == ConnectionState.active) {
-                      return snapshot.hasData
-                          ? Expanded(
-                              child: ListView.builder(
-                                scrollDirection: Axis.vertical,
-                                itemCount: snapshot.data.docs.length,
-                                itemBuilder: (BuildContext context, index) {
-                                  return kartovhkaGroupVstrechi(
-                                    context,
-                                    snapshot,
-                                    index,
-                                    firebaseFirestore.collection('meets'),
-                                  );
-                                },
-                              ),
-                            )
-                          : const Center(child: Text('Встреч нет'));
-                    } else {
-                      return Container(
-                        height: 30,
-                        width: 30,
-                        margin: const EdgeInsets.all(20),
-                        child: const CircularProgressIndicator(
-                          color: Colors.orangeAccent,
-                        ),
-                      );
+  Widget build(BuildContext context) => ClrsScaffold(
+      drawer: MyDrawer(),
+      bottomNavigationBar: MyBottomNavigationBar(),
+      appBar: AppBar(title: Text(context.tr('Встречи')), actions: [
+        IconButton(
+            tooltip: context.tr('Создать встречу'),
+            icon: Icon(Icons.add),
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => CreateMeetPage())))
+      ]),
+      body: CustomScrollView(slivers: [
+        SliverToBoxAdapter(
+            child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Column(children: [
+                  ClrsBrandHeader(),
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                          icon: Icon(Icons.help_outline),
+                          label: Text(context.tr('Как создать встречу')),
+                          onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => MeetingGuidePage())))),
+                  FutureBuilder<List<GeoCountry>>(
+                      future: _catalog,
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) return SizedBox.shrink();
+                        return ClrsPanel(
+                            padding: EdgeInsets.all(10),
+                            child: Column(children: [
+                              DropdownButtonFormField<String>(
+                                  value: _country?.code,
+                                  isExpanded: true,
+                                  itemHeight: null,
+                                  decoration: InputDecoration(
+                                      labelText: context.tr('Страна'),
+                                      isDense: true),
+                                  items: [
+                                    DropdownMenuItem<String>(
+                                        value: '',
+                                        child: Text(context.tr('Все страны'))),
+                                    ...snapshot.data!.map((c) =>
+                                        DropdownMenuItem(
+                                            value: c.code,
+                                            child: Text(context.tr(c.name),
+                                                maxLines: 2,
+                                                overflow:
+                                                    TextOverflow.ellipsis)))
+                                  ],
+                                  onChanged: (value) => setState(() {
+                                        _country = GeoCatalog.byCode(
+                                            snapshot.data!, value);
+                                        _region = null;
+                                      })),
+                              SizedBox(height: 8),
+                              DropdownButtonFormField<String>(
+                                  key: ValueKey(_country?.code),
+                                  value: _region,
+                                  isExpanded: true,
+                                  itemHeight: null,
+                                  decoration: InputDecoration(
+                                      labelText: context.tr(
+                                          _country?.regionLabel ?? 'Регион'),
+                                      isDense: true),
+                                  items: [
+                                    DropdownMenuItem<String>(
+                                        value: '',
+                                        child: Text(context.tr('Все регионы'))),
+                                    ...(_country?.regions ?? <String>[]).map(
+                                        (r) => DropdownMenuItem(
+                                            value: r,
+                                            child: Text(r,
+                                                overflow:
+                                                    TextOverflow.ellipsis)))
+                                  ],
+                                  onChanged: _country == null
+                                      ? null
+                                      : (value) =>
+                                          setState(() => _region = value)),
+                            ]));
+                      }),
+                ]))),
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _meets,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                        child: ClrsPanel(
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                          Text(context.tr(
+                              'Не удалось загрузить встречи. Проверьте подключение.')),
+                          TextButton(
+                              onPressed: () => setState(() => _meets =
+                                  _meetQuery.limit(_pageSize + 1).snapshots()),
+                              child: Text(context.tr('Повторить'))),
+                        ]))));
+              }
+              if (!snapshot.hasData) {
+                return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: CircularProgressIndicator()));
+              }
+              if (firebaseAuth.currentUser?.uid != _ownerUid) {
+                return const SliverToBoxAdapter(child: SizedBox.shrink());
+              }
+              final firstPage = snapshot.data!.docs.take(_pageSize).toList();
+              final byId =
+                  <String, QueryDocumentSnapshot<Map<String, dynamic>>>{
+                for (final doc in firstPage) doc.id: doc,
+                for (final doc in _olderMeets) doc.id: doc,
+              };
+              final docs = byId.values.toList();
+              final hasMore = _olderLoaded
+                  ? _hasMoreOlder
+                  : snapshot.data!.docs.length > _pageSize;
+              final cursor = firstPage.isEmpty ? null : firstPage.last;
+              final indices = <int>[];
+              for (var i = 0; i < docs.length; i++) {
+                final d = docs[i].data();
+                final uid = firebaseAuth.currentUser?.uid;
+                final invitee = '${d['invitedUid'] ?? ''}';
+                if (invitee.isNotEmpty && d['admin'] != uid && invitee != uid) {
+                  continue;
+                }
+                if (_country != null &&
+                    d['countryCode'] != _country!.code &&
+                    d['country'] != _country!.name) {
+                  continue;
+                }
+                if ((_region ?? '').isNotEmpty && d['region'] != _region) {
+                  continue;
+                }
+                indices.add(i);
+              }
+              if (indices.isEmpty && !hasMore) {
+                return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                        child: ClrsPanel(
+                            child: Text(context
+                                .tr('В этом регионе пока нет встреч.')))));
+              }
+              if (indices.isEmpty) {
+                return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: _moreButton(cursor)));
+              }
+              return SliverPadding(
+                  padding: EdgeInsets.all(16),
+                  sliver: SliverList(
+                      delegate:
+                          SliverChildBuilderDelegate((context, itemIndex) {
+                    if (hasMore && itemIndex == indices.length * 2 - 1) {
+                      return _moreButton(cursor);
                     }
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
+                    if (itemIndex.isOdd) return SizedBox(height: 12);
+                    final position = itemIndex ~/ 2;
+                    final index = indices[position];
+                    final d = docs[index].data();
+                    final imageUrl = _meetingImageUrl(d);
+                    final fallbackAsset = _meetingThumbnailAsset(docs[index].id,
+                        '${d['name'] ?? ''}', '${d['description'] ?? ''}');
+                    final users = d['users'] is List ? d['users'] as List : [];
+                    final location = [
+                      if (d['country'] != null) context.tr('${d['country']}'),
+                      d['region']
+                    ].where((x) => x != null && '$x'.isNotEmpty).join(' · ');
+                    return ClrsPanel(
+                        padding: EdgeInsets.zero,
+                        child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: _opening ? null : () => _open(docs[index]),
+                            child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            ClipRRect(
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                child: SizedBox(
+                                                    width: 96,
+                                                    height: 112,
+                                                    child: imageUrl == null
+                                                        ? Image.asset(
+                                                            fallbackAsset,
+                                                            fit: BoxFit.cover)
+                                                        : CachedNetworkImage(
+                                                            imageUrl: imageUrl,
+                                                            fit: BoxFit.cover,
+                                                            memCacheWidth: 320,
+                                                            maxWidthDiskCache:
+                                                                640,
+                                                            placeholder:
+                                                                (_, __) =>
+                                                                    Image.asset(
+                                                                      fallbackAsset,
+                                                                      fit: BoxFit
+                                                                          .cover,
+                                                                    ),
+                                                            errorWidget:
+                                                                (_, __, ___) =>
+                                                                    Image.asset(
+                                                                      fallbackAsset,
+                                                                      fit: BoxFit
+                                                                          .cover,
+                                                                    )))),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                                child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                  Row(children: [
+                                                    Expanded(
+                                                        child: TranslatableText(
+                                                            '${d['name'] ?? context.tr('Встреча')}',
+                                                            showAction: false,
+                                                            style: const TextStyle(
+                                                                fontSize: 17,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700))),
+                                                    const Icon(
+                                                        Icons.chevron_right)
+                                                  ]),
+                                                  const SizedBox(height: 8),
+                                                  Text(
+                                                      parseMeetingDateTime(
+                                                                  '${d['datetime'] ?? ''}') ==
+                                                              null
+                                                          ? '${d['datetime'] ?? ''}'
+                                                          : context.l10n.dateTime(
+                                                              parseMeetingDateTime(
+                                                                  '${d['datetime']}')!),
+                                                      style: const TextStyle(
+                                                          color: LrsTheme
+                                                              .peachLight)),
+                                                  const SizedBox(height: 6),
+                                                  Text(location.isEmpty
+                                                      ? context.tr(
+                                                          'Регион не указан')
+                                                      : location),
+                                                ])),
+                                          ]),
+                                      const SizedBox(height: 10),
+                                      SizedBox(
+                                          width: double.infinity,
+                                          child: TranslatableText(
+                                              '${d['description'] ?? ''}',
+                                              showAction: false)),
+                                      SizedBox(height: 10),
+                                      Wrap(
+                                          spacing: 16,
+                                          runSpacing: 6,
+                                          children: [
+                                            Text(context.tr(
+                                                'Участников: {count}',
+                                                args: {
+                                                  'count': context.l10n
+                                                      .number(users.length)
+                                                },
+                                                count: users.length)),
+                                            if (d['admin'] ==
+                                                firebaseAuth.currentUser?.uid)
+                                              Text(context.tr('Вы организатор'))
+                                            else if (users.contains(
+                                                firebaseAuth.currentUser?.uid))
+                                              Text(context.tr('Вы участник')),
+                                          ]),
+                                    ]))));
+                  }, childCount: indices.length * 2 - 1 + (hasMore ? 1 : 0))));
+            }),
+      ]));
+
+  Widget _moreButton(
+          QueryDocumentSnapshot<Map<String, dynamic>>? cursor) =>
+      Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+              child: _loadingMore
+                  ? const CircularProgressIndicator()
+                  : OutlinedButton(
+                      onPressed:
+                          cursor == null ? null : () => _loadMore(cursor),
+                      child: Text(context
+                          .tr(_olderError ? 'Повторить' : 'Загрузить ещё')))));
+
+  String? _meetingImageUrl(Map<String, dynamic> data) {
+    for (final key in const ['imageUrl', 'meetingImageUrl']) {
+      final value = data[key];
+      if (value is! String) continue;
+      final url = value.trim();
+      final uri = Uri.tryParse(url);
+      if (uri != null &&
+          (uri.scheme == 'https' || uri.scheme == 'http') &&
+          uri.host.isNotEmpty) {
+        return url;
+      }
+    }
+    return null;
   }
 
-  Future<int> GetUsers(String id) async {
-    var kolvo_users2 = await firebaseFirestore
-        .collection('users')
-        .doc(id)
-        .collection('users')
-        .snapshots()
-        .length;
-    return kolvo_users2;
+  String _meetingThumbnailAsset(String id, String title, String description) {
+    String? themedAsset(String text) {
+      final normalized = text.toLowerCase();
+      // Prefer the activity to a location: a picnic in a park is a picnic.
+      if (RegExp(r'пикник|picnic|пікнік|шашлык|барбекю|barbecue|grill')
+          .hasMatch(normalized)) {
+        return 'assets/final_design/meeting_picnic.jpg';
+      }
+      if (RegExp(r'кофе|coffee|café|cafe|кафе|чаепит|завтрак')
+          .hasMatch(normalized)) {
+        return 'assets/final_design/meeting_coffee.jpg';
+      }
+      if (RegExp(r'парк|park|прогул|walk|поход|hiking|набережн')
+          .hasMatch(normalized)) {
+        return 'assets/final_design/meeting_park.jpg';
+      }
+      return null;
+    }
+
+    final themed = themedAsset(title) ?? themedAsset(description);
+    if (themed != null) return themed;
+    const assets = [
+      'assets/final_design/meeting_park.jpg',
+      'assets/final_design/meeting_picnic.jpg',
+      'assets/final_design/meeting_coffee.jpg',
+    ];
+    final hash = id.codeUnits.fold<int>(0, (value, unit) => value + unit);
+    return assets[hash % assets.length];
   }
 
-  Widget kartovhkaGroupVstrechi(
-    context,
-    AsyncSnapshot snapshot,
-    int index,
-    CollectionReference meets,
-  ) {
-    return snapshot.hasData
-        ? Container(
-            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.black),
-              borderRadius: const BorderRadius.all(Radius.circular(18)),
-            ),
-            child: InkWell(
-              onTap: (() async {
-                DocumentSnapshot doc = await firebaseFirestore
-                    .collection('meets')
-                    .doc(snapshot.data.docs[index].id)
-                    .get();
-                List users = doc.get('users');
-
-                bool is_user_join = false;
-
-                for (int i = 0; i < users.length; i++) {
-                  if (users[i] == firebaseAuth.currentUser!.uid) {
-                    is_user_join = true;
-                  }
-                }
-                var doc12 = await firebaseFirestore
-                    .collection('users')
-                    .doc(snapshot.data.docs[index]['admin'])
-                    .get();
-                if (snapshot.data.docs[index]['type'] == 'групповая') {
-                  nextScreen(
-                    context,
-                    AboutMeet(
-                      id: snapshot.data.docs[index].id,
-                      users: users,
-                      name: snapshot.data.docs[index]['name'],
-                      is_user_join: is_user_join,
-                    ),
-                  );
-                } else {
-                  nextScreen(
-                    context,
-                    AboutIndividualMeet(
-                      snapshot: snapshot,
-                      index: index,
-                      doc: doc12,
-                    ),
-                  );
-                }
-              }),
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.black),
-                  borderRadius: const BorderRadius.all(Radius.circular(12)),
-                  color: Colors.orangeAccent.shade700.withValues(alpha: 0.3),
-                ),
-                width: double.infinity,
-                child: ListTile(
-                  title: SizedBox(
-                    height: 70,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: Text(
-                            "${snapshot.data.docs[index]['city']}, ${snapshot.data.docs[index]['name']}",
-                            overflow: TextOverflow.visible,
-                            softWrap: true,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            snapshot.data.docs[index]['description'],
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                snapshot.data.docs[index]['datetime'],
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              if (snapshot.data.docs[index]['admin'] ==
-                                  firebaseAuth.currentUser!.uid)
-                                const Text(
-                                  'Вы владелец',
-                                  style: TextStyle(color: Colors.greenAccent),
-                                  softWrap: false,
-                                ),
-                              if (snapshot.data.docs[index]['admin'] !=
-                                      firebaseAuth.currentUser!.uid &&
-                                  snapshot.data.docs[index]['users'].contains(
-                                    firebaseAuth.currentUser!.uid,
-                                  ))
-                                const Text(
-                                  'Вы участник',
-                                  style: TextStyle(color: Colors.yellow),
-                                  overflow: TextOverflow.fade,
-                                  softWrap: false,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  subtitle: snapshot.data.docs[index]['recentMessage'] == ''
-                      ? const SizedBox(
-                          child: Text(
-                            'Нет сообщений',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        )
-                      : Row(
-                          children: [
-                            Text(
-                              snapshot.data.docs[index]['recentMessageSender'] +
-                                  ':',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            const SizedBox(width: 5),
-                            Flexible(
-                              child: Text(
-                                snapshot.data.docs[index]['recentMessage'],
-                                style: const TextStyle(color: Colors.white70),
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ),
-          )
-        : Container();
+  Future<void> _open(QueryDocumentSnapshot<Map<String, dynamic>> doc) async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      final d = doc.data();
+      final users = d['users'] is List ? d['users'] as List : [];
+      if (d['type'] == 'групповая') {
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => AboutMeet(
+                id: doc.id,
+                users: users,
+                name: '${d['name'] ?? ''}',
+                is_user_join: users.contains(firebaseAuth.currentUser?.uid))));
+      } else {
+        final admin = await firebaseFirestore
+            .collection('users')
+            .doc('${d['admin']}')
+            .get()
+            .timeout(Duration(seconds: 15));
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => AboutIndividualMeet(meetingDoc: doc, doc: admin)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(context
+                .tr('Не удалось открыть встречу. Попробуйте ещё раз.'))));
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
   }
+}
+
+class MeetingGuidePage extends StatelessWidget {
+  const MeetingGuidePage({super.key});
+  static const _steps = [
+    'Вы один(одна) и приглашаете кого-то? Создайте индивидуальную встречу: куда идёте и что будете делать.',
+    'Вас двое? Один создаёт коллективную встречу. Укажите, кого ждёте и что предлагаете.',
+    'Компания планирует что-то масштабное? Один создаёт коллективную встречу и кратко описывает предложение.',
+    'При вступлении во встречу создателю придёт уведомление.',
+  ];
+  @override
+  Widget build(BuildContext context) => ClrsScaffold(
+        appBar: AppBar(title: Text(context.tr('Как создать встречу'))),
+        body: SafeArea(
+            top: false,
+            child: ListView(
+                key: const ValueKey('meeting-guide-scroll'),
+                padding: const EdgeInsets.all(16),
+                children: [
+                  for (int i = 0; i < _steps.length; i++)
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: ClrsPanel(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                      radius: 15,
+                                      backgroundColor: const Color(0xBBA76843),
+                                      child: Text(context.l10n.number(i + 1),
+                                          style: const TextStyle(
+                                              color: LrsTheme.text))),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                      child: Text(context.tr(_steps[i]),
+                                          style: const TextStyle(
+                                              fontSize: 16, height: 1.3))),
+                                ]))),
+                  ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text(context.tr('Понятно'))),
+                ])),
+      );
 }

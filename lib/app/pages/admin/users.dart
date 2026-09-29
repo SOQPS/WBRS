@@ -1,24 +1,54 @@
+import 'dart:async';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
 import 'package:wbrs/app/widgets/circle_user_image.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
+import 'package:wbrs/service/admin_access.dart';
+import 'package:wbrs/service/admin_private_directory.dart';
 
 import '../../widgets/bottom_nav_bar.dart';
 
 class Users extends StatefulWidget {
-  const Users({super.key});
+  const Users({super.key, this.privateEmail = adminPrivateEmailEnabled});
+  final bool privateEmail;
 
   @override
   State<Users> createState() => _UsersState();
 }
 
 class _UsersState extends State<Users> {
+  AdminPrivateDirectory? _privateDirectory;
   TextEditingController search = TextEditingController();
   Stream users = firebaseFirestore
       .collection('users')
-      .orderBy('email', descending: false)
+      .orderBy('fullName', descending: false)
       .snapshots();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.privateEmail)
+      _privateDirectory = AdminPrivateDirectory(enabled: true);
+  }
+
+  @override
+  void dispose() {
+    unawaited(_privateDirectory?.dispose());
+    search.dispose();
+    super.dispose();
+  }
+
+  Widget _privateSessionView(Widget child) => !widget.privateEmail
+      ? child
+      : AnimatedBuilder(
+          animation: _privateDirectory!.visibility,
+          builder: (context, _) => _privateDirectory!.isCurrentSession
+              ? child
+              : Center(
+                  child:
+                      Text(context.tr('Не удалось загрузить пользователей'))));
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +58,9 @@ class _UsersState extends State<Users> {
           builder: (context) {
             return AlertDialog(
               title: Text(
-                'Вы уверены, что хотите $action пользователя?',
+                context.tr(action == 'удалить'
+                    ? 'Удалить пользователя?'
+                    : 'Заблокировать пользователя?'),
                 style: const TextStyle(fontSize: 20),
               ),
               actions: [
@@ -37,23 +69,24 @@ class _UsersState extends State<Users> {
                       callback();
                       Navigator.pop(context);
                     },
-                    child: const Text('Да')),
+                    child: Text(context.tr('Да'))),
                 TextButton(
                     onPressed: () {
                       Navigator.pop(context);
                     },
-                    child: const Text('Нет')),
+                    child: Text(context.tr('Нет'))),
               ],
             );
           });
     }
 
-    return Stack(
+    return AdminGuard(
+        child: Stack(
       children: [
         Container(
           decoration: const BoxDecoration(boxShadow: []),
           child: Image.asset(
-            'assets/fon.jpg',
+            'assets/final_design/family_right.png',
             height: MediaQuery.of(context).size.height,
             width: MediaQuery.of(context).size.width,
             fit: BoxFit.cover,
@@ -72,10 +105,12 @@ class _UsersState extends State<Users> {
                 onSubmitted: (value) {
                   setState(() {
                     if (value.contains('@')) {
-                      users = firebaseFirestore
-                          .collection('users')
-                          .where('email', isGreaterThanOrEqualTo: value)
-                          .snapshots();
+                      users = widget.privateEmail
+                          ? _privateDirectory!.searchEmail(value)
+                          : firebaseFirestore
+                              .collection('users')
+                              .where('email', isGreaterThanOrEqualTo: value)
+                              .snapshots();
                     } else {
                       users = firebaseFirestore
                           .collection('users')
@@ -89,9 +124,16 @@ class _UsersState extends State<Users> {
             bottomNavigationBar: const MyBottomNavigationBar(),
             body: Container(
               padding: const EdgeInsets.all(5),
-              child: StreamBuilder(
+              child: _privateSessionView(StreamBuilder(
                   stream: users,
                   builder: (context, snapshot) {
+                    if (widget.privateEmail &&
+                        (snapshot.hasError ||
+                            !_privateDirectory!.isCurrentSession)) {
+                      return Center(
+                          child: Text(context
+                              .tr('Не удалось загрузить пользователей')));
+                    }
                     if (snapshot.hasData) {
                       return ListView.builder(
                         itemCount: snapshot.data!.docs.length,
@@ -104,6 +146,7 @@ class _UsersState extends State<Users> {
                             onTap: () => nextScreen(
                                 context,
                                 SomebodyProfile(
+                                  privateEmail: widget.privateEmail,
                                   uid: snapshot.data!.docs[index].id,
                                   photoUrl: snapshot.data!.docs[index]
                                       ['profilePic'],
@@ -203,7 +246,14 @@ class _UsersState extends State<Users> {
                                     children: [
                                       Text(snapshot.data!.docs[index]
                                           ['fullName']),
-                                      Text(snapshot.data!.docs[index]['email']),
+                                      if (widget.privateEmail)
+                                        AdminPrivateEmail(
+                                            directory: _privateDirectory!,
+                                            uid: snapshot.data!.docs[index].id,
+                                            builder: (email) => Text(email))
+                                      else
+                                        Text(
+                                            '${(snapshot.data!.docs[index].data() as Map)['email'] ?? ''}'),
                                       Text(snapshot.data!.docs[index]['city']),
                                     ],
                                   ),
@@ -216,11 +266,11 @@ class _UsersState extends State<Users> {
                     } else {
                       return const Center(child: CircularProgressIndicator());
                     }
-                  }),
+                  })),
             ),
           ),
         )
       ],
-    );
+    ));
   }
 }

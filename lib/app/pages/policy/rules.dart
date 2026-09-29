@@ -1,124 +1,85 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:url_launcher/url_launcher.dart';
+import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/localization/language_picker.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/shared/rules_content.dart';
 
-import '../../widgets/widgets.dart';
-
-class Rule extends StatefulWidget {
+class Rule extends StatelessWidget {
   const Rule({super.key});
-
   @override
-  State<Rule> createState() => _RuleState();
-}
-
-class _RuleState extends State<Rule> {
-  String text = '';
-
-  Uri emailLaunch = Uri(
-    scheme: 'mailto',
-    path: 'myemail@email.com',
-  );
-
-  @override
-  void initState() {
-    getText();
-    super.initState();
-  }
-
-  void getText() async {
-    text = await loadAsset();
-    setState(() {});
-  }
-
-  Future<String> loadAsset() async {
-    return await rootBundle.loadString('assets/rules.txt');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          decoration: const BoxDecoration(boxShadow: [
-            BoxShadow(
-              color: Colors.green,
-            )
-          ]),
-          child: Image.asset(
-            'assets/fon.jpg',
-            height: MediaQuery.of(context).size.height,
-            width: MediaQuery.of(context).size.width,
-            fit: BoxFit.cover,
-            scale: 0.6,
-          ),
-        ),
-        Scaffold(
-            appBar: AppBar(
-              title: const Text(
-                'Правила использования приложения',
-                style: TextStyle(color: Colors.white),
-              ),
-              backgroundColor: Colors.transparent,
-              iconTheme: const IconThemeData(color: Colors.white),
-            ),
-            backgroundColor: Colors.transparent,
-            body: SingleChildScrollView(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                children: [
-                  const Text(
-                    'LRS version 1.0',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white),
-                  ),
-                  const SizedBox(
-                    height: 20,
-                  ),
-                  TextButton(
-                      onPressed: () {
-                        try {
-                          launchUrl(Uri.parse('mailto:supp.lrs@ya.ru'));
-                        } on Exception catch (e) {
-                          showSnackbar(context, Colors.red, e);
-                        }
-                      },
-                      child: const Text(
-                        'supp.lrs@ya.ru',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 16, color: Colors.white),
-                      )),
-                  const Text(
-                    'Здесь благодаря алгоритму и психологии вы легко найдете близкого человека для создания долгих, крепких отношений, дружбы, семьи',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.white),
-                  ),
-                  const SizedBox(
-                    height: 20,
-                  ),
-                  const Text(
-                    'Правила использования приложения',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white),
-                  ),
-                  Text(
-                    text,
-                    textAlign: TextAlign.justify,
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                        height: 1,
-                        fontFamily: 'Colibri'),
-                  ),
-                ],
-              ),
-            )),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => ClrsScaffold(
+      appBar: AppBar(actions: const [LanguagePickerButton()]),
+      bottomNavigationBar: const MyBottomNavigationBar(),
+      body: LayoutBuilder(builder: (context, box) {
+        final compact = MediaQuery.textScalerOf(context).scale(14) <= 20;
+        final width =
+            compact ? (box.maxWidth * .64).clamp(220.0, 620.0) : box.maxWidth;
+        return SingleChildScrollView(
+            key: const ValueKey('rules-scroll'),
+            padding: const EdgeInsets.all(14),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const ClrsBrandHeader(),
+              SizedBox(
+                  width: width,
+                  child: ClrsPanel(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                        Text(context.tr('Правила использования'),
+                            style: const TextStyle(
+                                fontFamily: 'CormorantGaramond',
+                                fontSize: 28,
+                                fontWeight: FontWeight.w600,
+                                height: 1.05)),
+                        for (final chapter in rulesChapters) ...[
+                          const Divider(height: 28),
+                          Text(context.tr(chapter.title),
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 12),
+                          for (var index = 0;
+                              index < chapter.items.length;
+                              index++)
+                            Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                          width: 24,
+                                          height: 24,
+                                          alignment: Alignment.center,
+                                          decoration: const BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: LrsTheme.peach),
+                                          child: Text('${index + 1}',
+                                              textScaler: TextScaler.noScaling,
+                                              style: const TextStyle(
+                                                  color: Color(0xFF302110),
+                                                  fontSize: 12,
+                                                  fontWeight:
+                                                      FontWeight.w700))),
+                                      const SizedBox(width: 9),
+                                      Expanded(
+                                          child: Text(
+                                              context.tr(chapter.items[index]),
+                                              style: const TextStyle(
+                                                  fontSize: 14, height: 1.35))),
+                                    ])),
+                          if (chapter == rulesChapters[1])
+                            Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Text(context.tr(rulesThanks),
+                                    style: const TextStyle(
+                                        fontSize: 13, height: 1.4))),
+                        ],
+                        const ClrsValuesFooter(),
+                      ]))),
+            ]));
+      }));
 }

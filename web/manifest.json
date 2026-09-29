@@ -1,6 +1,6 @@
 {
-    "name": "wbrs",
-    "short_name": "wbrs",
+    "name": "CLRS",
+    "short_name": "CLRS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

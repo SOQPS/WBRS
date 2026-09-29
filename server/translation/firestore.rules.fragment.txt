@@ -1,0 +1,9 @@
+// Integrate into existing rules only after owner review; NOT a deployable rules file.
+// IMPORTANT: any overlapping allow true / recursive authenticated-user rule also
+// permits access and defeats this denial. Remove/exclude that overlapping grant.
+match /_translation_usage/{document=**} {
+  allow read, write: if false;
+}
+match /_translation_cache/{document=**} {
+  allow read, write: if false;
+}

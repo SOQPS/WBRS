@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.6+20
+version: 1.0.25+39
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
@@ -30,10 +30,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: 0.20.2
+  path_provider: ^2.1.5
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cached_network_image: ^3.3.1
+  flutter_cache_manager: ^3.3.1
   cloud_firestore: ^5.6.11
   curved_navigation_bar: ^1.0.6
   firebase_auth: ^5.6.2
@@ -42,8 +47,11 @@ dependencies:
   firebase_storage: ^12.4.9
   flutter_local_notifications: ^19.3.0
   google_fonts: ^6.2.1
+  google_mlkit_language_id: 0.13.1
+  google_mlkit_translation: 0.13.1
   http: ^1.4.0
   image_picker: ^1.1.2
+  image: ^4.10.1
   random_string: ^2.3.1
   shared_preferences: ^2.5.3
   sizer: ^3.0.5
@@ -93,31 +101,49 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: CormorantGaramond
+      fonts:
+        - asset: assets/fonts/CormorantGaramond-Variable.ttf
+    - family: Caveat
+      fonts:
+        - asset: assets/fonts/Caveat-Variable.ttf
+    - family: Lato
+      fonts:
+        - asset: assets/fonts/Lato-Regular.ttf
+        - asset: assets/fonts/Lato-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   assets:
-    - assets/
-    - assets/policy.txt
+    - assets/l10n/
+    - assets/attribution/translated-by-google.png
+    - assets/licenses/
+    - assets/final_design/
     - assets/agreement.txt
+    - assets/family_01.jpg
+    - assets/family_02.jpg
+    - assets/family_alt.jpg
+    - assets/family_forms.jpg
+    - assets/family_login.jpg
+    - assets/family_main.jpg
+    - assets/family_register.jpg
+    - assets/registration_consent_bg.jpg
+    - assets/fon-drawer.jpg
+    - assets/fon.jpg
+    - assets/fon2.jpg
+    - assets/fon2_old_backup.jpg
+    - assets/fon_old_backup.jpg
+    - assets/languages.json
+    - assets/geo_catalog.json
+    - assets/login.png
+    - assets/logo.png
+    - assets/logo_old_backup.png
     - assets/offer.txt
+    - assets/policy.txt
+    - assets/profile.png
+    - assets/register.png
     - assets/rules.txt
-    - assets/credentials.json
-    - assets/circles/белая.png
-    - assets/circles/бело-синяя.png
-    - assets/circles/бело-красная.png
-    - assets/circles/бело-коричневая.png
-    - assets/circles/синяя.png
-    - assets/circles/сине-красная.png
-    - assets/circles/сине-коричневая.png
-    - assets/circles/сине-белая.png
-    - assets/circles/красная.png
-    - assets/circles/красно-синяя.png
-    - assets/circles/красно-белая.png
-    - assets/circles/красно-коричневая.png
-    - assets/circles/коричневая.png
-    - assets/circles/коричнево-красная.png
-    - assets/circles/коричнево-синяя.png
-    - assets/circles/коричнево-белая.png
     - assets/gifts/1.png
     - assets/gifts/2.png
     - assets/gifts/3.png

@@ -1,0 +1,34 @@
+// Local security fixture only. Tokenized legacy download URLs need a separate
+// inventory/revocation plan; object ACL rules cannot revoke already issued URLs.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function own(uid) { return signedIn() && request.auth.uid == uid; }
+    function validImage() {
+      return request.resource.size <= 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+    match /users/{uid}/photos/{image=**} {
+      allow read: if signedIn();
+      allow create, update: if own(uid) && validImage();
+      allow delete: if own(uid);
+    }
+    match /profile_images/{uid}/{image=**} {
+      allow read: if signedIn();
+      allow create, update: if own(uid) && validImage();
+      allow delete: if own(uid);
+    }
+    match /author_applications/{uid}/{image} {
+      allow read: if own(uid) || (signedIn() && request.auth.token.get('admin', false) == true);
+      allow create, update: if own(uid) && validImage();
+      allow delete: if own(uid);
+    }
+    match /{folder}/{uid}/{image} {
+      allow read: if signedIn() && folder in ['feed_posts', 'feed_comments'];
+      allow create, update: if own(uid) && folder in ['feed_posts', 'feed_comments'] && validImage();
+      allow delete: if own(uid) && folder in ['feed_posts', 'feed_comments'];
+    }
+    match /{path=**} { allow read, write: if false; }
+  }
+}

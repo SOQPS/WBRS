@@ -1,3 +1,4 @@
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 
@@ -9,7 +10,7 @@ class DeletedProfile extends StatelessWidget {
     return Stack(
       children: [
         Image.asset(
-          'assets/fon.jpg',
+          'assets/final_design/family_right.png',
           height: MediaQuery.of(context).size.height,
           width: MediaQuery.of(context).size.width,
           fit: BoxFit.cover,
@@ -22,9 +23,9 @@ class DeletedProfile extends StatelessWidget {
             backgroundColor: Colors.transparent,
           ),
           bottomNavigationBar: const MyBottomNavigationBar(),
-          body: const Center(
+          body: Center(
             child: Text(
-              'Профиль был удален',
+              context.tr('Профиль был удален'),
               style: TextStyle(color: Colors.white),
             ),
           ),

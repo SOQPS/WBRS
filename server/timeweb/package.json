@@ -1,0 +1,16 @@
+{
+  "name": "clrs-timeweb-readonly-inventory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22" },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check manifest.mjs && node --check inventory-firebase.mjs && node --check compare-manifests.mjs && node --check import-clrsx2.mjs && node --check import-core.mjs && node --check import-stage.mjs && node --check import-adapters.mjs && node --check s3-privacy.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1141.0",
+    "firebase-admin": "14.4.0",
+    "pg": "8.16.3"
+  }
+}

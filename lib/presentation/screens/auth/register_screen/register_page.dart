@@ -1,18 +1,24 @@
-// ignore_for_file: use_build_context_synchronously
-import 'dart:io';
+import 'package:wbrs/shared/clrs_auth_shell.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/app/pages/policy/soglashenie.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-import 'package:wbrs/app/helper/global.dart';
-import 'package:wbrs/app/helper/helper_function.dart';
+// ignore_for_file: use_build_context_synchronously
+
+import 'package:wbrs/presentation/screens/auth/session_gate.dart';
 import 'package:wbrs/presentation/screens/auth/login_screen/login_page.dart';
-import 'package:wbrs/presentation/screens/auth/writing_profile_page/writing_data_user.dart';
+import 'package:wbrs/presentation/screens/auth/register_screen/registration_consent_page.dart';
 import 'package:wbrs/app/pages/policy/confidecialnost.dart';
 import 'package:wbrs/service/auth_service.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
 
 class RegisterPage extends StatefulWidget {
-  const RegisterPage({super.key});
+  const RegisterPage(
+      {super.key, this.authService, this.consentConfirmed = false});
+  final AuthService? authService;
+  final bool consentConfirmed;
 
   @override
   State<RegisterPage> createState() => _RegisterPageState();
@@ -20,251 +26,192 @@ class RegisterPage extends StatefulWidget {
 
 class _RegisterPageState extends State<RegisterPage> {
   bool _isLoading = false;
+  bool _passwordHidden = true;
   final formKey = GlobalKey<FormState>();
-  String email = '';
-  String password = '';
-  String fullName = '';
-  AuthService authService = AuthService();
+  late final AuthService authService;
+  bool _authPending = false;
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
 
   @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          decoration: const BoxDecoration(boxShadow: [
-            BoxShadow(
-              color: Colors.black,
-            )
-          ]),
-          child: Image.asset(
-            'assets/fon2.jpg',
-            height: MediaQuery.of(context).size.height,
-            width: MediaQuery.of(context).size.width,
-            fit: BoxFit.cover,
-            color: grey,
-            colorBlendMode: BlendMode.modulate,
-            scale: 0.6,
-          ),
-        ),
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          body: _isLoading
-              ? Center(
-                  child: CircularProgressIndicator(
-                      color: Theme.of(context).primaryColor))
-              : SingleChildScrollView(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 80),
-                    child: Form(
-                        key: formKey,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: <Widget>[
-                            const Text(
-                              'LRS',
-                              style: TextStyle(
-                                  fontSize: 40,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white),
-                            ),
-                            const SizedBox(height: 10),
-                            const Text(
-                              ' Lasting relationships',
-                              style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white),
-                            ),
-                            const SizedBox(height: 10),
-                            const Text(
-                                'Создайте профиль и присоединяйтесь к нам!',
-                                style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w400,
-                                    color: Colors.white)),
-                            const SizedBox(
-                              height: 50,
-                            ),
-                            TextFormField(
-                              style: const TextStyle(color: Colors.white),
-                              decoration: textInputDecoration.copyWith(
-                                  labelStyle:
-                                      const TextStyle(color: Colors.white),
-                                  labelText: 'Никнэйм',
-                                  prefixIcon: Icon(
-                                    Icons.person,
-                                    color: Theme.of(context).primaryColor,
-                                  )),
-                              onChanged: (val) {
-                                setState(() {
-                                  fullName = val;
-                                });
-                              },
-                              validator: (val) {
-                                if (val!.isNotEmpty) {
-                                  return null;
-                                } else {
-                                  return 'Имя не может быть пустым';
-                                }
-                              },
-                            ),
-                            const SizedBox(
-                              height: 15,
-                            ),
-                            TextFormField(
-                              style: const TextStyle(color: Colors.white),
-                              decoration: textInputDecoration.copyWith(
-                                  labelStyle:
-                                      const TextStyle(color: Colors.white),
-                                  labelText: 'Email',
-                                  prefixIcon: Icon(
-                                    Icons.email,
-                                    color: Theme.of(context).primaryColor,
-                                  )),
-                              onChanged: (val) {
-                                setState(() {
-                                  email = val;
-                                });
-                              },
-
-                              // check tha validation
-                              validator: (val) {
-                                return RegExp(
-                                            r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+")
-                                        .hasMatch(val!)
-                                    ? null
-                                    : 'Введите корректный email';
-                              },
-                            ),
-                            const SizedBox(height: 15),
-                            TextFormField(
-                              style: const TextStyle(color: Colors.white),
-                              obscureText: true,
-                              decoration: textInputDecoration.copyWith(
-                                  labelStyle:
-                                      const TextStyle(color: Colors.white),
-                                  labelText: 'Пароль',
-                                  prefixIcon: Icon(
-                                    Icons.lock,
-                                    color: Theme.of(context).primaryColor,
-                                  )),
-                              validator: (val) {
-                                if (val!.length < 6) {
-                                  return 'Пароль должен содержать 6 символов';
-                                } else {
-                                  return null;
-                                }
-                              },
-                              onChanged: (val) {
-                                setState(() {
-                                  password = val;
-                                });
-                              },
-                            ),
-                            const SizedBox(
-                              height: 20,
-                            ),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        Theme.of(context).primaryColor,
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(30))),
-                                child: const Text(
-                                  'Зарегистрироваться',
-                                  style: TextStyle(
-                                      color: Colors.white, fontSize: 16),
-                                ),
-                                onPressed: () {
-                                  register();
-                                },
-                              ),
-                            ),
-                            const SizedBox(
-                              height: 10,
-                            ),
-                            Text.rich(
-                                textAlign: TextAlign.center,
-                                TextSpan(
-                                    text:
-                                        "Нажимая кнопку 'зарегистрироваться', вы подтверждаете , что согласны с ",
-                                    style: const TextStyle(color: Colors.white),
-                                    children: <TextSpan>[
-                                      TextSpan(
-                                          text:
-                                              'политикой конфиденциальности и пользовательским соглашением',
-                                          style: const TextStyle(
-                                              color: Colors.blue,
-                                              decoration:
-                                                  TextDecoration.underline),
-                                          recognizer: TapGestureRecognizer()
-                                            ..onTap = () {
-                                              nextScreen(
-                                                  context, const Politica());
-                                            }),
-                                    ])),
-                            const SizedBox(
-                              height: 10,
-                            ),
-                            Text.rich(TextSpan(
-                              text: 'Уже есть аккаунт? ',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 14),
-                              children: <TextSpan>[
-                                TextSpan(
-                                    text: 'Войти',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        decoration: TextDecoration.underline),
-                                    recognizer: TapGestureRecognizer()
-                                      ..onTap = () {
-                                        nextScreenReplace(
-                                            context, const LoginPage());
-                                      }),
-                              ],
-                            )),
-                          ],
-                        )),
-                  ),
-                ),
-        ),
-      ],
-    );
+  void initState() {
+    super.initState();
+    if (widget.consentConfirmed) {
+      authService = widget.authService ?? AuthService();
+      _authPending = authService.hasPendingAttempt;
+      _emailController.text = authService.pendingEmail ?? '';
+    }
   }
 
-  register() async {
-    if (formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
-      await authService
-          .registerUserWithEmailAndPassword(fullName, email, password)
-          .then((value) async {
-        if (value == true) {
-          // saving the shared preference state
-          await HelperFunctions.saveUserLoggedInStatus(true);
-          await HelperFunctions.saveUserEmailSF(email);
-          await HelperFunctions.saveUserNameSF(fullName);
-          firebaseAuth.currentUser?.updateDisplayName(fullName);
-          nextScreenReplace(context, const AboutUserWriting());
-        } else {
-          try {
-            await InternetAddress.lookup('example.com');
-          } on Exception catch (_) {
-            return showSnackbar(context, Colors.red, 'Нет интернет соединения');
-          }
-          setState(() {
-            _isLoading = false;
-          });
-          showSnackbar(context, Colors.red, value);
-        }
-      });
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => !widget.consentConfirmed
+      ? const RegistrationConsentPage()
+      : ClrsAuthShell(
+          busy: _isLoading,
+          child: AutofillGroup(
+              child: Form(
+            key: formKey,
+            child: Column(children: [
+              Text(context.tr('Создайте профиль для серьёзных отношений'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14)),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _nameController,
+                readOnly: _authPending || _isLoading,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.nickname],
+                decoration: InputDecoration(
+                    labelText: context.tr('Никнэйм'),
+                    prefixIcon: const Icon(Icons.person_outline, size: 21)),
+                validator: (value) => (value ?? '').trim().isEmpty
+                    ? context.tr('Имя не может быть пустым')
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _emailController,
+                readOnly: _authPending || _isLoading,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.email],
+                decoration: InputDecoration(
+                    labelText: context.tr('Email'),
+                    prefixIcon: const Icon(Icons.mail_outline, size: 21)),
+                validator: (value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+                        .hasMatch((value ?? '').trim())
+                    ? null
+                    : context.tr('Введите корректный email'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _passwordController,
+                readOnly: _authPending || _isLoading,
+                obscureText: _passwordHidden,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => register(),
+                autofillHints: const [AutofillHints.newPassword],
+                decoration: InputDecoration(
+                    labelText: context.tr('Пароль'),
+                    prefixIcon: const Icon(Icons.lock_outline, size: 21),
+                    suffixIcon: IconButton(
+                        tooltip: context.tr(_passwordHidden
+                            ? 'Показать пароль'
+                            : 'Скрыть пароль'),
+                        onPressed: () =>
+                            setState(() => _passwordHidden = !_passwordHidden),
+                        icon: Icon(
+                            _passwordHidden
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                            size: 21))),
+                validator: (value) => (value ?? '').length < 6
+                    ? context.tr('Пароль должен содержать 6 символов')
+                    : null,
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                  onPressed: _isLoading ? null : register,
+                  child: Text(
+                      context.tr(_authPending
+                          ? 'Проверить регистрацию'
+                          : 'Зарегистрироваться'),
+                      textAlign: TextAlign.center)),
+              const SizedBox(height: 12),
+              Text(context.tr('Документы приложения'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12)),
+              TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () => nextScreen(context, const Politica()),
+                  child: Text(context.tr('Политика конфиденциальности'),
+                      textAlign: TextAlign.center)),
+              TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () => nextScreen(context, const Rules()),
+                  child: Text(context.tr('Пользовательское соглашение'),
+                      textAlign: TextAlign.center)),
+              Wrap(
+                  alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(context.tr('Уже есть аккаунт?'),
+                        style: const TextStyle(fontSize: 13)),
+                    TextButton(
+                        onPressed: _authPending || _isLoading
+                            ? null
+                            : () => nextScreenReplace(context,
+                                LoginPage(initialEmail: _emailController.text)),
+                        child: Text(context.tr('Войти'))),
+                  ]),
+            ]),
+          )),
+        );
+
+  Future<void> register() async {
+    if (!widget.consentConfirmed ||
+        _isLoading ||
+        (!_authPending && !(formKey.currentState?.validate() ?? false))) return;
+    setState(() => _isLoading = true);
+    try {
+      final confirmed = await authService.registerUserWithEmailAndPassword(
+        _nameController.text,
+        _emailController.text,
+        _passwordController.text,
+      );
+      if (!mounted) return;
+      if (!confirmed) {
+        setState(() => _authPending = true);
+        showSnackbar(
+            context,
+            LrsTheme.surface,
+            context.tr(
+                'Регистрация ещё выполняется. Нажмите «Проверить регистрацию», чтобы дождаться этого же запроса.'));
+        return;
+      }
+      _authPending = false;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const SessionGate()),
+        (_) => false,
+      );
+    } on FirebaseAuthException catch (error) {
+      if (mounted) setState(() => _authPending = false);
+      const errors = {
+        'email-already-in-use':
+            'Этот email уже зарегистрирован. Войдите или восстановите пароль.',
+        'weak-password': 'Пароль слишком простой.',
+        'invalid-email': 'Проверьте email.',
+        'network-request-failed': 'Нет соединения с сервером.',
+      };
+      if (mounted)
+        showSnackbar(
+          context,
+          LrsTheme.danger,
+          context.tr(errors[error.code] ??
+              'Не удалось зарегистрироваться. Повторите попытку.'),
+        );
+    } catch (_) {
+      if (mounted) setState(() => _authPending = false);
+      if (mounted)
+        showSnackbar(
+          context,
+          LrsTheme.danger,
+          context
+              .tr('Не удалось завершить регистрацию. Попробуйте войти снова.'),
+        );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 }

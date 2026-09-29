@@ -1,176 +1,132 @@
-// ignore_for_file: use_build_context_synchronously
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
-import 'package:wbrs/app/helper/helper_function.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
-import 'package:wbrs/app/widgets/drawer.dart';
-import 'package:wbrs/app/widgets/widgets.dart';
-
-import '../../../app/widgets/bottom_nav_bar.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/group_avatar.dart';
 
 class MyVisitersPage extends StatefulWidget {
-  final Stream? visiters;
   const MyVisitersPage({super.key, required this.visiters});
-
+  final Stream? visiters;
   @override
   State<MyVisitersPage> createState() => _MyVisitersPageState();
 }
 
 class _MyVisitersPageState extends State<MyVisitersPage> {
-  var currentUser = firebaseAuth.currentUser;
+  late final String? _owner = firebaseAuth.currentUser?.uid;
+  late Stream<QuerySnapshot> _visitors = _source();
+  bool _opening = false;
+  int _attempt = 0;
+  Stream<QuerySnapshot> _source() =>
+      widget.visiters?.map((x) => x as QuerySnapshot) ??
+      (_owner == null
+          ? Stream.error(StateError('Сеанс завершён'))
+          : firebaseFirestore
+              .collection('users')
+              .doc(_owner)
+              .collection('visiters')
+              .orderBy('lastVisitTs', descending: true)
+              .snapshots());
+  @override
+  void didUpdateWidget(covariant MyVisitersPage old) {
+    super.didUpdateWidget(old);
+    if (old.visiters != widget.visiters) _visitors = _source();
+  }
+
+  Future<void> _open(Map<String, dynamic> visitor) async {
+    if (_opening || firebaseAuth.currentUser?.uid != _owner) return;
+    final uid = '${visitor['uid'] ?? ''}';
+    if (uid.isEmpty) return;
+    setState(() => _opening = true);
+    try {
+      final doc = await firebaseFirestore
+          .collection('users')
+          .doc(uid)
+          .get()
+          .timeout(const Duration(seconds: 15));
+      if (!mounted || firebaseAuth.currentUser?.uid != _owner) return;
+      if (!doc.exists || doc.data()?['status'] == 'deleted') {
+        throw StateError('Профиль недоступен');
+      }
+      final data = doc.data()!;
+      await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => SomebodyProfile(
+              uid: uid,
+              photoUrl: '${data['profilePic'] ?? ''}',
+              name: '${data['fullName'] ?? ''}',
+              userInfo: data)));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(context
+                .tr('Не удалось открыть профиль. Попробуйте ещё раз.'))));
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) {
-    Widget visitersList(AsyncSnapshot snapshot, int index) {
-      Timestamp time = snapshot.data!.docs[index]['lastVisitTs'];
-      Map visitor = snapshot.data!.docs[index].data() as Map;
-      return Card(
-        color: grey,
-        child: ListTile(
-          onTap: () async {
-            var doc = await firebaseFirestore
-                .collection('users')
-                .doc(snapshot.data!.docs[index]['uid'])
-                .get();
-            if(doc.exists){
-              nextScreen(
-                  context,
-                  SomebodyProfile(
-                    uid: snapshot.data!.docs[index]['uid'],
-                    photoUrl: snapshot.data!.docs[index]['photoUrl'],
-                    name: snapshot.data!.docs[index]['fullName'],
-                    userInfo: doc.data() as Map,
-                  ));
-            } else{
-              showSnackbar(context, Colors.red, 'Пользователь был удален');
-            }
-          },
-          leading: SizedBox(
-            width: 50,
-            child: userImageWithCircle(visitor['photoUrl'],
-                visitor['group'],
-                visitor.containsKey('online') ? visitor['online'] : false,
-                50.0, 50.0),
-          ),
-          title: Row(
-            children: [
-              Text(
-                visitor['fullName'],
-                style: const TextStyle(color: Colors.white),
-              ),
-              const SizedBox(
-                width: 10,
-              ),
-              int.parse(visitor['age'].toString()) % 10 == 0
-                  ? Text(
-                      '${visitor['age'].toString()} лет',
-                      style: const TextStyle(color: Colors.white),
-                    )
-                  : int.parse(visitor['age'].toString()) %
-                              10 ==
-                          1
-                      ? Text(
-                          '${visitor['age'].toString()} год',
-                          style: const TextStyle(color: Colors.white),
-                        )
-                      : int.parse(visitor['age']
-                                      .toString()) %
-                                  10 !=
-                              5
-                          ? Text(
-                              '${visitor['age']} года',
-                              style: const TextStyle(color: Colors.white),
-                            )
-                          : Text(
-                              '${visitor['age']} лет',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-            ],
-          ),
-          subtitle: Text(
-            'Последнее посещение: \n${time.toDate().toString().substring(0, 16)}',
-            style: const TextStyle(color: Colors.white),
-          ),
-          dense: false,
-        ),
-      );
-    }
-
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-        ),
-        Scaffold(
-          appBar: AppBar(
-            iconTheme: const IconThemeData(color: Colors.white),
-            elevation: 0,
-            centerTitle: true,
-            backgroundColor: Colors.transparent,
-            title: const Text(
-              'Посетители страницы',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 27),
-            ),
-          ),
-          backgroundColor: Colors.transparent,
-          drawer: const MyDrawer(),
-          bottomNavigationBar: const MyBottomNavigationBar(),
-          body: StreamBuilder(
-              stream: widget.visiters,
-              builder: (context, snapshot) {
-                int length = 0;
-                if (snapshot.data != null) {
-                  length = snapshot.data!.docs.length;
-                }
-                if (snapshot.data != null) {
-                  if (length == 0) {
-                    return Container(
-                      height: 700,
-                      padding: const EdgeInsets.all(15),
-                      child: const Align(
-                        alignment: Alignment.center,
-                        child: Text(
-                          'Пока на вашей странице не было гостей.',
-                          style: TextStyle(color: Colors.white, fontSize: 18),
-                        ),
-                      ),
-                    );
-                  } else {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 10, horizontal: 30),
-                      height: MediaQuery.of(context).size.height * 0.9,
-                      child: ListView.builder(
-                          itemCount: length,
-                          itemBuilder: (BuildContext context, index) {
-                            return visitersList(snapshot, index);
-                          }),
-                    );
-                  }
-                } else {
-                  return Container(
-                    height: 700,
-                    padding: const EdgeInsets.all(15),
-                    child: const Align(
-                      alignment: Alignment.center,
+  Widget build(BuildContext context) => ClrsScaffold(
+      appBar: AppBar(title: Text(context.tr('Мои гости'))),
+      body: StreamBuilder<QuerySnapshot>(
+          key: ValueKey(_attempt),
+          stream: _visitors,
+          builder: (context, snapshot) =>
+              ListView(padding: const EdgeInsets.all(14), children: [
+                const ClrsBrandHeader(),
+                if (_opening) const LinearProgressIndicator(),
+                if (snapshot.hasError)
+                  ClrsPanel(
+                      child: Column(children: [
+                    Text(context.tr('Не удалось загрузить список.')),
+                    TextButton(
+                        onPressed: () => setState(() {
+                              _attempt++;
+                              _visitors = _source();
+                            }),
+                        child: Text(context.tr('Повторить')))
+                  ]))
+                else if (!snapshot.hasData)
+                  const Center(child: CircularProgressIndicator())
+                else if (snapshot.data!.docs.isEmpty)
+                  ClrsPanel(
                       child: Text(
-                        'Пока на вашей странице не было гостей.',
-                        style: TextStyle(color: Colors.white, fontSize: 18),
-                      ),
-                    ),
-                  );
-                }
-              }),
-        ),
-      ],
-    );
+                          context.tr('Пока на вашей странице не было гостей.')))
+                else
+                  for (final doc in snapshot.data!.docs)
+                    _tile(Map<String, dynamic>.from(doc.data() as Map)),
+              ])));
+  Widget _tile(Map<String, dynamic> d) {
+    final rawDate = d['lastVisitTs'];
+    final date = rawDate is Timestamp
+        ? rawDate.toDate()
+        : rawDate is DateTime
+            ? rawDate
+            : null;
+    final age = num.tryParse('${d['age'] ?? ''}');
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: ClrsPanel(
+            padding: EdgeInsets.zero,
+            child: ListTile(
+                contentPadding: const EdgeInsets.all(12),
+                leading: GroupAvatar(
+                    url: '${d['photoUrl'] ?? ''}',
+                    group: '${d['group'] ?? ''}',
+                    size: 46),
+                title: Text('${d['fullName'] ?? ''}'),
+                subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (age != null)
+                        Text(context.tr('{count} лет', count: age)),
+                      if (date != null)
+                        Text(context.tr('Последнее посещение: {date}',
+                            args: {'date': context.l10n.dateTime(date)})),
+                    ]),
+                onTap: _opening ? null : () => _open(d),
+                trailing: const Icon(Icons.chevron_right, size: 18))));
   }
 }

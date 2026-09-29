@@ -1,16 +1,20 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:random_string/random_string.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
+import 'package:wbrs/presentation/screens/feed/post_detail_page.dart';
 import 'package:wbrs/presentation/screens/shop/shop.dart';
-import 'package:wbrs/service/database_service.dart';
+import 'package:wbrs/service/chat_submission.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/shared/translatable_text.dart';
 
 class MessageTile extends StatefulWidget {
   final DocumentSnapshot message;
@@ -22,16 +26,17 @@ class MessageTile extends StatefulWidget {
   final Widget? avatar;
   final bool isChat;
 
-  const MessageTile(
-      {super.key,
-      required this.message,
-      required this.chatId,
-      required this.sender,
-      required this.sentByMe,
-      required this.isRead,
-      required this.name,
-      this.avatar,
-      required this.isChat});
+  const MessageTile({
+    super.key,
+    required this.message,
+    required this.chatId,
+    required this.sender,
+    required this.sentByMe,
+    required this.isRead,
+    required this.name,
+    this.avatar,
+    required this.isChat,
+  });
 
   @override
   State<MessageTile> createState() => _MessageTileState();
@@ -42,6 +47,86 @@ class _MessageTileState extends State<MessageTile> {
   bool isMessage = true, isReply = false, isTs = false, isGroup = false;
   Timestamp time = Timestamp.fromDate(DateTime.now());
   Map msg = {};
+  final TextEditingController replyController = TextEditingController();
+
+  Future<void> _openSharedContent(Map<String, dynamic> shared) async {
+    final postId = shared['postId']?.toString() ?? '';
+    final commentId = shared['commentId']?.toString() ?? '';
+    if (postId.isEmpty || postId.contains('/') || commentId.contains('/')) return;
+    try {
+      final post = await firebaseFirestore.collection('posts').doc(postId).get();
+      if (!mounted || post.data()?['status'] != 'published') {
+        throw StateError('Публикация недоступна');
+      }
+      String? rootId;
+      if (commentId.isNotEmpty) {
+        final comment = await post.reference.collection('comments').doc(commentId).get();
+        if (!mounted || !comment.exists) {
+          throw StateError('Комментарий недоступен');
+        }
+        final parent = comment.data()?['parentId']?.toString() ?? '';
+        rootId = parent.isEmpty ? commentId : parent;
+      }
+      if (!mounted) return;
+      nextScreen(context, PostDetailPage(
+        postId: postId,
+        post: post.data()!,
+        threadRootId: rootId,
+      ));
+    } catch (_) {
+      if (mounted) {
+        showSnackbar(context, LrsTheme.danger,
+            context.tr('Публикация удалена или недоступна.'));
+      }
+    }
+  }
+
+  Widget _sharedContentCard(Map<String, dynamic> shared) {
+    final comment = shared['kind'] == 'comment';
+    final text = shared['text']?.toString() ?? '';
+    final image = shared['imageUrl']?.toString() ?? '';
+    final postId = shared['postId']?.toString() ?? '';
+    return InkWell(
+      onTap: postId.isEmpty || postId.contains('/')
+          ? null
+          : () => _openSharedContent(shared),
+      child: Container(
+        margin: const EdgeInsets.only(top: 7),
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: const Color(0x66302110),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: LrsTheme.actionBorder),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(context.tr(comment ? 'Комментарий' : 'Публикация'),
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700, color: LrsTheme.peachLight)),
+          if ((shared['authorName']?.toString() ?? '').isNotEmpty)
+            Text(shared['authorName'].toString(),
+                style: const TextStyle(color: LrsTheme.muted, fontSize: 12)),
+          if (text.isNotEmpty)
+            TranslatableText(text,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white)),
+          if (image.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: CachedNetworkImage(
+                    imageUrl: image,
+                    width: 135,
+                    height: 85,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const Icon(Icons.broken_image_outlined)),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -51,326 +136,195 @@ class _MessageTileState extends State<MessageTile> {
 
   @override
   void dispose() {
+    replyController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     msg = widget.message.data() as Map<String, dynamic>;
-    setState(() {
-      isMessage = msg.containsKey('message');
-      isReply = msg.containsKey('replyMessage');
-      isGroup = !widget.isChat;
-      isTs = msg.containsKey('ts');
-      time = isTs ? widget.message['ts'] : widget.message['time'];
-    });
-    final DocumentReference firestore =
-        firebaseFirestore.collection('chats').doc(widget.chatId);
+    final shared = msg['sharedContent'] is Map
+        ? Map<String, dynamic>.from(msg['sharedContent'] as Map)
+        : null;
+    isMessage = msg.containsKey('message');
+    final giftNoticeName = msg['giftNoticeName']?.toString();
+    isReply = msg.containsKey('replyMessage');
+    isGroup = !widget.isChat;
+    isTs = msg.containsKey('ts');
+    final timestamp = isTs ? msg['ts'] : msg['time'];
+    time = timestamp is Timestamp ? timestamp : Timestamp.now();
+    final currentUid = firebaseAuth.currentUser?.uid;
+    final deletedFor = msg['deletedFor'];
+    if (msg['deleteFor'] == currentUid ||
+        (deletedFor is List && deletedFor.contains(currentUid))) {
+      return const SizedBox.shrink();
+    }
     Size size = MediaQuery.of(context).size;
 
     void storePosition(TapDownDetails details) {
       _tapPosition = details.globalPosition;
     }
 
-    final TextEditingController replyController = TextEditingController();
     final FirebaseAuth auth = firebaseAuth;
 
-    Future<void> sendMessage(String message, Map replyMsg) async {
-      final user = auth.currentUser;
-      if (user != null) {
-        final messageRef = {
-          'message': message,
-          'sender': user.uid,
-          'avatar': user.photoURL,
-          'name': user.displayName,
-          'replyMessage': replyMsg,
-          'sendByID': user.uid,
-          'isRead': true,
-          'sendBy': user.displayName,
-        };
-        if (!isGroup) {
-          messageRef.addAll({'ts': FieldValue.serverTimestamp()});
-          DatabaseService()
-              .addMessage(widget.chatId, randomNumeric(12), messageRef);
-        } else {
-          messageRef.addAll({'time': FieldValue.serverTimestamp()});
-          DatabaseService().sendMessageGroup(widget.chatId, messageRef);
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Сообщение отправлено.'),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('Вы должны авторизоваться, чтобы отправить сообщение'),
-          ),
-        );
-      }
-    }
-
     Future<void> deleteMessage(String messageId) async {
-      final user = auth.currentUser;
-      if (user != null) {
-        final messageSnapshot =
-            await firestore.collection('chats').doc(widget.message.id).get();
-        if (messageSnapshot.exists &&
-            messageSnapshot.data()!['sendByID'] == user.uid) {
-          await firestore
-              .collection('chats')
-              .doc(widget.message.id)
-              .update({'deleteFor': firebaseAuth.currentUser!.uid});
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Сообщение удалено.'),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Вы можете удалять только свои сообщения.'),
-            ),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Чтобы удалить сообщение, необходимо войти.'),
-          ),
-        );
-      }
+      final uid = auth.currentUser?.uid;
+      if (uid == null) return;
+      await widget.message.reference.update({
+        'deletedFor': FieldValue.arrayUnion([uid]),
+      });
     }
 
     Future<void> replyToMessage(Map message) async {
-      setState(() {});
-      replyController.clear();
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: grey,
-            title: const Text('Написать ответ'),
-            titleTextStyle: const TextStyle(color: Colors.white),
-            content: SizedBox(
-              width: MediaQuery.of(context).size.width * 0.8,
-              child: TextField(
-                controller: replyController,
-                minLines: 1,
-                maxLines: 5,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'Напишите свой ответ',
-                  labelStyle: TextStyle(color: Colors.white),
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text(
-                  'Отмена',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-              TextButton(
-                onPressed: () {
-                  sendMessage(replyController.text, message);
-                  Navigator.pop(context);
-                },
-                child: const Text(
-                  'Ответить',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          );
-        },
-      );
+      final quote = <String, dynamic>{
+        for (final key in ['message', 'name', 'sendBy', 'sender', 'sendByID'])
+          if (message[key] != null) key: message[key].toString(),
+      };
+      await showDialog<void>(
+          context: context,
+          builder: (_) => _MessageReplySheet(
+              chatId: widget.chatId,
+              group: isGroup,
+              messageId: widget.message.id,
+              quote: quote));
     }
 
     Future<void> editMessage(String messageId) async {
       final user = auth.currentUser;
-      if (user != null) {
-        final messageSnapshot =
-            await firestore.collection('chats').doc(widget.message.id).get();
-        if (messageSnapshot.exists &&
-            messageSnapshot.data()!['sendByID'] == user.uid) {
-          final messageText = messageSnapshot.data()!['message'];
-          final newMessageText = await showDialog<String>(
-            context: context,
-            builder: (BuildContext context) {
-              final controller = TextEditingController(text: messageText);
-              return AlertDialog(
-                title: const Text('Редактировать сообщение'),
-                content: TextField(
-                  controller: controller,
-                  decoration: const InputDecoration(
-                    labelText: 'Редактировать сообщение',
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Отмена'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, controller.text),
-                    child: const Text('Сохранить'),
-                  ),
-                ],
-              );
-            },
-          );
-
-          if (newMessageText != null && newMessageText != messageText) {
-            await firestore.collection('chats').doc(widget.message.id).update({
-              'message': newMessageText,
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Сообщение успешно отредактировано'),
-              ),
-            );
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Вы можете редактировать только свои сообщения.'),
-            ),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Чтобы отредактировать сообщение, необходимо войти'),
+      if (user == null) return;
+      final snapshot = await widget.message.reference.get();
+      if (!mounted || auth.currentUser?.uid != user.uid) return;
+      final data = snapshot.data() as Map<String, dynamic>?;
+      if (data == null ||
+          (data['sendByID'] ?? data['sender']) != user.uid ||
+          data['message'] is! String) {
+        return;
+      }
+      final controller = TextEditingController(text: data['message'] as String);
+      final edited = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: LrsTheme.surface,
+          title: Text(context.tr('Редактировать сообщение')),
+          content: TextField(
+            controller: controller,
+            minLines: 2,
+            maxLines: 8,
+            style: const TextStyle(color: LrsTheme.text),
           ),
-        );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(context.tr('Отмена')),
+            ),
+            TextButton(
+              onPressed: () {
+                if (controller.text.trim().isNotEmpty) {
+                  Navigator.pop(dialogContext, controller.text.trim());
+                }
+              },
+              child: Text(context.tr('Сохранить')),
+            ),
+          ],
+        ),
+      );
+      // The dialog route may animate out after the Future completes.
+      if (edited != null &&
+          edited != data['message'] &&
+          auth.currentUser?.uid == user.uid) {
+        await widget.message.reference.update({'message': edited});
       }
     }
 
     Future<void> copyMessage(String message) async {
       await Clipboard.setData(ClipboardData(text: message));
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Сообщение скопировано в буфер обмена.'),
-        ),
+        SnackBar(
+            content: Text(context.tr('Сообщение скопировано в буфер обмена.'))),
       );
     }
 
     Future<void> deleteMessageForEveryone(String messageId) async {
-      final user = auth.currentUser;
-      if (user != null) {
-        final messageSnapshot =
-            await firestore.collection('chats').doc(widget.message.id).get();
-        if (messageSnapshot.exists &&
-            messageSnapshot.data()!['sendByID'] == user.uid) {
-          final sentTime = messageSnapshot.data()!['ts'].toDate();
-          final timeSinceMessageSent = DateTime.now().difference(sentTime);
-          const int timeLimit = 2; // В минутах
-          if (timeSinceMessageSent.inDays <= timeLimit) {
-            await firestore.collection('chats').doc(widget.message.id).delete();
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Сообщение удалено для всех.'),
-              ),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                    'Удалить сообщение для всех можно только в течение 2 дней после его отправки..'),
-              ),
-            );
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'Вы можете удалять только свои собственные сообщения для всех.'),
-            ),
-          );
+      final uid = auth.currentUser?.uid;
+      if (uid == null) return;
+      final snapshot = await widget.message.reference.get();
+      final data = snapshot.data() as Map<String, dynamic>?;
+      if (data == null || (data['sendByID'] ?? data['sender']) != uid) return;
+      final sentAt = data['ts'] ?? data['time'];
+      if (sentAt is! Timestamp) return;
+      final elapsed = DateTime.now().difference(sentAt.toDate());
+      if (!elapsed.isNegative && elapsed <= const Duration(days: 2)) {
+        if (auth.currentUser?.uid == uid) {
+          await widget.message.reference.delete();
         }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Вы должны быть авторизованы, чтобы удалить сообщение для всех.'),
-          ),
+      } else if (mounted) {
+        showSnackbar(
+          context,
+          LrsTheme.surface,
+          context.tr('Удалить для всех можно в течение 2 дней после отправки.'),
         );
       }
     }
 
-    showPopupMenu() async {
-      final RenderObject? overlay =
-          Overlay.of(context).context.findRenderObject();
-
-      await showMenu(
+    Future<void> showPopupMenu() async {
+      final overlay = Overlay.of(context).context.findRenderObject();
+      if (overlay == null) return;
+      final action = await showMenu<String>(
         context: context,
+        color: LrsTheme.surface,
         position: RelativeRect.fromRect(
-            _tapPosition! & const Size(40, 40), // smaller rect, the touch area
-            Offset.zero &
-                overlay!.semanticBounds.size // Bigger rect, the entire screen
+          _tapPosition! & const Size(40, 40),
+          Offset.zero & overlay.semanticBounds.size,
+        ),
+        items: [
+          if (isMessage)
+            PopupMenuItem(value: 'reply', child: Text(context.tr('Ответить'))),
+          if (isMessage && widget.sentByMe)
+            PopupMenuItem(
+                value: 'edit', child: Text(context.tr('Редактировать'))),
+          if (isMessage)
+            PopupMenuItem(value: 'copy', child: Text(context.tr('Копировать'))),
+          PopupMenuItem(
+            value: 'delete_me',
+            child: Text(context.tr('Удалить у меня')),
+          ),
+          if (widget.sentByMe)
+            PopupMenuItem(
+              value: 'delete_everyone',
+              child: Text(context.tr('Удалить для всех')),
             ),
-        items: isMessage
-            ? [
-                PopupMenuItem<String>(
-                  value: 'reply',
-                  onTap: () {
-                    replyToMessage(
-                        widget.message.data() as Map<String, dynamic>);
-                  },
-                  child: const Text('Ответить'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'edit',
-                  onTap: () {
-                    editMessage(widget.message.id);
-                  },
-                  child: const Text('Редактировать'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'copy',
-                  onTap: () {
-                    copyMessage(widget.message['message']);
-                  },
-                  child: const Text('Копировать'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'delete_me',
-                  onTap: () {
-                    deleteMessage(widget.message.id);
-                  },
-                  child: const Text('Удалить у меня'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'delete_everyone',
-                  onTap: () {
-                    deleteMessageForEveryone(widget.message.id);
-                  },
-                  child: const Text('Удалить для всех'),
-                ),
-              ]
-            : [
-                PopupMenuItem<String>(
-                  value: 'delete_me',
-                  onTap: () {
-                    deleteMessage(widget.message.id);
-                  },
-                  child: const Text('Удалить у меня'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'delete_everyone',
-                  onTap: () {
-                    deleteMessageForEveryone(widget.message.id);
-                  },
-                  child: const Text('Удалить для всех'),
-                ),
-              ],
-        elevation: 8.0,
+        ],
       );
+      if (!mounted || action == null) return;
+      try {
+        switch (action) {
+          case 'reply':
+            await replyToMessage(msg);
+            break;
+          case 'edit':
+            await editMessage(widget.message.id);
+            break;
+          case 'copy':
+            await copyMessage(msg['message'].toString());
+            break;
+          case 'delete_me':
+            await deleteMessage(widget.message.id);
+            break;
+          case 'delete_everyone':
+            await deleteMessageForEveryone(widget.message.id);
+            break;
+        }
+      } catch (_) {
+        if (mounted) {
+          showSnackbar(
+            context,
+            LrsTheme.danger,
+            context.tr(
+                'Операция не выполнена. Проверьте соединение и повторите попытку.'),
+          );
+        }
+      }
     }
 
     return GestureDetector(
@@ -380,10 +334,11 @@ class _MessageTileState extends State<MessageTile> {
       },
       child: Container(
         padding: EdgeInsets.only(
-            top: 4,
-            bottom: 4,
-            left: widget.sentByMe ? 0 : 15,
-            right: widget.sentByMe ? 24 : 0),
+          top: 4,
+          bottom: 4,
+          left: widget.sentByMe ? 0 : 15,
+          right: widget.sentByMe ? 24 : 0,
+        ),
         alignment:
             widget.sentByMe ? Alignment.centerRight : Alignment.centerLeft,
         child: Row(
@@ -398,40 +353,48 @@ class _MessageTileState extends State<MessageTile> {
                           .doc(widget.sender)
                           .get();
 
+                      if (!mounted) return;
                       nextScreen(
-                          context,
-                          SomebodyProfile(
-                              uid: widget.sender,
-                              photoUrl: userInfo.get('profilePic'),
-                              name: widget.name,
-                              userInfo: userInfo.data() as Map));
+                        context,
+                        SomebodyProfile(
+                          uid: widget.sender,
+                          photoUrl: userInfo.get('profilePic'),
+                          name: widget.name,
+                          userInfo: userInfo.data() as Map,
+                        ),
+                      );
                     },
-                    child: widget.avatar ?? const SizedBox.shrink()),
-            const SizedBox(
-              width: 5,
-            ),
-            Container(
+                    child: widget.avatar ?? const SizedBox.shrink(),
+                  ),
+            const SizedBox(width: 5),
+            Flexible(
+                child: Container(
               constraints: BoxConstraints(maxWidth: size.width * 0.74),
               margin: widget.sentByMe
                   ? const EdgeInsets.only(left: 30)
                   : const EdgeInsets.only(right: 30),
               padding: const EdgeInsets.only(
-                  top: 10, bottom: 10, left: 10, right: 10),
+                top: 10,
+                bottom: 10,
+                left: 10,
+                right: 10,
+              ),
               decoration: BoxDecoration(
-                  borderRadius: widget.sentByMe
-                      ? const BorderRadius.only(
-                          topLeft: Radius.circular(20),
-                          topRight: Radius.circular(20),
-                          bottomLeft: Radius.circular(20),
-                        )
-                      : const BorderRadius.only(
-                          topLeft: Radius.circular(20),
-                          topRight: Radius.circular(20),
-                          bottomRight: Radius.circular(20),
-                        ),
-                  color: widget.sentByMe
-                      ? orange90
-                      : grey),
+                borderRadius: widget.sentByMe
+                    ? const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
+                        bottomLeft: Radius.circular(20),
+                      )
+                    : const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
+                        bottomRight: Radius.circular(20),
+                      ),
+                color: widget.sentByMe
+                    ? const Color(0xE0442D24)
+                    : const Color(0xE02B211D),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -439,129 +402,296 @@ class _MessageTileState extends State<MessageTile> {
                     widget.name.toUpperCase(),
                     textAlign: TextAlign.start,
                     style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: -0.5),
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: -0.5,
+                    ),
                   ),
-                  isReply
-                      ? IntrinsicHeight(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const VerticalDivider(
-                                width: 4,
-                                color: Colors.white,
-                                thickness: 2,
-                              ),
-                              const SizedBox(
-                                width: 10,
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                  if (isReply)
+                    Container(
+                      margin: const EdgeInsets.only(top: 5),
+                      padding: const EdgeInsets.only(left: 10),
+                      decoration: const BoxDecoration(
+                        border: Border(
+                            left: BorderSide(color: Colors.white, width: 2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${msg['replyMessage'][isGroup ? 'name' : 'sendBy'] ?? ''}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.white),
+                          ),
+                          TranslatableText(
+                            '${msg['replyMessage']['message'] ?? ''}',
+                            autoTranslate: true,
+                            showAction: false,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 5),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      isMessage
+                          ? shared != null
+                              ? const SizedBox.shrink()
+                              : giftNoticeName != null && giftNoticeName.isNotEmpty
+                              ? Text(
+                                  '${context.tr('Подарок {name} подарен!', args: {
+                                        'name': context.tr(giftNoticeName)
+                                      })} ❤️',
+                                  textAlign: TextAlign.start,
+                                  style: const TextStyle(
+                                      fontSize: 14, color: Colors.white))
+                              : TranslatableText(
+                                  '${widget.message['message'] ?? ''}',
+                                  autoTranslate: false,
+                                  showAction: true,
+                                  textAlign: TextAlign.start,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.white,
+                                  ),
+                                )
+                          : GestureDetector(
+                              onTap: () {
+                                if (widget.sentByMe) {
+                                  nextScreenReplace(
+                                    context,
+                                    const ShopPage(tabIndex: 1),
+                                  );
+                                } else {
+                                  nextScreenReplace(
+                                    context,
+                                    const ShopPage(tabIndex: 0),
+                                  );
+                                }
+                              },
+                              child: Column(
                                 children: [
-                                  const SizedBox(
-                                    height: 5,
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: AspectRatio(
+                                      aspectRatio: 512 / 328,
+                                      child: Image.asset(
+                                        '${widget.message['image']}',
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Center(
+                                                child: Icon(Icons
+                                                    .card_giftcard_outlined)),
+                                      ),
+                                    ),
                                   ),
                                   Text(
-                                    isGroup
-                                        ? msg['replyMessage']['name']
-                                        : msg['replyMessage']['sendBy'],
+                                    context
+                                        .tr(widget.message['name'] as String),
                                     textAlign: TextAlign.start,
                                     style: const TextStyle(
-                                        fontSize: 12, color: Colors.white),
-                                  ),
-                                  SizedBox(
-                                    width: size.width * 0.6,
-                                    child: Text(
-                                      msg['replyMessage']['message'],
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.start,
-                                      style: const TextStyle(
-                                          fontSize: 12, color: Colors.white),
+                                      fontSize: 16,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
-                        )
-                      : const SizedBox.shrink(),
-                  const SizedBox(
-                    height: 5,
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Flexible(
-                        child: isMessage
-                            ? Text(widget.message['message'],
-                                textAlign: TextAlign.start,
-                                style: const TextStyle(
-                                    fontSize: 14, color: Colors.white))
-                            : GestureDetector(
-                                onTap: () {
-                                  if (widget.sentByMe) {
-                                    nextScreenReplace(
-                                        context,
-                                        const ShopPage(
-                                          tabIndex: 1,
-                                        ));
-                                  } else {
-                                    nextScreenReplace(
-                                        context,
-                                        const ShopPage(
-                                          tabIndex: 0,
-                                        ));
-                                  }
-                                },
-                                child: Column(
-                                  children: [
-                                    Image.asset(
-                                      widget.message['image'],
-                                    ),
-                                    Text(widget.message['name'],
-                                        textAlign: TextAlign.start,
-                                        style: const TextStyle(
-                                            fontSize: 16, color: Colors.white)),
-                                  ],
-                                )),
+                            ),
+                      if (shared != null) _sharedContentCard(shared),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 10,
+                          children: [
+                            if (widget.sentByMe)
+                              FaIcon(
+                                FontAwesomeIcons.check,
+                                size: 15,
+                                color: widget.isRead
+                                    ? Colors.greenAccent
+                                    : Colors.grey,
+                              ),
+                            Text(
+                              context.l10n.time(time.toDate(),
+                                  alwaysUse24HourFormat:
+                                      MediaQuery.alwaysUse24HourFormatOf(
+                                          context)),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      widget.sentByMe
-                          ? const SizedBox.shrink()
-                          : const SizedBox(),
-                      widget.sentByMe
-                          ? widget.isRead
-                              ? const FaIcon(
-                                  FontAwesomeIcons.check,
-                                  size: 15,
-                                  color: Colors.greenAccent,
-                                )
-                              : const FaIcon(
-                                  FontAwesomeIcons.check,
-                                  size: 15,
-                                  color: Colors.grey,
-                                )
-                          : const SizedBox(),
-                      const SizedBox(
-                        width: 10,
-                      ),
-                      Text(
-                        '${time.toDate().hour}:${time.toDate().minute < 10 ? '0${time.toDate().minute}' : time.toDate().minute}',
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.white),
-                      )
                     ],
-                  )
+                  ),
                 ],
               ),
-            ),
+            )),
           ],
         ),
       ),
     );
   }
+}
+
+class _MessageReplySheet extends StatefulWidget {
+  const _MessageReplySheet(
+      {required this.chatId,
+      required this.messageId,
+      required this.group,
+      required this.quote});
+  final String chatId, messageId;
+  final bool group;
+  final Map<String, dynamic> quote;
+  @override
+  State<_MessageReplySheet> createState() => _MessageReplySheetState();
+}
+
+class _MessageReplySheetState extends State<_MessageReplySheet> {
+  final _controller = TextEditingController();
+  late final ChatSubmissionService _service;
+  ChatSubmission? _request;
+  bool _restoring = true, _failedRestore = false, _sending = false;
+  String? _notice;
+  bool get _current => mounted && _service.isCurrentSession;
+  @override
+  void initState() {
+    super.initState();
+    _service = ChatSubmissionService();
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    setState(() {
+      _restoring = true;
+      _failedRestore = false;
+    });
+    try {
+      final request = await _service.restore(widget.chatId,
+          group: widget.group, replyId: widget.messageId);
+      if (!_current) return;
+      setState(() {
+        _request = request;
+        if (request != null) {
+          _controller.text = request.text;
+          _notice =
+              'Предыдущая отправка ожидает подтверждения. Проверьте результат.';
+        }
+      });
+    } catch (_) {
+      if (_current)
+        setState(() {
+          _failedRestore = true;
+          _notice = 'Не удалось восстановить отправку. Попробуйте ещё раз.';
+        });
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
+
+  Future<void> _send() async {
+    if (!_current || _sending || _restoring) return;
+    if (_failedRestore) {
+      await _restore();
+      return;
+    }
+    if (_controller.text.trim().isEmpty) return;
+    setState(() {
+      _sending = true;
+      _notice = null;
+    });
+    try {
+      if (_request?.write.failed == true) _request = null;
+      _request ??= _service.start(
+          chatId: widget.chatId,
+          text: _controller.text.trim(),
+          group: widget.group,
+          replyId: widget.messageId,
+          reply: widget.quote);
+      final confirmed = await _request!.write.wait();
+      if (!_current) return;
+      if (!confirmed) {
+        setState(() => _notice =
+            'Подтверждение ещё не получено. Сообщение может быть отправлено. Нажмите «Проверить отправку».');
+        return;
+      }
+      _service.acknowledge(widget.chatId, _request!,
+          group: widget.group, replyId: widget.messageId);
+      Navigator.pop(context);
+    } catch (_) {
+      if (_current) setState(() => _notice = 'Не удалось отправить ответ.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+          scrollable: true,
+          title: Text(context.tr('Написать ответ')),
+          content: SizedBox(
+              width: 420,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (_restoring) const LinearProgressIndicator(),
+                if ('${widget.quote['message'] ?? ''}'.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TranslatableText(
+                        '${widget.quote['message']}',
+                        autoTranslate: true,
+                        showAction: false,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: LrsTheme.muted),
+                      ),
+                    ),
+                  ),
+                TextField(
+                    controller: _controller,
+                    minLines: 1,
+                    maxLines: 4,
+                    readOnly: _restoring ||
+                        _failedRestore ||
+                        _sending ||
+                        (_request != null && !_request!.write.failed),
+                    decoration: InputDecoration(
+                        labelText: context.tr('Напишите свой ответ'))),
+                if (_notice != null)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(context.tr(_notice!))),
+              ])),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(context.tr('Закрыть'))),
+            TextButton(
+                onPressed: _restoring || _sending ? null : _send,
+                child: Text(context.tr(_failedRestore
+                    ? 'Повторить'
+                    : _request != null
+                        ? 'Проверить отправку'
+                        : 'Ответить'))),
+          ]);
 }

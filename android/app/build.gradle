@@ -26,8 +26,8 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.lrs"
-    compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    compileSdk 35
+    ndkVersion "26.1.10909125"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -56,21 +56,25 @@ android {
         manifestPlaceholders = [applicationName: "android.app.Application"]
     }
 
-    signingConfigs {
-        release {
-            storeFile file('wbrs.keystore') // Replace with your keystore file
-            storePassword '123456'      // Replace with your store password
-            keyAlias 'wbrs'                // Replace with your key alias
-            keyPassword '123456'          // Replace with your key password
+    flavorDimensions "backend"
+    productFlavors {
+        production {
+            dimension "backend"
+        }
+        sandbox {
+            dimension "backend"
+            applicationIdSuffix ".sandbox"
         }
     }
 
     buildTypes {
         release {
             shrinkResources false
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig signingConfigs.release
+            // Review build: sign with the local Android debug key so the APK can
+            // be installed and sent for client testing without the production key.
+            // Before publishing/updating the store app, restore the original
+            // production keystore/signing configuration from the client.
+            signingConfig signingConfigs.debug
         }
     }
 }

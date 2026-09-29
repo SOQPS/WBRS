@@ -1,817 +1,505 @@
-// ignore_for_file: library_private_types_in_public_api, unnecessary_string_escapes, non_constant_identifier_names, use_build_context_synchronously, deprecated_member_use
-
-import 'dart:io';
+import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
-import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
-import 'package:wbrs/presentation/screens/shop/shop.dart';
-import 'package:wbrs/service/database_service.dart';
 import 'package:wbrs/app/helper/helper_function.dart';
-import 'package:wbrs/service/notifications.dart';
 import 'package:wbrs/app/widgets/message_tile.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
-import 'package:random_string/random_string.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
+import 'package:wbrs/presentation/screens/shop/shop.dart';
+import 'package:wbrs/service/chat_submission.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/shared/paged_firestore_history.dart';
 
 class ChatScreen extends StatefulWidget {
+  const ChatScreen(
+      {super.key,
+      required this.chatWithUsername,
+      required this.photoUrl,
+      required this.id,
+      required this.chatId,
+      this.submissions,
+      this.writeTimeout = const Duration(seconds: 15)});
   final String chatWithUsername, photoUrl, id, chatId;
-  const ChatScreen({
-    super.key,
-    required this.chatWithUsername,
-    required this.photoUrl,
-    required this.id,
-    required this.chatId,
-  });
-
+  final ChatSubmissionService? submissions;
+  final Duration writeTimeout;
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  String messageId = '';
-  Stream? messageStream;
-  late String myName, myProfilePic, myUserName, myEmail;
-  String? _image;
-  TextEditingController messageTextEdittingController = TextEditingController();
-  String group = '';
-  bool online = false;
-  bool isNotificationEnable = true;
-  List userWOutN = [];
-  Map chatInfo = {}, anotherUserInfo = {};
-  bool _isUserDeleted = false;
-  bool _isLoading = true;
-
-  Future<void> getMyInfoFromSharedPreference() async {
-    myName = HelperFunctions().getDisplayName().toString();
-    myProfilePic = HelperFunctions().getUserProfileUrl().toString();
-    myUserName = HelperFunctions().getUserName().toString();
-    myEmail = HelperFunctions().getUserEmail().toString();
-
-    DocumentSnapshot userDoc = await firebaseFirestore
-        .collection('users')
-        .doc(widget.id)
-        .get();
-
-    if (userDoc.exists) {
-      group = userDoc.get('группа');
-      online = userDoc.get('online');
-    }
-
-    setState(() {});
-  }
-
-  String getChatRoomIdByUsernames(String a, String b) {
-    if (a.substring(0, 1).codeUnitAt(0) > b.substring(0, 1).codeUnitAt(0)) {
-      return '$b\_$a';
-    } else {
-      return '$a\_$b';
-    }
-  }
-
-  Future<void> addMessage(bool sendClicked, String type) async {
-    if (messageTextEdittingController.text != '') {
-      DocumentSnapshot querySnap = await firebaseFirestore
-          .collection('users')
-          .doc(widget.id)
-          .get();
-      String chatWith = querySnap.get('chatWithId');
-      bool isUserInChat = chatWith == firebaseAuth.currentUser!.uid;
-
-      isUserInChat
-          ? null
-          : DatabaseService().updateUnreadMessageCount(widget.chatId);
-      String message = messageTextEdittingController.text;
-
-      var lastMessageTs = DateTime.now();
-
-      Map<String, dynamic> messageInfoMap = {
-        'type': type,
-        'message': type == 'text' ? message : _image,
-        'sendBy': firebaseAuth.currentUser!.displayName,
-        'sendByID': firebaseAuth.currentUser!.uid,
-        'ts': lastMessageTs,
-        'isRead': isUserInChat ? true : false,
-      };
-
-      //messageId
-      if (messageId == '') {
-        messageId = randomAlphaNumeric(12);
-      }
-      DatabaseService()
-          .addMessage(widget.chatId, messageId, messageInfoMap)
-          .then((value) {
-            Map<String, dynamic> lastMessageInfoMap = {
-              'lastMessage': message,
-              'lastMessageSendTs': lastMessageTs,
-              'lastMessageSendBy': firebaseAuth.currentUser!.displayName,
-              'lastMessageSendByID': firebaseAuth.currentUser!.uid,
-            };
-
-            DatabaseService().updateLastMessageSend(
-              widget.chatId,
-              lastMessageInfoMap,
-            );
-
-            if (sendClicked) {
-              // remove the text in the message input field
-              messageTextEdittingController.text = '';
-              // make message id blank to get regenerated on next message send
-              messageId = '';
-            }
-          });
-
-      if (!userWOutN.contains(widget.id) &&
-          widget.id != firebaseAuth.currentUser!.uid) {
-        DocumentSnapshot doc = await firebaseFirestore
-            .collection('TOKENS')
-            .doc(widget.id)
-            .get();
-        String token = doc.get('token');
-
-        Map notificationBody = {
-          'isChat': true,
-          'chatId': widget.chatId,
-          'chatWith': widget.chatWithUsername,
-          'id': widget.id,
-          'photoUrl': widget.photoUrl,
-          'message': message,
-        };
-
-        NotificationsService().sendPushMessage(
-          token,
-          notificationBody,
-          firebaseAuth.currentUser!.displayName.toString(),
-          1,
-          widget.chatId,
-        );
-      }
-    }
-    messageTextEdittingController.text = '';
-  }
-
-  Widget chatMessages() {
-    if (_isUserDeleted) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.person_off, size: 100, color: Colors.grey.shade400),
-            const SizedBox(height: 20),
-            const Text(
-              'Пользователь удален',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Чат с этим пользователем больше недоступен',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.white70),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orangeAccent,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 12,
-                ),
-              ),
-              child: const Text(
-                'Вернуться назад',
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return StreamBuilder(
-      stream: messageStream,
-      builder: (context, snapshot) {
-        if (_isLoading) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        return snapshot.hasData
-            ? snapshot.data.docs.length != 0
-                  ? Column(
-                      children: [
-                        const Text(
-                          'Самый простой способ начать общения - это',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            nextScreenReplace(context, const ShopPage());
-                          },
-                          child: const Text(
-                            'Подарок',
-                            style: TextStyle(color: Colors.green),
-                          ),
-                        ),
-                        SizedBox(
-                          height: MediaQuery.of(context).size.height * 0.72,
-                          child: ListView.builder(
-                            padding: const EdgeInsets.only(bottom: 0, top: 16),
-                            itemCount: snapshot.data.docs.length,
-                            reverse: true,
-                            itemBuilder: (context, index) {
-                              DocumentSnapshot ds = snapshot.data.docs[index];
-                              ds.id;
-                              if (ds['sendByID'] !=
-                                  firebaseAuth.currentUser!.uid) {
-                                firebaseFirestore
-                                    .collection('chats')
-                                    .doc(widget.chatId)
-                                    .collection('chats')
-                                    .doc(ds.id)
-                                    .update({'isRead': true});
-                              }
-                              Map newDs = ds.data() as Map;
-                              if (newDs.containsKey('')) {
-                                return MessageTile(
-                                  avatar: anotherUserInfo.isNotEmpty
-                                      ? userImageWithCircle(
-                                          anotherUserInfo['profilePic'],
-                                          anotherUserInfo['группа'],
-                                          anotherUserInfo['online'],
-                                          50.0,
-                                          50.0,
-                                        )
-                                      : Container(),
-                                  chatId: widget.chatId,
-                                  sender: ds['sendBy'],
-                                  name: ds['sendBy'],
-                                  message: ds,
-                                  sentByMe:
-                                      firebaseAuth.currentUser!.uid ==
-                                      ds['sendByID'],
-                                  isRead: ds['isRead'],
-                                  isChat: true,
-                                );
-                              } else {
-                                var x = ds.data().toString().contains(
-                                  'deleteFor',
-                                );
-                                if (x) {
-                                  if (ds['deleteFor'] !=
-                                      firebaseAuth.currentUser!.uid) {
-                                    return MessageTile(
-                                      avatar: anotherUserInfo.isNotEmpty
-                                          ? userImageWithCircle(
-                                              anotherUserInfo['profilePic'],
-                                              anotherUserInfo['группа'],
-                                              anotherUserInfo['online'],
-                                              50.0,
-                                              50.0,
-                                            )
-                                          : Container(),
-                                      chatId: widget.chatId,
-                                      sender: ds['sendBy'],
-                                      name: ds['sendBy'],
-                                      message: ds,
-                                      sentByMe:
-                                          FirebaseAuth
-                                              .instance
-                                              .currentUser!
-                                              .uid ==
-                                          ds['sendByID'],
-                                      isRead: ds['isRead'],
-                                      isChat: true,
-                                    );
-                                  } else {
-                                    return const SizedBox.shrink();
-                                  }
-                                } else {
-                                  return MessageTile(
-                                    avatar: anotherUserInfo.isNotEmpty
-                                        ? userImageWithCircle(
-                                            anotherUserInfo['profilePic'],
-                                            anotherUserInfo['группа'],
-                                            anotherUserInfo['online'],
-                                            50.0,
-                                            50.0,
-                                          )
-                                        : Container(),
-                                    chatId: widget.chatId,
-                                    sender: ds['sendBy'],
-                                    name: ds['sendBy'],
-                                    message: ds,
-                                    sentByMe:
-                                        FirebaseAuth
-                                            .instance
-                                            .currentUser!
-                                            .uid ==
-                                        ds['sendByID'],
-                                    isRead: ds['isRead'],
-                                    isChat: true,
-                                  );
-                                }
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    )
-                  : Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Text(
-                            'Самый простой способ начать общение - это',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              nextScreenReplace(context, const ShopPage());
-                            },
-                            child: const Text(
-                              'Подарок',
-                              style: TextStyle(color: Colors.green),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-            : const Center(child: CircularProgressIndicator());
-      },
-    );
-  }
-
-  void getAndSetMessages() async {
-    if (!_isUserDeleted) {
-      messageStream = await DatabaseService().getChatRoomMessages(
-        widget.chatId,
-      );
-      setState(() {});
-    }
-  }
-
-  void doThisOnLaunch() async {
-    try {
-      DocumentSnapshot userDoc = await firebaseFirestore
-          .collection('users')
-          .doc(widget.id)
-          .get();
-
-      if (!userDoc.exists) {
-        // Пользователь удален
-        setState(() {
-          _isUserDeleted = true;
-          _isLoading = false;
-        });
-        return;
-      }
-
-      Map<String, dynamic>? userData = userDoc.data() as Map<String, dynamic>?;
-
-      if (userData == null) {
-        // Данные пользователя null
-        setState(() {
-          _isUserDeleted = true;
-          _isLoading = false;
-        });
-        return;
-      }
-
-      setState(() {
-        anotherUserInfo = userData;
-        _isUserDeleted = false;
-      });
-
-      await getMyInfoFromSharedPreference();
-      getAndSetMessages();
-
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Ошибка при загрузке данных пользователя: $e');
-      setState(() {
-        _isUserDeleted = true;
-        _isLoading = false;
-      });
-    }
-  }
-
-  void chatWith_Update(String id) async {
-    if (_isUserDeleted) return;
-
-    String myId = firebaseAuth.currentUser!.uid;
-    await firebaseFirestore.collection('users').doc(myId).update({
-      'chatWithId': id,
-    });
-    DocumentSnapshot chat = await firebaseFirestore
-        .collection('chats')
-        .doc(widget.chatId)
-        .get();
-
-    if (chat.exists) {
-      setState(() {
-        chatInfo = chat.data() as Map;
-        userWOutN = chatInfo['usersWOutNotifications'] ?? [];
-        isNotificationEnable = !userWOutN.contains(
-          firebaseAuth.currentUser!.uid,
-        );
-      });
-
-      var chatSnapshot = firebaseFirestore
-          .collection('chats')
-          .doc(widget.chatId);
-
-      String lastMessageSendBy = chat.get('lastMessageSendBy');
-
-      if (lastMessageSendBy != firebaseAuth.currentUser!.displayName) {
-        chatSnapshot.update({'unreadMessage': 0});
-      }
-    }
-  }
-
-  Future<bool> outOfChat() async {
-    String myId = firebaseAuth.currentUser!.uid;
-    await firebaseFirestore.collection('users').doc(myId).update({
-      'chatWithId': '',
-    });
-
-    return true;
-  }
+  final _composer = TextEditingController();
+  final _scroll = ScrollController();
+  final _reading = <String>{};
+  late final String? _ownerUid;
+  late final ChatSubmissionService _submissions;
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _messages;
+  Map<String, dynamic> _other = {};
+  bool _loading = true,
+      _deleted = false,
+      _sending = false,
+      _restoring = true,
+      _restoreFailed = false,
+      _notificationBusy = false,
+      _notifications = true;
+  String? _loadError, _notice;
+  ChatSubmission? _submission;
+  int _generation = 0;
+  final _history = PagedFirestoreHistory(60);
+  bool _loadingOlder = false, _olderError = false;
+  Timer? _messageWaitTimer;
+  bool _messageWaitExpired = false;
+  bool get _current =>
+      mounted &&
+      _ownerUid != null &&
+      firebaseAuth.currentUser?.uid == _ownerUid;
+  bool get _locked =>
+      _restoreFailed ||
+      _restoring ||
+      _sending ||
+      (_submission != null && !_submission!.write.failed);
+  DocumentReference<Map<String, dynamic>> get _room =>
+      firebaseFirestore.collection('chats').doc(widget.chatId);
 
   @override
   void initState() {
     super.initState();
-    doThisOnLaunch();
-    if (mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_isUserDeleted) {
-          chatWith_Update(widget.id);
+    _ownerUid = firebaseAuth.currentUser?.uid;
+    _submissions = widget.submissions ?? ChatSubmissionService();
+    _load();
+    _restore();
+  }
+
+  Future<void> _load() async {
+    final generation = ++_generation;
+    if (!_current) return;
+    setState(() {
+      _loading = true;
+      _loadError = null;
+      _history.reset();
+      _loadingOlder = false;
+      _olderError = false;
+    });
+    try {
+      final snapshots = await Future.wait([
+        firebaseFirestore.collection('users').doc(widget.id).get(),
+        _room.get(),
+      ]).timeout(const Duration(seconds: 20));
+      if (!_current || generation != _generation) return;
+      final other = snapshots[0].data();
+      final room = snapshots[1].data();
+      if (room == null ||
+          (room['user1'] != _ownerUid && room['user2'] != _ownerUid)) {
+        throw StateError('Чат недоступен');
+      }
+      setState(() {
+        _other = other ?? {};
+        _deleted = !snapshots[0].exists ||
+            other == null ||
+            other['deleted'] == true ||
+            other['status'] == 'deleted' ||
+            other['registrationStatus'] == 'deleted';
+        _notifications = !(room['usersWOutNotifications'] as List? ?? const [])
+            .contains(_ownerUid);
+        _messages = _watchMessages();
+        _loading = false;
+      });
+      if (!_deleted && _current) {
+        // Presence is advisory and may fail independently of reading the chat.
+        firebaseFirestore
+            .collection('users')
+            .doc(_ownerUid)
+            .update({'chatWithId': widget.id}).catchError((_) {});
+        if (room['lastMessageSendByID'] != _ownerUid) {
+          _room.update({'unreadMessage': 0}).catchError((_) {});
+        }
+      }
+    } catch (_) {
+      if (_current && generation == _generation) {
+        setState(() {
+          _loading = false;
+          _loadError =
+              'Не удалось открыть чат. Проверьте соединение и повторите попытку.';
+        });
+      }
+    }
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _watchMessages() {
+    _messageWaitTimer?.cancel();
+    _messageWaitExpired = false;
+    final timer = Timer(const Duration(seconds: 20), () {
+      if (_current) setState(() => _messageWaitExpired = true);
+    });
+    _messageWaitTimer = timer;
+    final generation = _generation;
+    return _room
+        .collection('chats')
+        .orderBy('ts', descending: true)
+        .limit(_history.pageSize + 1)
+        .snapshots()
+        .map((snapshot) {
+      timer.cancel();
+      if (generation == _generation) _history.receiveLive(snapshot);
+      return snapshot;
+    });
+  }
+
+  Future<void> _loadOlderMessages() async {
+    final cursor = _history.cursor;
+    if (!_current || _loadingOlder || !_history.hasMore || cursor == null)
+      return;
+    final generation = _generation;
+    setState(() {
+      _loadingOlder = true;
+      _olderError = false;
+    });
+    try {
+      final page = await _room
+          .collection('chats')
+          .orderBy('ts', descending: true)
+          .startAfterDocument(cursor)
+          .limit(_history.pageSize + 1)
+          .get()
+          .timeout(const Duration(seconds: 20));
+      if (!_current || generation != _generation) return;
+      setState(() => _history.appendOlder(page));
+    } catch (_) {
+      if (_current && generation == _generation) {
+        setState(() => _olderError = true);
+      }
+    } finally {
+      if (_current && generation == _generation) {
+        setState(() => _loadingOlder = false);
+      }
+    }
+  }
+
+  Future<void> _restore() async {
+    if (_current)
+      setState(() {
+        _restoring = true;
+        _restoreFailed = false;
+      });
+    try {
+      final saved = await _submissions.restore(widget.chatId);
+      if (!_current) return;
+      setState(() {
+        _submission = saved;
+        if (saved != null) {
+          _composer.text = saved.text;
+          _notice =
+              'Предыдущая отправка ожидает подтверждения. Проверьте результат.';
         }
       });
+    } catch (_) {
+      if (_current)
+        setState(() {
+          _restoreFailed = true;
+          _notice = 'Не удалось восстановить отправку. Попробуйте ещё раз.';
+        });
+    } finally {
+      if (_current) setState(() => _restoring = false);
+    }
+  }
+
+  Future<void> _send() async {
+    if (_restoreFailed) {
+      await _restore();
+      return;
+    }
+    if (!_current || _sending || _restoring || _composer.text.trim().isEmpty)
+      return;
+    setState(() {
+      _sending = true;
+      _notice = null;
+    });
+    try {
+      if (_submission?.write.failed == true) _submission = null;
+      _submission ??= _submissions.start(
+          chatId: widget.chatId,
+          recipientId: widget.id,
+          text: _composer.text.trim());
+      final confirmed =
+          await _submission!.write.wait(timeout: widget.writeTimeout);
+      if (!_current) return;
+      if (!confirmed) {
+        setState(() => _notice =
+            'Подтверждение ещё не получено. Сообщение может быть отправлено. Нажмите «Проверить отправку».');
+        return;
+      }
+      _submissions.acknowledge(widget.chatId, _submission!);
+      setState(() {
+        _submission = null;
+        _composer.clear();
+      });
+      if (_scroll.hasClients)
+        _scroll.animateTo(0,
+            duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    } catch (_) {
+      if (_current)
+        setState(() => _notice =
+            'Не удалось отправить сообщение. Текст сохранён — попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _markRead(DocumentSnapshot<Map<String, dynamic>> message) async {
+    if (!_current || !_reading.add(message.id)) return;
+    try {
+      await message.reference.update({'isRead': true});
+    } catch (_) {
+      _reading.remove(message.id); // Allow a later snapshot to retry.
+    }
+  }
+
+  Future<void> _toggleNotifications() async {
+    if (!_current || _notificationBusy || _deleted) return;
+    setState(() => _notificationBusy = true);
+    final enable = !_notifications;
+    try {
+      await _room.update({
+        'usersWOutNotifications': enable
+            ? FieldValue.arrayRemove([_ownerUid])
+            : FieldValue.arrayUnion([_ownerUid])
+      });
+      if (_current) setState(() => _notifications = enable);
+    } catch (_) {
+      if (_current)
+        setState(() =>
+            _notice = 'Не удалось изменить уведомления. Проверьте соединение.');
+    } finally {
+      if (mounted) setState(() => _notificationBusy = false);
     }
   }
 
   @override
   void dispose() {
+    _generation++;
+    _messageWaitTimer?.cancel();
+    // Never write on behalf of a new account after a logout/account switch.
+    if (_ownerUid != null && firebaseAuth.currentUser?.uid == _ownerUid) {
+      firebaseFirestore
+          .collection('users')
+          .doc(_ownerUid)
+          .update({'chatWithId': ''}).catchError((_) {});
+    }
+    _composer.dispose();
+    _scroll.dispose();
     super.dispose();
-    outOfChat();
   }
+
+  Widget _center(String message, {VoidCallback? retry}) => Center(
+      child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: ClrsPanel(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(context.tr(message), textAlign: TextAlign.center),
+            if (retry != null) ...[
+              const SizedBox(height: 12),
+              TextButton(onPressed: retry, child: Text(context.tr('Повторить')))
+            ],
+          ]))));
+
+  Widget _messageList() => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _messages,
+      builder: (context, snapshot) {
+        if (snapshot.hasError)
+          return _center(
+              'Не удалось загрузить сообщения. Проверьте подключение.',
+              retry: _load);
+        if (!snapshot.hasData)
+          return _messageWaitExpired
+              ? _center(
+                  'Не удалось загрузить сообщения. Проверьте подключение.',
+                  retry: _load)
+              : const Center(child: CircularProgressIndicator());
+        final docs = _history.documents;
+        if (docs.isEmpty) return _center('Сообщений пока нет');
+        final hasOlder = _history.hasMore;
+        return ListView.builder(
+            controller: _scroll,
+            reverse: true,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            itemCount: docs.length + (hasOlder ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == docs.length) {
+                return Center(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (_olderError)
+                    Text(context.tr(
+                        'Не удалось загрузить сообщения. Проверьте подключение.')),
+                  TextButton(
+                      onPressed: _loadingOlder ? null : _loadOlderMessages,
+                      child: _loadingOlder
+                          ? const CircularProgressIndicator(strokeWidth: 2)
+                          : Text(context.tr(
+                              _olderError ? 'Повторить' : 'Загрузить ещё'))),
+                ]));
+              }
+              final doc = docs[index];
+              final data = doc.data();
+              if (data['sendByID'] != _ownerUid && data['isRead'] != true)
+                _markRead(doc);
+              return MessageTile(
+                  key: ValueKey(doc.id),
+                  message: doc,
+                  chatId: widget.chatId,
+                  sender: '${data['sendByID'] ?? ''}',
+                  name: '${data['sendBy'] ?? ''}',
+                  sentByMe: data['sendByID'] == _ownerUid,
+                  isRead: data['isRead'] == true,
+                  isChat: true,
+                  avatar: userImageWithCircle(
+                      '${_other['profilePicThumb'] ?? _other['profilePic'] ?? ''}',
+                      '${_other['группа'] ?? ''}',
+                      _other['online'] == true,
+                      40.0,
+                      40.0));
+            });
+      });
 
   @override
-  void deactivate() {
-    super.deactivate();
-    outOfChat();
-  }
-
-  final ScrollController _scrollController = ScrollController();
-
-  void switchNotification() async {
-    if (_isUserDeleted) return;
-
-    String myUID = firebaseAuth.currentUser!.uid;
-    setState(() {
-      if (!isNotificationEnable) {
-        userWOutN.remove(myUID);
-      } else {
-        userWOutN.add(myUID);
-      }
-    });
-    firebaseFirestore.collection('chats').doc(widget.chatId).update({
-      'usersWOutNotifications': userWOutN,
-    });
-    isNotificationEnable = !isNotificationEnable;
-  }
-
-  Widget _buildUserDeletedScreen() {
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon2.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-        ),
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
-            ),
-            title: const Text(
-              'Чат недоступен',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Column(
-                      children: [
-                        Icon(Icons.person_off, size: 80, color: grey),
-                        const SizedBox(height: 20),
-                        Text(
-                          'Пользователь удален',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: grey,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Аккаунт пользователя был удален. Чат больше недоступен.',
-                          style: TextStyle(fontSize: 16, color: Colors.white70),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 30),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orangeAccent,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 32,
-                              vertical: 12,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'Вернуться назад',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isUserDeleted) {
-      return _buildUserDeletedScreen();
-    }
-
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            Image.asset(
-              'assets/fon2.jpg',
-              height: MediaQuery.of(context).size.height,
-              width: MediaQuery.of(context).size.width,
-              fit: BoxFit.cover,
-            ),
-            const Center(child: CircularProgressIndicator()),
-          ],
-        ),
-      );
-    }
-
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon2.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-        ),
-        PopScope(
-          onPopInvoked: (bool value) {
-            outOfChat();
-          },
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            appBar: AppBar(
-              iconTheme: const IconThemeData(color: Colors.white),
-              actions: [
-                IconButton(
-                  onPressed: () {
-                    switchNotification();
-                  },
-                  icon: isNotificationEnable
-                      ? const Icon(Icons.notifications_on_outlined)
-                      : const Icon(Icons.notifications_off_outlined),
-                ),
-                FloatingActionButton(
-                  backgroundColor: Colors.transparent,
-                  onPressed: () async {
-                    if (!mounted) return;
-                    nextScreen(
-                      context,
-                      SomebodyProfile(
-                        uid: widget.id,
-                        photoUrl: widget.photoUrl,
-                        name: widget.chatWithUsername,
-                        userInfo: anotherUserInfo,
-                      ),
-                    );
-                  },
-                  child: userImageWithCircle(
-                    widget.photoUrl,
-                    group,
-                    online,
-                    50.0,
-                    50.0,
-                  ),
-                ),
-              ],
-              titleTextStyle: TextStyle(
-                overflow: TextOverflow.ellipsis,
-                color: Colors.white,
-              ),
-              titleSpacing: 0,
-              title: SizedBox(
-                width: MediaQuery.of(context).size.width * 0.7,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    Column(
-                      children: [
-                        Text(
-                          widget.chatWithUsername,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        statusRow(
-                          anotherUserInfo.toString().contains('online')
-                              ? anotherUserInfo['online']
-                              : false,
-                          anotherUserInfo.toString().contains('lastOnlineTS')
-                              ? anotherUserInfo['lastOnlineTS'].toDate()
-                              : DateTime.now().subtract(
-                                  const Duration(minutes: 5),
-                                ),
-                          anotherUserInfo['pol'] ?? '',
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              backgroundColor: Colors.transparent,
-            ),
-            body: SingleChildScrollView(
-              controller: _scrollController,
-              child: Stack(
-                alignment: Alignment.bottomCenter,
-                children: [
-                  SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.9,
-                    child: chatMessages(),
-                  ),
-                  if (!_isUserDeleted)
-                    Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            alignment: Alignment.bottomCenter,
-                            constraints: BoxConstraints(
-                              minHeight:
-                                  MediaQuery.of(context).size.height * 0.07,
-                              maxHeight:
-                                  MediaQuery.of(context).size.height * 0.35,
-                            ),
-                            width: MediaQuery.of(context).size.width,
-                            child: Container(
-                              color: darkGrey,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minWidth: MediaQuery.of(context).size.width,
-                                  maxWidth: MediaQuery.of(context).size.width,
-                                ),
+  Widget build(BuildContext context) => ClrsScaffold(
+      appBar: AppBar(
+          title: Text(widget.chatWithUsername,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          actions: [
+            IconButton(
+                tooltip: context.tr(_notifications
+                    ? 'Выключить уведомления'
+                    : 'Включить уведомления'),
+                onPressed:
+                    _notificationBusy || _deleted ? null : _toggleNotifications,
+                icon: Icon(_notifications
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined)),
+            IconButton(
+                tooltip: context.tr('Профиль'),
+                onPressed: _loading || _deleted
+                    ? null
+                    : () => nextScreen(
+                        context,
+                        SomebodyProfile(
+                            uid: widget.id,
+                            photoUrl: widget.photoUrl,
+                            name: widget.chatWithUsername,
+                            userInfo: _other)),
+                icon: const Icon(Icons.person_outline)),
+          ]),
+      body: !_current
+          ? _center('Сеанс завершён. Войдите снова.')
+          : _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _loadError != null
+                  ? _center(_loadError!, retry: _load)
+                  : _deleted
+                      ? _center(
+                          'Аккаунт пользователя был удален. Чат больше недоступен.')
+                      : SafeArea(
+                          top: false,
+                          child: Column(children: [
+                            if (MediaQuery.sizeOf(context).height -
+                                    MediaQuery.viewInsetsOf(context).bottom >
+                                400)
+                              Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  child: Row(children: [
+                                    Expanded(
+                                        child: Text(
+                                            _other['online'] == true
+                                                ? context.tr('В сети')
+                                                : _other['lastOnlineTS']
+                                                        is Timestamp
+                                                    ? context.tr(
+                                                        'Последнее посещение: {date}',
+                                                        args: {
+                                                            'date': context.l10n
+                                                                .dateTime((_other[
+                                                                            'lastOnlineTS']
+                                                                        as Timestamp)
+                                                                    .toDate())
+                                                          })
+                                                    : context.tr('Не в сети'),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                fontSize: 12,
+                                                color: LrsTheme.muted))),
+                                    IconButton(
+                                        tooltip: context.tr('Подарить подарок'),
+                                        onPressed: () => nextScreen(
+                                            context, const ShopPage()),
+                                        icon: const Icon(Icons.card_giftcard,
+                                            color: LrsTheme.peach)),
+                                  ])),
+                            Expanded(child: _messageList()),
+                            if (_notice != null)
+                              ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                      maxHeight:
+                                          MediaQuery.sizeOf(context).height *
+                                              .18),
+                                  child: SingleChildScrollView(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 4, 12, 4),
+                                      child: Text(context.tr(_notice!),
+                                          style: const TextStyle(
+                                              color: LrsTheme.peachLight)))),
+                            if (_restoring) const LinearProgressIndicator(),
+                            Container(
+                                color: LrsTheme.surfaceGlass,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
                                 child: Row(
-                                  children: [
-                                    ConstrainedBox(
-                                      constraints: BoxConstraints(
-                                        minHeight: 50,
-                                        minWidth:
-                                            MediaQuery.of(context).size.width -
-                                            70,
-                                        maxWidth:
-                                            MediaQuery.of(context).size.width -
-                                            60,
-                                      ),
-                                      child: TextField(
-                                        controller:
-                                            messageTextEdittingController,
-                                        keyboardType: TextInputType.multiline,
-                                        minLines: 1,
-                                        maxLines: 5,
-                                        onChanged: (value) {},
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
-                                        decoration: InputDecoration(
-                                          border: InputBorder.none,
-                                          hintText: 'Введите сообщение',
-                                          hintStyle: TextStyle(color: white70),
-                                        ),
-                                      ),
-                                    ),
-                                    GestureDetector(
-                                      onTap: () async {
-                                        if (messageTextEdittingController.text
-                                            .trim()
-                                            .isEmpty)
-                                          return;
-                                        try {
-                                          await addMessage(true, 'text');
-                                        } catch (e) {
-                                          if (!mounted) return;
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Не удалось отправить сообщение',
-                                              ),
-                                            ),
-                                          );
-                                        }
-                                      },
-                                      child: Icon(
-                                        Icons.send,
-                                        color:
-                                            messageTextEdittingController
-                                                    .text !=
-                                                ''
-                                            ? Colors.white
-                                            : white70,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<String> uploadFile(String filePath) async {
-    File file = File(filePath);
-    var storage = FirebaseStorage.instance;
-    String ref = '${widget.id}/${DateTime.now().toString()}.jpg';
-    try {
-      await storage.ref(ref).putFile(file);
-    } on FirebaseException catch (_) {}
-
-    String downloadUrl = await storage.ref(ref).getDownloadURL();
-    return downloadUrl;
-  }
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                          child: TextField(
+                                              controller: _composer,
+                                              readOnly: _locked,
+                                              minLines: 1,
+                                              maxLines: MediaQuery.sizeOf(
+                                                                  context)
+                                                              .height -
+                                                          MediaQuery
+                                                                  .viewInsetsOf(
+                                                                      context)
+                                                              .bottom <
+                                                      300
+                                                  ? 1
+                                                  : 3,
+                                              style:
+                                                  const TextStyle(fontSize: 16),
+                                              decoration: InputDecoration(
+                                                  hintText: context.tr(
+                                                      'Введите сообщение')))),
+                                      IconButton(
+                                          tooltip: context.tr(_restoreFailed
+                                              ? 'Повторить'
+                                              : _submission != null
+                                                  ? 'Проверить отправку'
+                                                  : 'Отправить сообщение'),
+                                          onPressed: _sending || _restoring
+                                              ? null
+                                              : _send,
+                                          icon: _sending
+                                              ? const SizedBox.square(
+                                                  dimension: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                          strokeWidth: 2))
+                                              : Icon(
+                                                  _restoreFailed ||
+                                                          _submission != null
+                                                      ? Icons.refresh
+                                                      : Icons.send,
+                                                  color: LrsTheme.peach)),
+                                    ])),
+                          ])));
 }

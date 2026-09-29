@@ -1,0 +1,11 @@
+{
+  "storage": {"rules": "storage.auth-only-containment.rules"},
+  "emulators": {
+    "auth": {"host": "127.0.0.1", "port": 18299},
+    "storage": {"host": "127.0.0.1", "port": 18298},
+    "hub": {"host": "127.0.0.1", "port": 18350},
+    "logging": {"host": "127.0.0.1", "port": 18351},
+    "ui": {"enabled": false},
+    "singleProjectMode": true
+  }
+}

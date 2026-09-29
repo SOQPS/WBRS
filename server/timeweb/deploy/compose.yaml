@@ -1,0 +1,47 @@
+name: clrs-staging
+
+services:
+  api:
+    image: ${CLRS_API_IMAGE:?Pin a reviewed image by sha256 digest}
+    restart: unless-stopped
+    env_file:
+      - ${CLRS_API_ENV_FILE:?Use an absolute path outside the repository}
+    environment:
+      PORT: "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - ${CLRS_DATABASE_CA_HOST_FILE:?Use an absolute CA path outside the repository}:/run/secrets/postgres-ca.pem:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    networks:
+      - private
+
+  edge:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      CLRS_DOMAIN: ${CLRS_DOMAIN:?Use a separate DNS name for staging}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - private
+
+networks:
+  private:
+    internal: false
+
+volumes:
+  caddy_data:
+  caddy_config:

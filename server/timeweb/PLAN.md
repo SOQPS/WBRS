@@ -1,0 +1,42 @@
+# CLRS → Timeweb: план параллельной миграции
+
+Статус: **план, не выполненная миграция**. Этот каталог не переключает приложение и не обращается к рабочему Firebase. До сверки реальных данных и сценариев старый backend остаётся источником истины.
+
+## Что сейчас подключено
+
+- Android/iOS-клиент напрямую использует Firebase Authentication, Cloud Firestore и Firebase Storage. Это не единый сменяемый URL: `FirebaseFirestore` встречается по меньшей мере в 43 Dart-файлах, `FirebaseAuth` — в 14, `FirebaseStorage` — в 6. Используются потоковые подписки, коллекции/подколлекции и транзакции. `lib/service/app_backend.dart` умеет переключаться только между рабочим Firebase и локальным Firebase Emulator Suite.
+- Firebase Messaging/FCM хранит токены в `TOKENS` и обслуживает push. FCM разумно оставить в Firebase, но запись/чтение токенов и отправку перенести под серверные права. Crashlytics также останется сервисом Google, пока его явно не заменят.
+- `server/translation` — подготовленная Firebase Function для Cloud Translation, не подтверждённая как развёрнутая. Она проверяет Firebase ID token и читает Firestore; её нельзя просто перенести на VPS без нового механизма сессий и лимитов.
+- Данные живут не только в корневых `users`, `chats`, `meets`, `posts`, `TOKENS`, `transaction`, `visiters`: есть подколлекции `images`, `messages`, `notifications`, `membership_requests`, `friend_requests`, `friend_requests_sent`, `friends`, `wall`, `comments`, `likes`, `removed_meets`, отчёты модерации и другие динамические пути. Экспорт только корневых коллекций неполон.
+- Платёжные операции используют `transaction`/`users.balance`. Этот модуль закреплён за другим исполнителем; его контракт нужно согласовать до переключения, не изменяя расчёт и callback по догадке.
+
+## Минимальная безопасная архитектура
+
+1. Инвентаризировать существующие ресурсы Timeweb. Если есть пригодные управляемые PostgreSQL и приватный S3-бакет — использовать их; иначе определить оплачиваемые ресурсы после согласования стоимости. Backend/API разместить на существующем VPS/Cloud Server либо в контейнерной платформе. БД/S3 не открывать напрямую клиенту.
+2. Создать отдельный тестовый контур Timeweb: API под HTTPS; PostgreSQL; приватное S3; отдельные runtime-роли и секреты вне git; firewall; автозапуск; healthcheck; ежедневный `pg_dump` и версионированный backup S3. Сначала проверять на синтетических данных.
+3. Ввести **серверный контракт**, который сохраняет идентификаторы UID и пути документов, timestamps, типы полей, идемпотентность записей и поведение подписок. В БД нужны индексы под текущие запросы и строгая авторизация для каждой операции. Нельзя выдавать клиенту общий ключ S3 или прямой доступ к БД. До реализации этого слоя одно копирование Firestore в PostgreSQL не делает приложение работоспособным.
+4. Для пользователей: сначала оценить временное сохранение Firebase Auth при переносе данных и API; условия описаны в [AUTH_MIGRATION_GATE.md](AUTH_MIGRATION_GATE.md). Для полного отказа от Firebase Auth отдельно оценить экспорт UID, email, провайдеров, статусов, custom claims и чувствительных password hash/salt/параметров алгоритма. Firebase-пароли нельзя восстановить в открытом виде; бесшовный вход без Firebase требует проверки конкретного алгоритма на целевом backend. Сохранять UID во всех таблицах.
+5. Для Firestore: рекурсивный read-only export всех документов и подколлекций с типами, ID и путями; для Storage: read-only список и копирование объектов вместе с MIME/metadata. Ссылки на Firebase download tokens нельзя механически переносить: требуется карта старый URL/путь → новый S3 key и проверка ссылок в профилях, чатах, встречах и подарках.
+6. Сделать пробный импорт в пустой Timeweb-контур. Сравнить количество Auth пользователей, документов **по каждому пути коллекции**, файлов, байт и контрольные суммы. Проверить ссылочную целостность UID↔профили↔чаты/сообщения↔фото↔встречи↔подарки/заявки, статусы и права админки. Исходник не меняется.
+7. Только затем подготовить отдельную тестовую сборку с backend-переключателем. На двух тестовых аккаунтах проверить вход/регистрацию, выход/вход другого пользователя, фото, чат в реальном времени, встречи, подарки, заявки, админку, восстановление после перезапуска API. Для платежей нужен согласованный интеграционный тест, без реального списания по умолчанию.
+8. Перед финальным cutover назначить окно заморозки записей или надёжную инкрементальную синхронизацию. Сделать последний export/delta, сравнить метрики, затем переключить только согласованную сборку/API. Firebase не удалять: rollback — вернуть предыдущую сборку/маршрут и отдельно разрешить конфликт записей, возникших после переключения. Автоматический rollback без учёта таких записей может потерять данные.
+
+## Доступ к исходному Google-проекту после готовности тестового контура
+
+Нужны **проект ID и конкретный storage bucket**, а техническому субъекту — минимальные read-only роли: `roles/datastore.viewer` для рекурсивного чтения Firestore, `roles/storage.objectViewer` на нужном bucket для файлов и `roles/firebaseauth.viewer` для просмотра пользователей Firebase Authentication. Для получения password hash/salt отдельно требуется чувствительное `firebaseauth.configs.getHashConfig` через отдельную custom IAM role, только на окно миграции. Это разрешение не включено в обычный Admin SDK service account и не следует выдавать через широкую роль Editor. Разделы: Google Cloud Console → IAM & Admin → IAM/Roles; Firebase Console → Authentication → Users для сверки пользователей и параметров хеша. Для управляемого Firestore export в Cloud Storage понадобятся биллинг/Blaze, `roles/datastore.importExportAdmin` и права bucket — это отдельная опция, не обязательная для read-only экспорта через SDK.
+
+Секреты и экспорт содержат персональные данные. Не сохранять их в исходники, логи, APK и отчёты; использовать временное защищённое хранилище с ограниченным сроком, шифрованием и удалением после приёмки. Никакие записи в Firebase и никаких изменений production rules для миграционного read-only экспорта не нужны.
+
+## Критерий закрытия
+
+Рабочая Timeweb-инфраструктура + тестовая сборка на Timeweb + сверка реальных Auth/Firestore/Storage записей/байт/связей + пройденные сценарии и права + проверенный backup/restore/rollback. Пока хотя бы один пункт не подтверждён, миграция остаётся незавершённой.
+
+## Первоисточники
+
+- [Firebase Auth: получение hash/salt и отдельное разрешение](https://firebase.google.com/docs/auth/admin/manage-users)
+- [Firebase Auth: экспорт и параметры Scrypt](https://firebase.google.com/docs/cli/auth)
+- [Firebase Auth: роль Viewer](https://firebase.google.com/docs/projects/iam/roles-predefined-product)
+- [Firestore IAM: viewer и import/export](https://firebase.google.com/docs/firestore/security/iam)
+- [Firestore managed export и ограничения](https://firebase.google.com/docs/firestore/manage-data/export-import)
+- [Google Cloud Storage Object Viewer](https://docs.cloud.google.com/storage/docs/access-control/iam)
+- [Timeweb PostgreSQL](https://timeweb.cloud/docs/dbaas/dbaas-create) и [Timeweb S3](https://timeweb.cloud/docs/s3-storage/manage-storage)

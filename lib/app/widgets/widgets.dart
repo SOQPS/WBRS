@@ -1,15 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 
 const textInputDecoration = InputDecoration(
-  labelStyle: TextStyle(color: Colors.black, fontWeight: FontWeight.w300),
+  filled: true,
+  fillColor: LrsTheme.surfaceSoft,
+  labelStyle: TextStyle(color: LrsTheme.muted, fontWeight: FontWeight.w400),
+  hintStyle: TextStyle(color: LrsTheme.muted),
+  contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 18),
   focusedBorder: OutlineInputBorder(
-    borderSide: BorderSide(color: Color(0xFFee7b64), width: 2),
+    borderRadius: BorderRadius.all(Radius.circular(18)),
+    borderSide: BorderSide(color: LrsTheme.peach, width: 1.4),
   ),
   enabledBorder: OutlineInputBorder(
-    borderSide: BorderSide(color: Color(0xFFee7b64), width: 2),
+    borderRadius: BorderRadius.all(Radius.circular(18)),
+    borderSide: BorderSide(color: Color(0x55E7B092), width: 1),
   ),
   errorBorder: OutlineInputBorder(
-    borderSide: BorderSide(color: Color(0xFFee7b64), width: 2),
+    borderRadius: BorderRadius.all(Radius.circular(18)),
+    borderSide: BorderSide(color: LrsTheme.danger, width: 1.2),
+  ),
+  focusedErrorBorder: OutlineInputBorder(
+    borderRadius: BorderRadius.all(Radius.circular(18)),
+    borderSide: BorderSide(color: LrsTheme.danger, width: 1.2),
+  ),
+  disabledBorder: OutlineInputBorder(
+    borderRadius: BorderRadius.all(Radius.circular(18)),
+    borderSide: BorderSide(color: Color(0x33E7B092), width: 1),
   ),
 );
 
@@ -22,18 +39,18 @@ void nextScreenReplace(context, page) {
       context, MaterialPageRoute(builder: (context) => page));
 }
 
-void showSnackbar(context, color, message) {
+void showSnackbar(BuildContext context, Color color, String message) {
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(
         message,
-        style: const TextStyle(fontSize: 14),
+        style: const TextStyle(fontSize: 14, color: Colors.white),
       ),
       backgroundColor: color,
       duration: const Duration(seconds: 2),
       action: SnackBarAction(
-        label: 'OK',
-        onPressed: () {},
+        label: context.tr('ОК'),
+        onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
         textColor: Colors.white,
       ),
     ),

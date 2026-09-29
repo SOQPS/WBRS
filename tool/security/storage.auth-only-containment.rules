@@ -1,0 +1,11 @@
+// Emergency containment: authentication is required for writes.
+// Existing public reads and legacy paths remain for compatibility.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{path=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+  }
+}

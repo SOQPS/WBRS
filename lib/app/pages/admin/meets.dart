@@ -1,8 +1,11 @@
+import 'package:wbrs/shared/translatable_text.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/helper/helper_function.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
+import 'package:wbrs/service/admin_access.dart';
 
 import '../../widgets/bottom_nav_bar.dart';
 import '../../../presentation/screens/list_of_users/show/somebody_profile.dart';
@@ -17,10 +20,8 @@ class Meets extends StatefulWidget {
 }
 
 class _MeetsState extends State<Meets> {
-
   TextEditingController search = TextEditingController(text: '');
-  CollectionReference meets = firebaseFirestore
-      .collection('meets');
+  CollectionReference meets = firebaseFirestore.collection('meets');
   Stream _meetsStream = Stream.empty();
   bool _search = false;
 
@@ -32,7 +33,7 @@ class _MeetsState extends State<Meets> {
           builder: (context) {
             return AlertDialog(
               title: Text(
-                'Вы уверены, что хотите $action встречу?',
+                context.tr('Удалить встречу?'),
                 style: const TextStyle(fontSize: 20),
               ),
               actions: [
@@ -41,23 +42,24 @@ class _MeetsState extends State<Meets> {
                       callback();
                       Navigator.pop(context);
                     },
-                    child: const Text('Да')),
+                    child: Text(context.tr('Да'))),
                 TextButton(
                     onPressed: () {
                       Navigator.pop(context);
                     },
-                    child: const Text('Нет')),
+                    child: Text(context.tr('Нет'))),
               ],
             );
           });
     }
 
-    return Stack(
+    return AdminGuard(
+        child: Stack(
       children: [
         Container(
           decoration: const BoxDecoration(boxShadow: []),
           child: Image.asset(
-            'assets/fon.jpg',
+            'assets/final_design/family_right.png',
             height: MediaQuery.of(context).size.height,
             width: MediaQuery.of(context).size.width,
             fit: BoxFit.cover,
@@ -83,20 +85,27 @@ class _MeetsState extends State<Meets> {
                       controller: search,
                       onEditingComplete: () {
                         setState(() {
-                          _meetsStream = meets.where('name', isGreaterThanOrEqualTo: search.text).snapshots();
+                          _meetsStream = meets
+                              .where('name',
+                                  isGreaterThanOrEqualTo: search.text)
+                              .snapshots();
                           _search = true;
                         });
                       },
                       decoration: InputDecoration(
-                        hintText: 'Начните поиск'
-                      ),
+                          hintText: context.tr('Начните поиск')),
                     ),
                   ),
                   ConstrainedBox(
-                    constraints:BoxConstraints(
-                      maxHeight: MediaQuery.of(context).size.height * 0.7,),
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.7,
+                    ),
                     child: StreamBuilder(
-                        stream: _search ? _meetsStream : meets.orderBy('timeStamp', descending: true).snapshots(),
+                        stream: _search
+                            ? _meetsStream
+                            : meets
+                                .orderBy('timeStamp', descending: true)
+                                .snapshots(),
                         builder: (context, snapshot) {
                           if (snapshot.hasData) {
                             return ListView.builder(
@@ -107,9 +116,10 @@ class _MeetsState extends State<Meets> {
                                     nextScreen(
                                         context,
                                         EditMeet(
-                                            description: snapshot.data!.docs[index]
-                                                ['description'],
-                                            city: snapshot.data!.docs[index]['city'],
+                                            description: snapshot.data!
+                                                .docs[index]['description'],
+                                            city: snapshot.data!.docs[index]
+                                                ['city'],
                                             datetime: snapshot.data!.docs[index]
                                                 ['datetime'],
                                             users: snapshot.data!.docs[index]
@@ -126,22 +136,28 @@ class _MeetsState extends State<Meets> {
                                     child: Row(
                                       children: [
                                         SizedBox(
-                                          width:
-                                              MediaQuery.of(context).size.width / 1.5,
+                                          width: MediaQuery.of(context)
+                                                  .size
+                                                  .width /
+                                              1.5,
                                           child: Column(
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             mainAxisAlignment:
                                                 MainAxisAlignment.spaceEvenly,
                                             children: [
-                                              Text(
-                                                  snapshot.data!.docs[index]['name']),
-                                              Text(snapshot.data!.docs[index]
-                                                  ['description']),
+                                              TranslatableText(
+                                                  snapshot.data!.docs[index]
+                                                      ['name'],
+                                                  showAction: false),
+                                              TranslatableText(
+                                                  snapshot.data!.docs[index]
+                                                      ['description'],
+                                                  showAction: false),
                                               Text(snapshot.data!.docs[index]
                                                   ['datetime']),
-                                              Text(
-                                                  snapshot.data!.docs[index]['city']),
+                                              Text(snapshot.data!.docs[index]
+                                                  ['city']),
                                             ],
                                           ),
                                         ),
@@ -150,7 +166,8 @@ class _MeetsState extends State<Meets> {
                                             showConfirmMessage(() {
                                               firebaseFirestore
                                                   .collection('meets')
-                                                  .doc(snapshot.data!.docs[index].id)
+                                                  .doc(snapshot
+                                                      .data!.docs[index].id)
                                                   .delete();
                                             }, 'удалить');
                                           },
@@ -167,7 +184,8 @@ class _MeetsState extends State<Meets> {
                               },
                             );
                           } else {
-                            return const Center(child: CircularProgressIndicator());
+                            return const Center(
+                                child: CircularProgressIndicator());
                           }
                         }),
                   ),
@@ -177,7 +195,7 @@ class _MeetsState extends State<Meets> {
           ),
         )
       ],
-    );
+    ));
   }
 }
 
@@ -208,7 +226,7 @@ class EditMeet extends StatelessWidget {
         Container(
           decoration: const BoxDecoration(boxShadow: []),
           child: Image.asset(
-            'assets/fon.jpg',
+            'assets/final_design/family_right.png',
             height: MediaQuery.of(context).size.height,
             width: MediaQuery.of(context).size.width,
             fit: BoxFit.cover,
@@ -260,10 +278,10 @@ class EditMeet extends StatelessWidget {
                           controller: controller,
                           style: const TextStyle(color: Colors.white),
                           focusNode: focusNode,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             alignLabelWithHint: false,
                             border: InputBorder.none,
-                            hintText: 'Введите ваш город',
+                            hintText: context.tr('Введите ваш город'),
                             hintStyle: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w400,
@@ -300,8 +318,11 @@ class EditMeet extends StatelessWidget {
                                     color: grey,
                                     borderRadius: BorderRadius.circular(10),
                                   ),
-                                  child: Text(
-                                      'Пользователи ->: ${usersUpdated.length}')),
+                                  child: Text(context
+                                      .tr('Участников: {count}', args: {
+                                    'count':
+                                        context.l10n.number(usersUpdated.length)
+                                  }))),
                             );
                           }
                         }
@@ -317,7 +338,10 @@ class EditMeet extends StatelessWidget {
                                 color: grey,
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Text('Пользователи ->: ${users.length}')),
+                              child: Text(context.tr('Участников: {count}',
+                                  args: {
+                                    'count': context.l10n.number(users.length)
+                                  }))),
                         );
                       }),
                   ElevatedButton(
@@ -329,7 +353,7 @@ class EditMeet extends StatelessWidget {
                       });
                       Navigator.pop(context);
                     },
-                    child: const Text('Сохранить'),
+                    child: Text(context.tr('Сохранить')),
                   )
                 ],
               ),
@@ -386,7 +410,7 @@ class _UsersEditState extends State<UsersEdit> {
       Container(
         decoration: const BoxDecoration(boxShadow: []),
         child: Image.asset(
-          'assets/fon.jpg',
+          'assets/final_design/family_right.png',
           height: MediaQuery.of(context).size.height,
           width: MediaQuery.of(context).size.width,
           fit: BoxFit.cover,
@@ -465,7 +489,8 @@ class _UsersEditState extends State<UsersEdit> {
                                                               return showSnackbar(
                                                                 context,
                                                                 Colors.red,
-                                                                'Пользователь уже добавлен',
+                                                                context.tr(
+                                                                    'Пользователь уже добавлен'),
                                                               );
                                                             }
                                                             await firebaseFirestore
@@ -531,8 +556,8 @@ class _UsersEditState extends State<UsersEdit> {
                             });
                         setState(() {});
                       },
-                      child: const Text(
-                        'Добавить пользователей',
+                      child: Text(
+                        context.tr('Добавить пользователей'),
                         style: TextStyle(color: Colors.green),
                       ))
                 ],
@@ -577,15 +602,15 @@ class _UsersEditState extends State<UsersEdit> {
                                     const TextStyle(color: Colors.white),
                                 contentTextStyle:
                                     const TextStyle(color: Colors.white),
-                                content: const Text(
-                                    'Вы уверены, что хотите исключить этого пользователя?'),
+                                content: Text(context.tr(
+                                    'Вы уверены, что хотите исключить этого пользователя?')),
                                 actions: [
                                   TextButton(
                                     onPressed: () {
                                       Navigator.pop(context);
                                     },
-                                    child: const Text(
-                                      'Нет',
+                                    child: Text(
+                                      context.tr('Нет'),
                                       style: TextStyle(color: Colors.white),
                                     ),
                                   ),
@@ -619,8 +644,8 @@ class _UsersEditState extends State<UsersEdit> {
                                       }
                                       setState(() {});
                                     },
-                                    child: const Text(
-                                      'Да',
+                                    child: Text(
+                                      context.tr('Да'),
                                       style: TextStyle(color: Colors.white),
                                     ),
                                   ),
@@ -636,19 +661,30 @@ class _UsersEditState extends State<UsersEdit> {
                   subtitle: Row(
                     children: [
                       int.parse(userInfo[index].age) % 10 == 0
-                          ? Text('${userInfo[index].age} лет')
+                          ? Text(context.tr('{count} лет',
+                              count:
+                                  num.tryParse('${userInfo[index].age}') ?? 0))
                           : int.parse(userInfo[index].age) % 10 == 1
-                              ? Text('${userInfo[index].age} год')
+                              ? Text(context.tr('{count} лет',
+                                  count:
+                                      num.tryParse('${userInfo[index].age}') ??
+                                          0))
                               : int.parse(userInfo[index].age) % 10 != 5
-                                  ? Text('${userInfo[index].age} года')
-                                  : Text('${userInfo[index].age} лет'),
+                                  ? Text(context.tr('{count} лет',
+                                      count: num.tryParse(
+                                              '${userInfo[index].age}') ??
+                                          0))
+                                  : Text(context.tr('{count} лет',
+                                      count: num.tryParse(
+                                              '${userInfo[index].age}') ??
+                                          0)),
                       const SizedBox(
                         width: 10,
                       ),
                       SizedBox(
                         width: 120,
                         child: Text(
-                          'Город ${userInfo[index].city}',
+                          userInfo[index].city,
                           overflow: TextOverflow.ellipsis,
                         ),
                       )
@@ -662,12 +698,8 @@ class _UsersEditState extends State<UsersEdit> {
                         height: 50,
                         child: ClipRRect(
                             borderRadius: BorderRadius.circular(200),
-                            child: userImageWithCircle(
-                                userInfo[index].imageUrl,
-                                userInfo[index].group,
-                                false,
-                                60.0,
-                                60.0))),
+                            child: userImageWithCircle(userInfo[index].imageUrl,
+                                userInfo[index].group, false, 60.0, 60.0))),
                   ),
                   dense: false,
                 );

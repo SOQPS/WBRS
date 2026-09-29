@@ -1,7 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:wbrs/core/utils/account_destination.dart';
+import 'package:wbrs/service/app_backend.dart';
+import 'package:wbrs/service/session_service.dart';
 
 import '../app/helper/global.dart';
+import '../shared/geo_catalog.dart';
 import '../app/helper/helper_function.dart';
 
 class DatabaseService {
@@ -9,78 +13,227 @@ class DatabaseService {
   DatabaseService({this.uid});
 
   // reference for our collections
-  final CollectionReference userCollection =
-      firebaseFirestore.collection('users');
-  final CollectionReference chatCollection =
-      firebaseFirestore.collection('chats');
-  final CollectionReference groupCollection =
-      firebaseFirestore.collection('meets');
+  final CollectionReference userCollection = firebaseFirestore.collection(
+    'users',
+  );
+  final CollectionReference chatCollection = firebaseFirestore.collection(
+    'chats',
+  );
+  final CollectionReference groupCollection = firebaseFirestore.collection(
+    'meets',
+  );
 
-  Future<void> savingUserDataAfterRegister(
-      String fullName,
-      String email,
-      String profilePic,
-      int age,
-      String rost,
-      String city,
-      bool deti,
-      String hobbi,
-      String about,
-      String pol) async {
+  /// Lets an existing owner confirm a catalog location without rewriting the
+  /// historical questionnaire or inferring a region from its old city field.
+  Future<void> updateUserLocation({
+    required GeoCountry country,
+    required String region,
+  }) async {
+    final owner = uid ?? firebaseAuth.currentUser?.uid;
+    final ready = SessionService.readyUserId;
+    final wasReady = ready.value == owner && owner != null;
+    var sessionInvalidated = false;
+    void readyChanged() {
+      if (wasReady && ready.value != owner) sessionInvalidated = true;
+    }
+
+    bool current() =>
+        !sessionInvalidated &&
+        owner != null &&
+        firebaseAuth.currentUser?.uid == owner;
+    ready.addListener(readyChanged);
     try {
-      firebaseAuth.currentUser!.updateDisplayName(fullName);
-      firebaseAuth.currentUser!.updateEmail(email);
-      await userCollection.doc(firebaseAuth.currentUser!.uid).set({
-        'fullName': fullName,
-        'email': email,
-        'balance': 27,
-        'profilePic': profilePic,
-        'uid': uid,
-        'age': age,
-        'rost': rost,
-        'about': about,
-        'hobbi': hobbi,
-        'deti': deti,
-        'temperament': '',
-        'uid': firebaseAuth.currentUser!.uid,
-        'city': city,
-        'images': [],
-        'pol': pol,
-        'группа': '',
-        'isUnVisible': false,
-        'lastOnlineTS': DateTime.now(),
-        'online': true,
-        'status': 'active'
+      if (!current()) throw StateError('Сеанс завершён');
+      final countries = await GeoCatalog.load();
+      if (!current()) throw StateError('Сеанс завершён');
+      final selected = GeoCatalog.byCode(countries, country.code);
+      if (selected == null || !selected.regions.contains(region)) {
+        throw ArgumentError('Выберите страну и регион из списка');
+      }
+      final profile = userCollection.doc(owner);
+      await firebaseFirestore.runTransaction((transaction) async {
+        if (!current()) throw StateError('Сеанс завершён');
+        final snapshot = await transaction.get(profile);
+        if (!current()) throw StateError('Сеанс завершён');
+        if (!snapshot.exists) throw StateError('Профиль недоступен');
+        final data = Map<String, dynamic>.from(snapshot.data() as Map);
+        if (data['status'] == 'blocked' ||
+            data['status'] == 'deleted' ||
+            data['deleted'] == true ||
+            (data['uid'] != null && data['uid'] != owner)) {
+          throw StateError('Профиль недоступен');
+        }
+        transaction.update(profile, {
+          'country': selected.name,
+          'countryCode': selected.code,
+          'languageGroup': selected.languageGroup,
+          'countrySegment': selected.segment,
+          'region': region,
+          'city': region, // Existing clients still display this legacy alias.
+        });
       });
-    } catch (e) {
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        StackTrace.current,
-        reason: 'Ошибка сохранения данных пользователя после регистрации',
-        information: ['email: $email', 'имя: $fullName'],
-      );
+      if (!current()) throw StateError('Сеанс завершён');
+    } finally {
+      ready.removeListener(readyChanged);
+    }
+  }
+
+  Future<void> savingUserDataAfterRegister({
+    required String fullName,
+    required String email,
+    required String profilePic,
+    String? profilePicThumb,
+    required int age,
+    required String rost,
+    required String country,
+    required String countryCode,
+    required String region,
+    required bool deti,
+    required String hobbi,
+    required String about,
+    required String pol,
+    String relationStatus = 'свободен',
+    required List<String> profileImages,
+    List<String?>? profileImageThumbs,
+  }) async {
+    final photoUrls = profileImages;
+    try {
+      final user = firebaseAuth.currentUser!;
+      final countries = await GeoCatalog.load();
+      final geo = GeoCatalog.byCode(countries, countryCode);
+      if (geo == null || !geo.regions.contains(region))
+        throw ArgumentError('Выберите страну и регион из списка');
+      if (firebaseAuth.currentUser?.uid != user.uid)
+        throw StateError('Сеанс завершён');
+      final profileRef = userCollection.doc(user.uid);
+      final imageRefs = [
+        for (var i = 0; i < photoUrls.length; i++)
+          profileRef.collection('images').doc('registration_$i'),
+      ];
+      await firebaseFirestore.runTransaction((transaction) async {
+        final existing = await transaction.get(profileRef);
+        if (firebaseAuth.currentUser?.uid != user.uid)
+          throw StateError('Сеанс завершён');
+        if (existing.exists) {
+          final data = Map<String, dynamic>.from(existing.data() as Map);
+          final destination = accountDestination(data);
+          if (destination == AccountDestination.blocked ||
+              destination == AccountDestination.deleted) {
+            throw StateError('Профиль недоступен. Обратитесь в поддержку.');
+          }
+          // A retry never replaces a saved profile, result, roles or balance.
+          if (destination != AccountDestination.registration) return;
+          transaction.update(profileRef, {
+            'fullName': fullName,
+            'profilePic': profilePic,
+            if (profilePicThumb != null) 'profilePicThumb': profilePicThumb,
+            'uid': user.uid,
+            'age': age,
+            'rost': rost,
+            'about': about,
+            'hobbi': hobbi,
+            'deti': deti,
+            'city': region,
+            'country': country,
+            'countryCode': countryCode,
+            'languageGroup': geo.languageGroup,
+            'countrySegment': geo.segment,
+            'region': region,
+            'pol': pol,
+            'relationStatus': relationStatus,
+            'profileDetailsSaved': true,
+          });
+        } else {
+          transaction.set(profileRef, {
+            'fullName': fullName,
+            'balance': 27,
+            'profilePic': profilePic,
+            if (profilePicThumb != null) 'profilePicThumb': profilePicThumb,
+            'uid': user.uid,
+            'age': age,
+            'rost': rost,
+            'about': about,
+            'hobbi': hobbi,
+            'deti': deti,
+            'temperament': '',
+            'city': region,
+            'country': country,
+            'countryCode': countryCode,
+            'languageGroup': geo.languageGroup,
+            'countrySegment': geo.segment,
+            'region': region,
+            'images': [],
+            'pol': pol,
+            'relationStatus': relationStatus,
+            'группа': '',
+            'isUnVisible': false,
+            'lastOnlineTS': FieldValue.serverTimestamp(),
+            'online': true,
+            'status': 'active',
+            'isRegistrationEnd': false,
+            'registrationNoticePending': true,
+            'profileDetailsSaved': true,
+          });
+        }
+        for (var i = 0; i < photoUrls.length; i++) {
+          transaction.set(imageRefs[i], {
+            'url': photoUrls[i],
+            if (profileImageThumbs != null &&
+                i < profileImageThumbs.length &&
+                profileImageThumbs[i] != null)
+              'thumbnailUrl': profileImageThumbs[i],
+          });
+        }
+      });
+    } catch (e, stack) {
+      if (!AppBackend.useEmulators) {
+        try {
+          FirebaseCrashlytics.instance
+              .recordError(
+                e.runtimeType.toString(),
+                stack,
+                reason:
+                    'Ошибка сохранения данных пользователя после регистрации',
+              )
+              .catchError((_) {});
+        } catch (_) {/* Diagnostics must not replace the original error. */}
+      }
       rethrow;
     }
   }
 
-  Future<void> updateUserData(String fullName, String email, int age, String about,
-      String hobbi, String city, bool deti) async {
+  Future<void> updateUserData(
+    String fullName,
+    String email,
+    int age,
+    String about,
+    String hobbi,
+    String city,
+    bool deti, {
+    GeoCountry? country,
+  }) async {
     try {
       await userCollection.doc(firebaseAuth.currentUser!.uid).update({
         'fullName': fullName,
-        'email': email,
         'age': age,
         'about': about,
         'hobbi': hobbi,
         'city': city,
-        'deti': deti
+        'region': city,
+        if (country != null) ...{
+          'country': country.name,
+          'countryCode': country.code,
+          'languageGroup': country.languageGroup,
+          'countrySegment': country.segment,
+        },
+        'deti': deti,
       });
     } catch (e) {
       FirebaseCrashlytics.instance.recordError(
         e,
         StackTrace.current,
         reason: 'Ошибка обновления данных пользователя',
-        information: ['email: $email', 'имя: $fullName'],
+        information: ['имя: $fullName'],
       );
       rethrow;
     }
@@ -114,7 +267,10 @@ class DatabaseService {
 
   //function -> bool
   Future<bool> isUserJoined(
-      String groupName, String groupId, String userName) async {
+    String groupName,
+    String groupId,
+    String userName,
+  ) async {
     DocumentReference userDocumentReference = userCollection.doc(uid);
     DocumentSnapshot documentSnapshot = await userDocumentReference.get();
 
@@ -128,7 +284,10 @@ class DatabaseService {
 
   // toggling the group join/exit
   Future toggleGroupJoin(
-      String groupId, String userName, String groupName) async {
+    String groupId,
+    String userName,
+    String groupName,
+  ) async {
     // doc reference
     DocumentReference userDocumentReference = userCollection.doc(uid);
     DocumentReference groupDocumentReference = groupCollection.doc(groupId);
@@ -139,17 +298,17 @@ class DatabaseService {
     // if user has our groups -> then remove then or also in other part re join
     if (groups.contains('${groupId}_$groupName')) {
       await userDocumentReference.update({
-        'groups': FieldValue.arrayRemove(['${groupId}_$groupName'])
+        'groups': FieldValue.arrayRemove(['${groupId}_$groupName']),
       });
       await groupDocumentReference.update({
-        'members': FieldValue.arrayRemove(['${uid}_$userName'])
+        'members': FieldValue.arrayRemove(['${uid}_$userName']),
       });
     } else {
       await userDocumentReference.update({
-        'groups': FieldValue.arrayUnion(['${groupId}_$groupName'])
+        'groups': FieldValue.arrayUnion(['${groupId}_$groupName']),
       });
       await groupDocumentReference.update({
-        'members': FieldValue.arrayUnion(['${uid}_$userName'])
+        'members': FieldValue.arrayUnion(['${uid}_$userName']),
       });
     }
   }
@@ -165,8 +324,11 @@ class DatabaseService {
   }
 
   sendMessageGroup(String chatId, Map<String, dynamic> chatMessageData) async {
-    groupCollection.doc(chatId).collection('messages').add(chatMessageData);
-    groupCollection.doc(chatId).update({
+    await groupCollection
+        .doc(chatId)
+        .collection('messages')
+        .add(chatMessageData);
+    await groupCollection.doc(chatId).update({
       'recentMessage': chatMessageData['message'],
       'recentMessageSender': chatMessageData['name'],
       'recentMessageTime': chatMessageData['time'].toString(),
@@ -180,7 +342,10 @@ class DatabaseService {
         .snapshots();
   }
 
-  createChatRoom(String chatRoomId, var chatRoomInfoMap) async {
+  createChatRoom(
+    String chatRoomId,
+    Map<String, dynamic> chatRoomInfoMap,
+  ) async {
     final snapShot =
         await firebaseFirestore.collection('chats').doc(chatRoomId).get();
 
@@ -221,6 +386,7 @@ class DatabaseService {
         .doc(chatRoomId)
         .collection('chats')
         .orderBy('ts', descending: true)
+        .limit(60)
         .snapshots();
   }
 
@@ -230,6 +396,7 @@ class DatabaseService {
         .doc(chatRoomId)
         .collection('messages')
         .orderBy('time', descending: true)
+        .limit(80)
         .snapshots();
   }
 
@@ -279,21 +446,20 @@ class DatabaseService {
         await firebaseFirestore.collection('chats').doc(chatRoomId).get();
     int kolvo = count.get('unreadMessage') + 1;
 
-    firebaseFirestore
-        .collection('chats')
-        .doc(chatRoomId)
-        .update({'unreadMessage': kolvo});
+    firebaseFirestore.collection('chats').doc(chatRoomId).update({
+      'unreadMessage': kolvo,
+    });
   }
 
   Future addChat(String uid, String chatId) {
     return firebaseFirestore.collection('users').doc(uid).update({
-      'chats': FieldValue.arrayUnion([chatId])
+      'chats': FieldValue.arrayUnion([chatId]),
     });
   }
 
   Future addChatSecondUser(String uid, String chatId) {
     return firebaseFirestore.collection('users').doc(uid).update({
-      'chats': FieldValue.arrayUnion([chatId])
+      'chats': FieldValue.arrayUnion([chatId]),
     });
   }
 }

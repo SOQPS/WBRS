@@ -1,197 +1,143 @@
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
-import 'package:wbrs/service/auth_service.dart';
+import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 import 'package:wbrs/app/widgets/chat_room_list.dart';
 import 'package:wbrs/app/widgets/drawer.dart';
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:wbrs/app/widgets/widgets.dart';
-import '../../../app/widgets/bottom_nav_bar.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/service/app_backend.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
-
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  AuthService authService = AuthService();
-
+  late final String? _uid;
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _chats;
+  String? _notice;
+  bool get _current =>
+      mounted && _uid != null && firebaseAuth.currentUser?.uid == _uid;
   @override
   void initState() {
-    requestPermission();
-    getToken();
-    initInfo();
-    firebaseFirestore
-        .collection('users')
-        .doc(firebaseAuth.currentUser!.uid)
-        .update({'online': true});
-    firebaseFirestore
-        .collection('users')
-        .doc(firebaseAuth.currentUser!.uid)
-        .update({'lastOnlineTS': DateTime.now()});
     super.initState();
+    _uid = firebaseAuth.currentUser?.uid;
+    _setStream();
+    if (_uid != null) {
+      firebaseFirestore.collection('users').doc(_uid).update({
+        'online': true,
+        'lastOnlineTS': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
+      if (!AppBackend.useEmulators) _initializePush();
+    }
   }
 
-  @override
-  void dispose() {
-    super.dispose();
+  void _setStream() {
+    if (_uid == null) return;
+    _chats = firebaseFirestore
+        .collection('chats')
+        .where(Filter.or(
+            Filter('user1', isEqualTo: _uid), Filter('user2', isEqualTo: _uid)))
+        .snapshots();
   }
 
-  initInfo() {}
-
-  void saveUserToken(String token) {
-    firebaseFirestore
-        .collection('TOKENS')
-        .doc(firebaseAuth.currentUser?.uid)
-        .set({'token': token});
-  }
-
-  void requestPermission() async {
+  Future<void> _initializePush() async {
+    if (AppBackend.useEmulators || !_current) return;
     try {
-      NotificationSettings settings = await firebaseMessaging.requestPermission(
-        alert: true,
-        announcement: false,
-        badge: true,
-        carPlay: false,
-        criticalAlert: false,
-        provisional: false,
-        sound: true,
-      );
-
-      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      } else if (settings.authorizationStatus ==
-          AuthorizationStatus.provisional) {
-      } else {}
-    } on Exception catch (e) {
-      if (mounted) {
-        showSnackbar(context, Colors.red, e);
-      }
-      firebaseFirestore
-          .collection('users')
-          .doc(firebaseAuth.currentUser!.uid)
-          .update({'token': e});
+      await firebaseMessaging.requestPermission(
+          alert: true, badge: true, sound: true);
+      if (!_current) return;
+      final token = await firebaseMessaging.getToken();
+      if (!_current || token == null) return;
+      await firebaseFirestore
+          .collection('TOKENS')
+          .doc(_uid)
+          .set({'token': token});
+    } catch (_) {
+      if (_current)
+        setState(() => _notice = 'Не удалось включить уведомления.');
     }
   }
 
-  String? mtoken;
-  void getToken() async {
-    await FirebaseFirestore.instance
-        .collection('TOKENS')
-        .doc(firebaseAuth.currentUser?.uid)
-        .get()
-        .then((value) {
-          setState(() {
-            mtoken = value['token'];
-          });
-        });
-    if (mtoken != null) {
-      return;
-    }
-
-    await firebaseMessaging.getToken().then((token) {
-      mtoken = token;
-    });
-
-    saveUserToken(mtoken!);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-        ),
-        Scaffold(
-          bottomNavigationBar: const MyBottomNavigationBar(),
-          backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            iconTheme: const IconThemeData(color: Colors.white),
-            elevation: 0,
-            centerTitle: true,
-            backgroundColor: Colors.transparent,
-            title: const Text(
-              'Чаты',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 27,
-              ),
-            ),
-            actions: [
-              Text(
-                'Ваш баланс:\n ${globalBalance.toString()} серебра\n на подарки',
-                style: TextStyle(color: Colors.white, height: 1.1),
+  Widget _empty(String title, {String? body, bool retry = false}) => Center(
+      child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ClrsPanel(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.forum_outlined, color: LrsTheme.peach, size: 42),
+            const SizedBox(height: 12),
+            Text(context.tr(title),
                 textAlign: TextAlign.center,
-              ),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            if (body != null) ...[
+              const SizedBox(height: 8),
+              Text(context.tr(body), textAlign: TextAlign.center)
             ],
-          ),
-          drawer: const MyDrawer(),
-          body: SizedBox(
-            height: 10000,
-            child: StreamBuilder(
-              stream: firebaseFirestore
-                  .collection('chats')
-                  .where(
-                    Filter.or(
-                      Filter('user1', isEqualTo: firebaseAuth.currentUser!.uid),
-                      Filter('user2', isEqualTo: firebaseAuth.currentUser!.uid),
-                    ),
-                  )
-                  .snapshots(),
-              builder:
-                  (
-                    BuildContext context,
-                    AsyncSnapshot<QuerySnapshot> snapshot,
-                  ) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    } else {
-                      if (!snapshot.hasData) {
-                        return const Text(
-                          'Нет чатов',
-                          textAlign: TextAlign.center,
-                        );
-                      } else {
-                        List sortedList = snapshot.data!.docs;
-                        sortedList.sort((a, b) {
-                          return b
-                              .get('lastMessageSendTs')
-                              .compareTo(a.get('lastMessageSendTs'));
-                        });
-                        if (firebaseAuth.currentUser != null) {
-                          return ListView.builder(
-                            itemCount: sortedList.length,
-                            itemBuilder: (context, index) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 7.0,
-                                  horizontal: 15,
-                                ),
-                                child: SizedBox(
-                                  height: 100,
-                                  child: ChatRoomList(
-                                    snapshot: sortedList[index],
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        } else {
-                          return const Text('none');
-                        }
-                      }
-                    }
-                  },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+            if (retry)
+              TextButton(
+                  onPressed: () => setState(_setStream),
+                  child: Text(context.tr('Повторить'))),
+          ]))));
+  @override
+  Widget build(BuildContext context) => ClrsScaffold(
+      bottomNavigationBar: const MyBottomNavigationBar(),
+      drawer: const MyDrawer(),
+      appBar: AppBar(title: Text(context.tr('Чаты')), actions: [
+        Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: Center(
+                child: Text('${context.l10n.number(globalBalance)} Ag',
+                    style: const TextStyle(
+                        color: LrsTheme.peachLight,
+                        fontWeight: FontWeight.w700))))
+      ]),
+      body: !_current
+          ? _empty('Сеанс завершён. Войдите снова.')
+          : Column(children: [
+              if (_notice != null)
+                Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(context.tr(_notice!))),
+              Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _chats,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError)
+                          return _empty(
+                              'Не удалось загрузить чаты. Проверьте подключение.',
+                              retry: true);
+                        if (!snapshot.hasData)
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        if (snapshot.data!.docs.isEmpty)
+                          return _empty('Здесь появятся ваши диалоги',
+                              body:
+                                  'Начните общение с человеком, который вам подходит.');
+                        final documents = [...snapshot.data!.docs]
+                          ..sort((a, b) {
+                            final aStamp = a.data()['lastMessageSendTs'];
+                            final bStamp = b.data()['lastMessageSendTs'];
+                            return (bStamp is Timestamp
+                                    ? bStamp.millisecondsSinceEpoch
+                                    : 0)
+                                .compareTo(aStamp is Timestamp
+                                    ? aStamp.millisecondsSinceEpoch
+                                    : 0);
+                          });
+                        return ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+                            itemCount: documents.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, index) => ClrsPanel(
+                                padding: EdgeInsets.zero,
+                                child: ChatRoomList(
+                                    key: ValueKey(documents[index].id),
+                                    snapshot: documents[index])));
+                      })),
+            ]));
 }

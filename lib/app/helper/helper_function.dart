@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/widgets/circle_user_image.dart';
@@ -72,8 +73,8 @@ userImageWithCircle(userPhotoUrl, group, online, [width, height]) {
     return UserImage(
       userPhotoUrl: userPhotoUrl,
       group: group,
-      width: width,
-      height: height,
+      width: (width as num).toDouble(),
+      height: (height as num?)?.toDouble() ?? width.toDouble(),
       online: online,
     );
   } else {
@@ -113,17 +114,18 @@ List<Widget> getLikeGroup(myGroup) {
 
   for (int i = 0; i < spisok.length; i++) {
     spisokOfWidgets.add(
-      Text(
-        spisok[i],
-        style: const TextStyle(color: Colors.white, fontSize: 14),
-      ),
+      Builder(
+          builder: (context) => Text(context.tr(spisok[i]),
+              style: const TextStyle(color: Colors.white, fontSize: 14))),
     );
   }
   if (spisok.isNotEmpty) {
     return spisokOfWidgets;
   } else {
     return [
-      Text(myGroup, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      Builder(
+          builder: (context) => Text(context.tr(myGroup),
+              style: const TextStyle(color: Colors.white, fontSize: 14))),
     ];
   }
 }
@@ -143,7 +145,6 @@ cityDropdown(context, options, onSelected) {
           shrinkWrap: true,
           padding: EdgeInsets.zero,
           itemCount: options.length,
-          itemExtent: 50,
           itemBuilder: (context, index) {
             final option = options.elementAt(index);
             return ListTile(
@@ -161,27 +162,13 @@ cityDropdown(context, options, onSelected) {
   );
 }
 
-statusRow(bool online, DateTime lastOnlineTs, String pol) {
-  int diff = lastOnlineTs.difference(DateTime.now()).inMinutes.abs();
-  String compareDate = diff > 60
-      ? diff / 60 > 24
-            ? diff / 60 / 24 > 7
-                  ? 'больше недели'
-                  : '${(diff / 60 / 24).round()} дней'
-            : '${(diff / 60).round()} часов'
-      : '$diff минут';
-  return Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: [
-      Text(
+Widget statusRow(bool online, DateTime lastOnlineTs, String pol) => Builder(
+    builder: (context) => Text(
         online
-            ? 'В сети'
-            : '${pol.toLowerCase() == 'м' ? "Был" : "Была"} в сети $compareDate назад',
+            ? context.tr('В сети')
+            : context.tr('Последнее посещение: {date}',
+                args: {'date': context.l10n.dateTime(lastOnlineTs)}),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: online ? Colors.green : Colors.grey,
-          fontSize: 14,
-        ),
-      ),
-    ],
-  );
-}
+            color: online ? Colors.green : Colors.grey, fontSize: 14)));

@@ -1,8 +1,14 @@
+import 'package:wbrs/core/utils/temperament.dart';
 
 import 'package:flutter/material.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/app/helper/global.dart';
+
 import '../../../app/widgets/widgets.dart';
-import '../../../presentation/screens/home/home_page.dart';
+import '../auth/session_gate.dart';
+
+import 'package:wbrs/shared/lrs_theme.dart';
 
 class FirstGroupRed extends StatefulWidget {
   const FirstGroupRed({super.key});
@@ -34,7 +40,7 @@ class _FirstGroupRedState extends State<FirstGroupRed> {
     'неустанно стремитесь к новому',
     'обладаете резкими порывистыми движениями',
     'настойчивы в достижении поставленной цели',
-    'склонны к резким сменам настроения'
+    'склонны к резким сменам настроения',
   ];
 
   final List<String> redQuestions = [
@@ -57,7 +63,7 @@ class _FirstGroupRedState extends State<FirstGroupRed> {
     'обладаете всегда бодрым настроением',
     'быстро засыпаете и пробуждаетесь',
     'часто не собраны, проявляете поспешность в решениях',
-    'склонны иногда скользить по поверхности, отвлекаться'
+    'склонны иногда скользить по поверхности, отвлекаться',
   ];
 
   final List<String> blueQuestions = [
@@ -80,7 +86,7 @@ class _FirstGroupRedState extends State<FirstGroupRed> {
     'скрытны и необщительны, не делитесь ни с кем своими мыслями',
     'малоактивны и робки',
     'уступчивы, покорны',
-    'стремитесь вызвать сочувствие и помощь у окружающих'
+    'стремитесь вызвать сочувствие и помощь у окружающих',
   ];
 
   final List<String> whiteQuestions = [
@@ -103,246 +109,235 @@ class _FirstGroupRedState extends State<FirstGroupRed> {
     'любите аккуратность и порядок во всем',
     'с трудом приспосабливаетесь к новой обстановке',
     'обладаете выдержкой',
-    'несколько медлительны'
+    'несколько медлительны',
   ];
 
   List<List<String>> allQuestions = [];
-  List groupCounter = [0, 0, 0, 0];
+  List<int> groupCounter = [0, 0, 0, 0];
 
   int counter = 0;
+  bool _saving = false;
   @override
   Widget build(BuildContext context) {
     allQuestions = [
       brownQuestions,
       redQuestions,
       blueQuestions,
-      whiteQuestions
+      whiteQuestions,
     ];
 
-    void finishTest(){
-      int max = 0;
-      int max2 = 0;
-      setState(() {
-        if (brownGroup > max) {
-          max = brownGroup;
-        }
-
-        if (redGroup > max) {
-          max = redGroup;
-        }
-
-        if (whiteGroup > max) {
-          max = whiteGroup;
-        }
-
-        if (blueGroup > max) {
-          max = blueGroup;
-        }
-
-        if (brownGroup > max2 && brownGroup != max) {
-          max2 = brownGroup;
-        }
-
-        if (redGroup > max2 && redGroup != max) {
-          max2 = redGroup;
-        }
-
-        if (whiteGroup > max2 && whiteGroup != max) {
-          max2 = whiteGroup;
-        }
-
-        if (blueGroup > max2 && blueGroup != max) {
-          max2 = blueGroup;
-        }
-
-        if (max == brownGroup) {
-          if (max2 > 0) {
-            if (max2 == redGroup) {
-              group = 'коричнево-красная';
-            }
-            if (max2 == blueGroup) {
-              group = 'коричнево-синяя';
-            }
-            if (max2 == whiteGroup) {
-              group = 'коричнево-белая';
-            }
-          } else {
-            group = 'коричневая';
-          }
-        }
-
-        if (max == redGroup) {
-          if (max2 > 0) {
-            if (max2 == brownGroup) {
-              group = 'красно-коричневая';
-            }
-            if (max2 == blueGroup) {
-              group = 'красно-синяя';
-            }
-            if (max2 == whiteGroup) {
-              group = 'красно-белая';
-            }
-          } else {
-            group = 'красная';
-          }
-        }
-
-        if (max == blueGroup) {
-          if (max2 > 0) {
-            if (max2 == redGroup) {
-              group = 'сине-красная';
-            }
-            if (max2 == brownGroup) {
-              group = 'сине-коричневая';
-            }
-            if (max2 == whiteGroup) {
-              group = 'сине-белая';
-            }
-          } else {
-            group = 'синяя';
-          }
-        }
-
-        if (max == whiteGroup) {
-          if (max2 > 0) {
-            if (max2 == redGroup) {
-              group = 'бело-красная';
-            }
-            if (max2 == blueGroup) {
-              group = 'бело-синяя';
-            }
-            if (max2 == brownGroup) {
-              group = 'бело-коричневая';
-            }
-          } else {
-            group = 'белая';
-          }
-        }
-        firebaseFirestore
-            .collection('users')
-            .doc(firebaseAuth.currentUser!.uid)
-            .update({
-          'isRegistrationEnd': true,
-          'группа': group
-        });
-        setState(() {
-          selectedIndex = 1;
-        });
-        showSnackbar(context, Colors.green,
-            'Успешно! Ваша группа: $group');
-      });
-    }
-
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-          scale: 0.6,
-        ),
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            iconTheme: const IconThemeData(color: Colors.white),
-            backgroundColor: Colors.transparent,
-            title: const Text(
-              'Ответьте на вопросы',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-          body: SingleChildScrollView(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 30),
-              child: Column(
-                children: [
-                  const Text(
-                    'Поставьте + там, где похоже на вас',
-                    style: TextStyle(fontSize: 16, color: Colors.white, height: 5),
+    return ClrsScaffold(
+        backgroundAsset: 'assets/final_design/family_back.png',
+        appBar: AppBar(
+            title: Text(context.tr('Ответьте на вопросы'),
+                maxLines: 2, style: const TextStyle(fontSize: 18)),
+            toolbarHeight:
+                MediaQuery.textScalerOf(context).scale(18) > 25 ? 96 : 72),
+        body: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 30),
+            child: Column(
+              children: [
+                const Align(
+                    alignment: Alignment.centerLeft, child: ClrsBrandHeader()),
+                Text(
+                  context.tr(
+                      'Поставьте + там, где похоже на вас.\n\nЧем честнее вы ответите, тем точнее мы подберем для вас подходящих людей.\n\nНет плохих и хороших ответов. Нам важно знать, какой вы. Нам важны именно вы.'),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.white,
+                    height: 1.4,
                   ),
-                  SizedBox(
-                    child: ListView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        shrinkWrap: true,
-                        itemCount: colors.length,
-                        itemBuilder: (_, int index) {
-                          return QuestionBuilder(index);
-                        }),
-                  ),
-                  const SizedBox(
-                    height: 30,
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        brownGroup = groupCounter[0];
-                        redGroup = groupCounter[1];
-                        blueGroup = groupCounter[2];
-                        whiteGroup = groupCounter[3];
-                      });
-                      finishTest();
-                      nextScreenReplace(context, const HomePage());
+                ),
+                SizedBox(
+                  child: ListView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    shrinkWrap: true,
+                    itemCount: colors.length,
+                    itemBuilder: (_, int index) {
+                      return _questionBuilder(index);
                     },
-                    child: const Text('Завершить тест'),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Row(children: [
+                  Expanded(child: Divider(color: LrsTheme.peach)),
+                  Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text('✝',
+                          style:
+                              TextStyle(color: LrsTheme.peach, fontSize: 24))),
+                  Expanded(child: Divider(color: LrsTheme.peach))
+                ]),
+                const SizedBox(height: 12),
+                Text(
+                    context.tr('Отмечено: {count} из {minimum}', args: {
+                      'count': context.l10n.number(
+                          groupCounter.fold<int>(0, (sum, item) => sum + item)),
+                      'minimum': context.l10n.number(20)
+                    }),
+                    style: const TextStyle(
+                        color: LrsTheme.peachLight, fontSize: 16)),
+                const SizedBox(height: 12),
+                if (groupCounter.fold<int>(0, (sum, item) => sum + item) >= 20)
+                  ElevatedButton(
+                    onPressed: _saving
+                        ? null
+                        : () async {
+                            if (groupCounter.fold<int>(
+                                  0,
+                                  (sum, score) => sum + score,
+                                ) <
+                                20) {
+                              return;
+                            }
+                            final user = firebaseAuth.currentUser;
+                            if (user == null) return;
+                            setState(() => _saving = true);
+                            try {
+                              final result = classifyTemperament(
+                                groupCounter,
+                              );
+                              final ref = firebaseFirestore
+                                  .collection('users')
+                                  .doc(user.uid);
+                              await ref.update({
+                                'isRegistrationEnd': true,
+                                'группа': result,
+                              });
+                              final data = await ref.get();
+                              if (!mounted ||
+                                  firebaseAuth.currentUser?.uid != user.uid) {
+                                return;
+                              }
+                              group = result;
+                              testIsComlpete = true;
+                              globalBalance =
+                                  (data.data()?['balance'] as num?)?.toInt() ??
+                                      0;
+                              final registrationNotice =
+                                  data.data()?['registrationNoticePending'] ==
+                                      true;
+                              await showDialog<void>(
+                                context: context,
+                                barrierDismissible: false,
+                                builder: (dialogContext) => AlertDialog(
+                                  scrollable: true,
+                                  alignment: Alignment.topCenter,
+                                  backgroundColor: const Color(0xF0443D4D),
+                                  title: Text(
+                                    context.tr(registrationNotice
+                                        ? 'Успешная Регистрация'
+                                        : 'Тест завершён'),
+                                  ),
+                                  content: Text(
+                                    context.tr('Ваша группа: {group}', args: {
+                                          'group': context.tr(result)
+                                        }) +
+                                        (registrationNotice
+                                            ? '\n${context.tr('При регистрации начислено 27 серебра. Текущий баланс: {balance} Ag.', args: {
+                                                    'balance': context.l10n
+                                                        .number(globalBalance)
+                                                  })}'
+                                            : ''),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      child: Text(context.tr('ОК')),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (registrationNotice) {
+                                await ref.update({
+                                  'registrationNoticePending': false,
+                                });
+                              }
+                              if (!mounted ||
+                                  firebaseAuth.currentUser?.uid != user.uid) {
+                                return;
+                              }
+                              selectedIndex = 4;
+                              nextScreenReplace(
+                                context,
+                                const SessionGate(showProfileAfterTest: true),
+                              );
+                            } catch (_) {
+                              if (mounted) {
+                                showSnackbar(
+                                  context,
+                                  LrsTheme.danger,
+                                  context.tr(
+                                      'Не удалось сохранить результат. Проверьте соединение и повторите попытку.'),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _saving = false);
+                            }
+                          },
+                    child: Text(context.tr('Завершить тест')),
                   )
-                ],
-              ),
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      context.tr(
+                          'Выберите минимум 20 утверждений, чтобы завершить тест'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: LrsTheme.muted),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ),
-      ],
-    );
+        ));
   }
 
-  QuestionBuilder(int index) {
-    int groupIndex =
-        index>=40 ? index ~/ 10 - 4 : index ~/ 10;
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            SizedBox(
-                width: MediaQuery.of(context).size.width * 0.5,
-                child: Text(
-                  index>=40
-                    ?allQuestions[groupIndex][index % 10 + 10]
-                    :allQuestions[groupIndex][index % 10],
-                    style: const TextStyle(color: Colors.white))),
-            SizedBox(
-              width: 30,
-              height: 30,
-              child: ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    if(colors[index] == Colors.green){
-                      colors[index] = Colors.grey;
-                      groupCounter[groupIndex]--;
-                    } else{
-                      colors[index] = Colors.green;
-                      groupCounter[groupIndex]++;
-                    }
-                  });
-                },
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  alignment: Alignment.center,
-                    backgroundColor: colors[index] == Colors.red
-                        ? Colors.grey
-                        : colors[index]),
-                child: const Text(
-                  '+',
-                  style: TextStyle(fontSize: 20),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(
-          height: 10,
-        )
-      ],
-    );
+  Widget _questionBuilder(int index) {
+    final groupIndex = index >= 40 ? index ~/ 10 - 4 : index ~/ 10;
+    final question = index >= 40
+        ? allQuestions[groupIndex][index % 10 + 10]
+        : allQuestions[groupIndex][index % 10];
+    final selected = colors[index] == LrsTheme.peach;
+    return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: ClrsPanel(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(children: [
+              Expanded(
+                  child: Text(context.tr(question),
+                      style:
+                          const TextStyle(color: LrsTheme.text, fontSize: 14))),
+              const SizedBox(width: 8),
+              Semantics(
+                  selected: selected,
+                  child: IconButton(
+                      key: ValueKey('question-$index'),
+                      tooltip: context.tr(selected ? 'Снять выбор' : 'Выбрать'),
+                      style: IconButton.styleFrom(
+                          backgroundColor:
+                              selected ? LrsTheme.peach : Colors.black26,
+                          foregroundColor: selected
+                              ? LrsTheme.surface
+                              : LrsTheme.peachLight),
+                      onPressed: _saving
+                          ? null
+                          : () {
+                              setState(() {
+                                if (colors[index] == LrsTheme.peach) {
+                                  colors[index] = Colors.grey;
+                                  groupCounter[groupIndex]--;
+                                } else {
+                                  colors[index] = LrsTheme.peach;
+                                  groupCounter[groupIndex]++;
+                                }
+                              });
+                            },
+                      icon: Icon(selected ? Icons.check : Icons.add,
+                          semanticLabel: context
+                              .tr(selected ? 'Снять выбор' : 'Выбрать')))),
+            ])));
   }
 }

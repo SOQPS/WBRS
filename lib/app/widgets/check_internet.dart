@@ -1,75 +1,19 @@
-// ignore_for_file: use_build_context_synchronously
-
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/widgets/splash.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
 
-class CheckInternetPage extends StatefulWidget {
+class CheckInternetPage extends StatelessWidget {
   const CheckInternetPage({super.key});
-
   @override
-  State<CheckInternetPage> createState() => _CheckInternetPageState();
-}
-
-class _CheckInternetPageState extends State<CheckInternetPage> {
-  @override
-  Widget build(BuildContext context) {
-    return Stack(children: [
-      Image.asset(
-        'assets/fon2.jpg',
-        height: MediaQuery.of(context).size.height,
-        width: MediaQuery.of(context).size.width,
-        fit: BoxFit.cover,
-      ),
-      Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Container(
-          alignment: Alignment.center,
-          padding: const EdgeInsets.all(20),
-          height: MediaQuery.of(context).size.height / 2,
-          width: MediaQuery.of(context).size.width,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Row(
-                children: [
-                  Text(
-                    'Отсутсвует подключение к интернету',
-                    textAlign: TextAlign.center,
-                  ),
-                  Icon(
-                    Icons.wifi_off,
-                    color: Colors.redAccent,
-                  ),
-                ],
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  try {
-                    final result = await InternetAddress.lookup('example.com');
-                    if (result.isNotEmpty &&
-                        result[0].rawAddress.isNotEmpty &&
-                        3 > 2) {
-                      nextScreenReplace(context, const SplashScreen());
-                      throw const SocketException('');
-                    }
-                  } on SocketException catch (_) {
-                    showSnackbar(context, Colors.redAccent,
-                        'Отсутсвует подключение к интернету');
-                  }
-                },
-                style: const ButtonStyle(
-                    backgroundColor:
-                        WidgetStatePropertyAll(Colors.orangeAccent)),
-                child: const Text('Повторить попытку'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ]);
-  }
+  Widget build(BuildContext context) => ClrsScaffold(body: Center(
+      child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: ClrsPanel(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.wifi_off, size: 38), const SizedBox(height: 14),
+          Text(context.tr('Отсутсвует подключение к интернету'), textAlign: TextAlign.center),
+          const SizedBox(height: 14),
+          ElevatedButton(onPressed: () => nextScreenReplace(context, const SplashScreen()),
+              child: Text(context.tr('Повторить попытку'))),
+        ])))));
 }

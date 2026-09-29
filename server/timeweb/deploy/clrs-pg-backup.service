@@ -1,0 +1,15 @@
+[Unit]
+Description=Encrypted CLRS staging PostgreSQL backup to private S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clrs-backup
+Group=clrs-backup
+ExecStart=/opt/clrs/deploy/backup.sh --execute
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/clrs-staging

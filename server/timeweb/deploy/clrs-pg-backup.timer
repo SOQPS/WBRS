@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted CLRS staging PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+Unit=clrs-pg-backup.service
+
+[Install]
+WantedBy=timers.target

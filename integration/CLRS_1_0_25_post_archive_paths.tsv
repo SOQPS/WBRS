@@ -1,0 +1,16 @@
+path	resolution	reason
+lib/service/invisibility_state.dart	COPIED_AFTER_REVIEW	paid-state helper required by source; no balance or deadline write
+lib/service/invisibility_toggle_service.dart	COPIED_AFTER_REVIEW	paid-state helper required by source; no balance or deadline write
+tool/security/storage.auth-only-containment.rules	COPIED_CURRENT_SOURCE	published auth-only Storage rule source
+tool/security/firebase.storage-auth-only.json	COPIED_CURRENT_SOURCE	published Storage metadata
+tool/security/deploy_storage_containment.py	COPIED_CURRENT_SOURCE	public deployment helper without credentials
+tool/security/test_storage_auth_only.py	COPIED_CURRENT_SOURCE	Storage rule source test
+server/timeweb/db/001_initial_mysql84.sql	COPIED_CURRENT_SOURCE	new MySQL 8.4 migration DDL; not executed
+server/timeweb/db/validate_mysql84_schema.py	COPIED_CURRENT_SOURCE	new MySQL DDL structural verifier
+server/timeweb/db/verify_empty_mysql84.sql	COPIED_CURRENT_SOURCE	new empty-schema verification SQL
+server/timeweb/db/MYSQL84_STAGING.md	COPIED_CURRENT_SOURCE	new MySQL staging notes
+server/timeweb/README.md	COPIED_CURRENT_SOURCE	updated Timeweb status documentation
+server/timeweb/ACCOUNT_INVENTORY.md	COPIED_CURRENT_SOURCE	updated Timeweb account inventory
+server/timeweb/AUTH_MIGRATION_GATE.md	COPIED_CURRENT_SOURCE	new legacy-login migration gate
+server/timeweb/PLAN.md	COPIED_CURRENT_SOURCE	updated Timeweb plan and auth gate link
+server/timeweb/db/README.md	COPIED_CURRENT_SOURCE	updated MySQL staging index

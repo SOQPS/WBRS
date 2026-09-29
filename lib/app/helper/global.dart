@@ -26,8 +26,12 @@ int selectedIndex = 1;
 //Filter data
 String filtrPol = '';
 int ageStart = 18, ageEnd = 100;
-TextEditingController filterCity = TextEditingController();
-String meetCity = '';
+TextEditingController filterCity = TextEditingController(); // legacy alias
+TextEditingController filterCountry = TextEditingController();
+TextEditingController filterRegion = TextEditingController();
+String meetCity = ''; // legacy alias
+String meetCountry = '';
+String meetRegion = '';
 bool filterByGroup = false;
 
 bool imageStream = true;
@@ -39,7 +43,7 @@ FirebaseMessaging firebaseMessaging = FirebaseMessaging.instance;
 List<Map<dynamic, dynamic>> usersFromStream = [];
 DateTime lastUpdate = DateTime(2000);
 
-Color grey = const Color.fromRGBO(82, 82, 82, 0.7);
-Color darkGrey = const Color.fromRGBO(120, 120, 120, 0.8);
-Color orange90 = const Color.fromRGBO(255, 173, 50, 0.9);
-Color white70 = const Color.fromRGBO(255, 255, 255, 0.9);
+Color grey = const Color(0xD92B201A);
+Color darkGrey = const Color(0xE631241D);
+Color orange90 = const Color(0xFFE7B092);
+Color white70 = const Color(0xFFFFF7EB);

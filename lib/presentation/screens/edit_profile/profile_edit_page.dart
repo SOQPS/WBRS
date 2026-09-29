@@ -1,949 +1,529 @@
-// ignore_for_file: must_be_immutable, library_private_types_in_public_api, empty_catches, avoid_print, use_build_context_synchronously
-
 import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:wbrs/app/helper/helper_function.dart';
+import 'package:wbrs/app/helper/global.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/auth/login_screen/login_page.dart';
-import 'package:wbrs/presentation/screens/profile/profile_page.dart';
 import 'package:wbrs/service/auth_service.dart';
 import 'package:wbrs/service/database_service.dart';
-import 'package:flutter/material.dart';
-import 'package:wbrs/app/widgets/widgets.dart';
-import 'package:wbrs/app/helper/global.dart' as global;
-
-import '../../../app/helper/global.dart';
-import '../../../app/widgets/bottom_nav_bar.dart';
-import '../../../app/pages/filter_pages/cities.dart';
+import 'package:wbrs/service/pending_write.dart';
+import 'package:wbrs/service/profile_delete_service.dart';
+import 'package:wbrs/service/profile_photo_upload.dart';
+import 'package:wbrs/service/session_service.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/geo_catalog.dart';
+import 'package:wbrs/shared/group_avatar.dart';
+import 'package:wbrs/shared/meeting_location_fields.dart';
+import 'package:wbrs/shared/profile_composition.dart';
 
 class ProfilePageEdit extends StatefulWidget {
-  String userName;
-  String email;
-  String about;
-  String age;
-  String rost;
-  String city;
-  String hobbi;
-  bool deti;
-  ProfilePageEdit({
-    super.key,
-    required this.email,
-    required this.userName,
-    required this.about,
-    required this.age,
-    required this.deti,
-    required this.rost,
-    required this.city,
-    required this.hobbi,
-  });
-
+  const ProfilePageEdit(
+      {super.key,
+      required this.email,
+      required this.userName,
+      required this.about,
+      required this.age,
+      required this.deti,
+      required this.rost,
+      required this.city,
+      required this.hobbi});
+  final String userName, email, about, age, rost, city, hobbi;
+  final bool deti;
   @override
-  _ProfilePageEditState createState() => _ProfilePageEditState();
+  State<ProfilePageEdit> createState() => _ProfilePageEditState();
 }
 
 class _ProfilePageEditState extends State<ProfilePageEdit> {
-  String? dropdownValue;
-  FirebaseStorage storage = FirebaseStorage.instance;
-  String imageUrl = ' ';
-  String chatIdThis = '';
+  late final String? _owner = firebaseAuth.currentUser?.uid;
+  late final bool _readyAtOpen;
+  bool _sessionInvalidated = false;
+  final _form = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.userName);
+  late final _age = TextEditingController(text: widget.age);
+  late final _height = TextEditingController(text: widget.rost);
+  late final _about = TextEditingController(text: widget.about);
+  late final _interests = TextEditingController(text: widget.hobbi);
+  late bool _children = widget.deti;
+  late Future<DocumentSnapshot<Map<String, dynamic>>> _loaded = _load();
+  GeoCountry? _country;
+  String? _region;
   XFile? _image;
-  TextEditingController? name = TextEditingController();
-  TextEditingController? age = TextEditingController();
-  TextEditingController? email = TextEditingController();
-  TextEditingController? about = TextEditingController();
-  TextEditingController? hobbi = TextEditingController();
-  TextEditingController? city = TextEditingController();
-  String? deti;
-  late User? user = firebaseAuth.currentUser;
-  FirebaseFirestore db = firebaseFirestore;
-
-  void pickUploadImage() async {
-    final image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-    );
-
-    Reference ref = FirebaseStorage.instance
-        .ref()
-        .child('profilepic${firebaseAuth.currentUser?.uid}.jpg');
-
-    await ref.putFile(File(image!.path));
-    ref.getDownloadURL().then((value) {
-      setState(() {
-        imageUrl = value;
-      });
-    });
-  }
+  String? _reservedPhotoPath;
+  DocumentReference<Map<String, dynamic>>? _reservedPhotoDoc;
+  ({
+    String path,
+    DocumentReference<Map<String, dynamic>> document,
+    ProfilePhotoUploadResult result
+  })? _stagedPhoto;
+  bool _working = false, _deleting = false;
+  bool _locationOnly = false;
+  PendingWrite? _pending;
+  String? _notice;
+  double? _photoProgress;
+  bool get _sameSession =>
+      !_sessionInvalidated &&
+      _owner != null &&
+      firebaseAuth.currentUser?.uid == _owner;
 
   @override
   void initState() {
     super.initState();
-    about!.text = widget.about;
-    hobbi!.text = widget.hobbi;
-    city!.text = widget.city;
-    deti = widget.deti ? 'да' : 'нет';
+    _readyAtOpen = SessionService.readyUserId.value == _owner && _owner != null;
+    SessionService.readyUserId.addListener(_readyChanged);
+  }
+
+  void _readyChanged() {
+    if (_readyAtOpen &&
+        !_sessionInvalidated &&
+        SessionService.readyUserId.value != _owner) {
+      _sessionInvalidated = true;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _load() {
+    final future = firebaseFirestore
+        .collection('users')
+        .doc(_owner)
+        .get()
+        .timeout(const Duration(seconds: 15));
+    future.ignore();
+    return future;
   }
 
   @override
   void dispose() {
+    SessionService.readyUserId.removeListener(_readyChanged);
+    for (final c in [_name, _age, _height, _about, _interests]) {
+      c.dispose();
+    }
     super.dispose();
-    about!.dispose();
-    hobbi!.dispose();
-    city!.dispose();
   }
 
-  AuthService authService = AuthService();
-
-  @override
-  Widget build(BuildContext context) {
-    TextTheme tema =
-        GoogleFonts.robotoMonoTextTheme(Theme.of(context).textTheme);
-
-    return Stack(
-      children: [
-        Image.asset(
-          'assets/fon.jpg',
-          height: MediaQuery.of(context).size.height,
-          width: MediaQuery.of(context).size.width,
-          fit: BoxFit.cover,
-        ),
-        MaterialApp(
-          theme: ThemeData(textTheme: tema),
-          home: Scaffold(
-            bottomNavigationBar: const MyBottomNavigationBar(),
-            backgroundColor: Colors.transparent,
-            appBar: AppBar(
-              iconTheme: const IconThemeData(color: Colors.white),
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              leading: IconButton(
-                  onPressed: () async {
-                    var x = await getUserGroup();
-                    nextScreenReplace(
-                        context,
-                        ProfilePage(
-                          group: x,
-                          email: widget.email,
-                          userName: widget.userName,
-                          about: widget.about,
-                          age: widget.age,
-                          hobbi: widget.hobbi,
-                          deti: widget.deti,
-                          city: widget.city,
-                          rost: widget.rost,
-                          pol: globalPol.toString(),
-                        ));
-                  },
-                  icon: const Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                  )),
-              title: const Text(
-                'Редактирование профиля',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold),
-              ),
-            ),
-            body: SingleChildScrollView(
-              child: Container(
-                decoration: const BoxDecoration(
-                    image: DecorationImage(
-                        image: AssetImage('assets/fon.jpg'),
-                        fit: BoxFit.fitHeight)),
-                padding: const EdgeInsets.symmetric(vertical: 17),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      Stack(
-                        children: [
-                          (_image == null)
-                              ? (firebaseAuth.currentUser!.photoURL == '' ||
-                                      FirebaseAuth
-                                              .instance.currentUser!.photoURL ==
-                                          null)
-                                  ? ClipRRect(
-                                      borderRadius:
-                                          BorderRadius.circular(100.0),
-                                      child: Image.asset(
-                                        'assets/profile.png',
-                                        fit: BoxFit.cover,
-                                        height: 100.0,
-                                        width: 100.0,
-                                      ))
-                                  : ClipRRect(
-                                      borderRadius:
-                                          BorderRadius.circular(100.0),
-                                      child: Image.network(
-                                        FirebaseAuth
-                                            .instance.currentUser!.photoURL
-                                            .toString(),
-                                        fit: BoxFit.cover,
-                                        height: 150.0,
-                                        width: 150.0,
-                                      ))
-                              : ClipRRect(
-                                  borderRadius: BorderRadius.circular(100.0),
-                                  child: Image.file(
-                                    File(_image!.path),
-                                    fit: BoxFit.cover,
-                                    height: 150.0,
-                                    width: 150.0,
-                                  )),
-                          Positioned(
-                            bottom: 0,
-                            right: 4,
-                            child: ClipOval(
-                              child: Container(
-                                color: Colors.orange,
-                                width: 50,
-                                height: 50,
-                                child: IconButton(
-                                  onPressed: () async {
-                                    XFile? image = await ImagePicker()
-                                        .pickImage(source: ImageSource.gallery);
-
-                                    setState(() {
-                                      _image = image;
-                                    });
-
-                                    if (_image != null) {
-                                      FirebaseStorage storage =
-                                          FirebaseStorage.instance;
-                                      String ref =
-                                          '${firebaseAuth.currentUser!.uid}/avatar-${firebaseAuth.currentUser!.displayName}-${DateTime.now()}';
-                                      try {
-                                        await storage
-                                            .ref(ref)
-                                            .putFile(File(_image!.path));
-                                      } on FirebaseException {}
-                                      var downloadUrl = await storage
-                                          .ref(ref)
-                                          .getDownloadURL();
-                                      await firebaseAuth.currentUser!
-                                          .updatePhotoURL(
-                                              downloadUrl.toString());
-                                      await db
-                                          .collection('users')
-                                          .doc(FirebaseAuth
-                                              .instance.currentUser!.uid)
-                                          .update({
-                                        'profilePic': downloadUrl,
-                                      });
-
-                                      await db
-                                          .collection('users')
-                                          .doc(FirebaseAuth
-                                              .instance.currentUser!.uid)
-                                          .collection('images')
-                                          .add({
-                                        'url': downloadUrl,
-                                      });
-                                      updateVisiterImage(downloadUrl);
-                                    }
-                                  },
-                                  icon: const Icon(
-                                    Icons.camera_alt_outlined,
-                                    color: Colors.white,
-                                    size: 30,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        ],
-                      ),
-                      const SizedBox(
-                        height: 40,
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        width: double.infinity,
-                        child: Column(
-                          children: [
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Имя',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width: 150,
-                                    child: TextField(
-                                      textAlign: TextAlign.end,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      onSubmitted: (name) {
-                                        widget.userName = name.toString();
-                                      },
-                                      onChanged: (name) {
-                                        widget.userName = name.toString();
-                                      },
-                                      controller: name,
-                                      decoration: InputDecoration(
-                                        alignLabelWithHint: false,
-                                        border: InputBorder.none,
-                                        hintText: widget.userName,
-                                        hintStyle: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w400,
-                                            fontSize: 18),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Возраст',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width: 150,
-                                    child: TextField(
-                                      textAlign: TextAlign.end,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      keyboardType: TextInputType.number,
-                                      onSubmitted: (age) {
-                                        widget.age = age.toString();
-                                      },
-                                      onChanged: (value) {
-                                        widget.age = value.toString();
-                                      },
-                                      controller: age,
-                                      decoration: InputDecoration(
-                                        hintText: widget.age,
-                                        hintStyle: const TextStyle(
-                                            color: Colors.white),
-                                        alignLabelWithHint: false,
-                                        border: InputBorder.none,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Рост',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width: 150,
-                                    child: TextField(
-                                      textAlign: TextAlign.end,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      onSubmitted: (email) {
-                                        widget.rost = email.toString();
-                                      },
-                                      onChanged: (email) {
-                                        widget.rost = email.toString();
-                                      },
-                                      controller: email,
-                                      decoration: InputDecoration(
-                                        hintText: widget.rost,
-                                        hintStyle: const TextStyle(
-                                            color: Colors.white),
-                                        alignLabelWithHint: false,
-                                        border: InputBorder.none,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'О себе',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width:
-                                        MediaQuery.of(context).size.width / 1.5,
-                                    child: TextField(
-                                      textAlign: TextAlign.end,
-                                      minLines: 1,
-                                      maxLines: 5,
-                                      style:
-                                          const TextStyle(color: Colors.white),
-                                      onSubmitted: (about) {
-                                        widget.about = about.toString();
-                                      },
-                                      onChanged: (about) {
-                                        widget.about = about.toString();
-                                      },
-                                      controller: about,
-                                      decoration: InputDecoration(
-                                        hintText: widget.about,
-                                        hintStyle: const TextStyle(
-                                            color: Colors.white),
-                                        alignLabelWithHint: false,
-                                        border: InputBorder.none,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Хобби',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width:
-                                        MediaQuery.of(context).size.width / 1.5,
-                                    child: TextField(
-                                      textAlign: TextAlign.end,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      onSubmitted: (about) {
-                                        widget.hobbi = about.toString();
-                                      },
-                                      onChanged: (about) {
-                                        widget.hobbi = about.toString();
-                                      },
-                                      controller: hobbi,
-                                      minLines: 1,
-                                      maxLines: 5,
-                                      decoration: InputDecoration(
-                                        hintText: widget.hobbi,
-                                        hintStyle: const TextStyle(
-                                            color: Colors.white),
-                                        alignLabelWithHint: false,
-                                        border: InputBorder.none,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Город',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width: 150,
-                                    child: Autocomplete<String>(
-                                      optionsMaxHeight:
-                                          MediaQuery.of(context).size.height *
-                                              0.3,
-                                      optionsViewBuilder:
-                                          (context, onSelected, options) {
-                                        return Align(
-                                          alignment: Alignment.topCenter,
-                                          child: Material(
-                                            surfaceTintColor: Colors.white54,
-                                            type: MaterialType.transparency,
-                                            elevation: 4.0,
-                                            child: ConstrainedBox(
-                                              constraints: BoxConstraints(
-                                                maxHeight:
-                                                    MediaQuery.of(context)
-                                                            .size
-                                                            .height *
-                                                        0.3,
-                                              ),
-                                              child: ListView.builder(
-                                                  shrinkWrap: true,
-                                                  padding: EdgeInsets.zero,
-                                                  itemCount: options.length,
-                                                  itemBuilder:
-                                                      (context, index) {
-                                                    final option = options
-                                                        .elementAt(index);
-                                                    return ListTile(
-                                                      tileColor: grey,
-                                                      title: Text(
-                                                        option
-                                                            .split(RegExp(
-                                                                r'(?! )\s{2,}'))
-                                                            .join(' ')
-                                                            .split(
-                                                                RegExp(r'\s+$'))
-                                                            .join(''),
-                                                        style: const TextStyle(
-                                                            color:
-                                                                Colors.white),
-                                                      ),
-                                                      onTap: () =>
-                                                          onSelected(option),
-                                                    );
-                                                  }),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      optionsBuilder: (textEditingValue) {
-                                        if (textEditingValue.text == '') {
-                                          return [];
-                                        }
-                                        return cities
-                                            .where((city) => city
-                                                .toLowerCase()
-                                                .startsWith(textEditingValue
-                                                    .text
-                                                    .toLowerCase()))
-                                            .toList()
-                                          ..sort((a, b) => a.compareTo(b));
-                                      },
-                                      onSelected: (String val) {
-                                        setState(() {
-                                          city!.text = val
-                                              .split(RegExp(r'(?! )\s{2,}'))
-                                              .join(' ')
-                                              .split(RegExp(r'\s+$'))
-                                              .join('');
-                                        });
-                                      },
-                                      fieldViewBuilder: (context, controller,
-                                          focusNode, onSubmitted) {
-                                        controller.text = city!.text;
-                                        return TextField(
-                                          textAlign: TextAlign.right,
-                                          controller: controller,
-                                          style: const TextStyle(
-                                              color: Colors.white),
-                                          focusNode: focusNode,
-                                          onSubmitted: (String value) {
-                                            onSubmitted();
-                                          },
-                                          onChanged: (value) {
-                                            setState(() {
-                                              city!.text = value
-                                                  .split(RegExp(r'(?! )\s{2,}'))
-                                                  .join(' ')
-                                                  .split(RegExp(r'\s+$'))
-                                                  .join('');
-                                            });
-                                          },
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Padding(
-                                padding: EdgeInsets.only(bottom: 10.0)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 5, horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: grey,
-                                borderRadius:
-                                    const BorderRadius.all(Radius.circular(8)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Наличие детей',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  SizedBox(
-                                    width: 50,
-                                    child: DropdownButton<String>(
-                                      focusColor: Colors.white,
-
-                                      //
-                                      items: <String>['да', 'нет']
-                                          .map((String value) {
-                                        return DropdownMenuItem<String>(
-                                          value: value,
-                                          child: Text(
-                                            value,
-                                            style: const TextStyle(
-                                                color: Colors.white),
-                                          ),
-                                        );
-                                      }).toList(),
-                                      onChanged: (String? value) {
-                                        setState(() {
-                                          deti = value.toString();
-                                        });
-                                      },
-                                      value: deti,
-
-                                      style: const TextStyle(
-                                        color: Color.fromRGBO(128, 128, 128, 1),
-                                      ),
-                                      hint: const Text(
-                                        'нет',
-                                        style: TextStyle(color: Colors.white),
-                                      ),
-                                      dropdownColor: darkGrey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(
-                        height: 20,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            ElevatedButton(
-                              onPressed: () async {
-                                var chats = await db.collection('chats').get();
-
-                                for (int i = 0; i < chats.size; i++) {
-                                  if (chats.docs[i]['user1Nickname'] ==
-                                      FirebaseAuth
-                                          .instance.currentUser!.displayName) {
-                                    db
-                                        .collection('chats')
-                                        .doc(chats.docs[i].id)
-                                        .update(
-                                            {'user1Nickname': widget.userName});
-                                  } else if (chats.docs[i]['user2Nickname'] ==
-                                      FirebaseAuth
-                                          .instance.currentUser!.displayName) {
-                                    db
-                                        .collection('chats')
-                                        .doc(chats.docs[i].id)
-                                        .update(
-                                            {'user2Nickname': widget.userName});
-                                  } else {
-                                    null;
-                                  }
-                                }
-                                bool haveDeti = widget.deti;
-                                setState(() {
-                                  if (deti != null && deti == 'да') {
-                                    haveDeti = true;
-                                  } else {
-                                    haveDeti = false;
-                                  }
-                                  globalDeti = haveDeti;
-                                  DatabaseService().updateUserData(
-                                      widget.userName,
-                                      widget.email,
-                                      int.parse(widget.age),
-                                      widget.about,
-                                      widget.hobbi,
-                                      city!.text,
-                                      haveDeti);
-                                  firebaseAuth.currentUser!
-                                      .updateDisplayName(widget.userName);
-                                  global.globalAge = widget.age;
-                                  global.globalAbout = widget.about;
-                                });
-                                var x = await getUserGroup();
-                                nextScreenReplace(
-                                    context,
-                                    ProfilePage(
-                                      group: x,
-                                      email: widget.email,
-                                      userName: widget.userName,
-                                      about: widget.about,
-                                      age: widget.age,
-                                      hobbi: widget.hobbi,
-                                      deti: haveDeti,
-                                      city: city!.text,
-                                      rost: widget.rost,
-                                      pol: globalPol.toString(),
-                                    ));
-                              },
-                              style: const ButtonStyle(
-                                padding: WidgetStatePropertyAll(
-                                    EdgeInsets.all(10.0)),
-                                backgroundColor:
-                                    WidgetStatePropertyAll(Colors.green),
-                              ),
-                              child: const Text(
-                                'Сохранить',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            ElevatedButton(
-                                style: const ButtonStyle(
-                                  padding: WidgetStatePropertyAll(
-                                      EdgeInsets.all(10.0)),
-                                  backgroundColor:
-                                      WidgetStatePropertyAll(Colors.redAccent),
-                                ),
-                                onPressed: () {
-                                  showModalBottomSheet(
-                                      context: context,
-                                      builder: (context) {
-                                        return Container(
-                                          height: MediaQuery.of(context)
-                                                  .size
-                                                  .height *
-                                              0.12,
-                                          padding: const EdgeInsets.all(15),
-                                          child: Column(children: [
-                                            const Text('Вы уверены?'),
-                                            Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                ElevatedButton(
-                                                    style: ElevatedButton
-                                                        .styleFrom(
-                                                            backgroundColor: Colors
-                                                                .orangeAccent),
-                                                    onPressed: () async {
-                                                      var currentUser =
-                                                          firebaseAuth
-                                                              .currentUser;
-
-                                                      FirebaseStorage.instance
-                                                          .ref(currentUser!.uid)
-                                                          .listAll()
-                                                          .then((value) {
-                                                        for (var element
-                                                            in value.items) {
-                                                          element.delete();
-                                                        }
-                                                      });
-
-                                                      List chatsId = [];
-
-                                                      if (chatsId.isNotEmpty) {
-                                                        await db
-                                                            .collection('chats')
-                                                            .where(Filter.or(
-                                                                Filter('user1',
-                                                                    isEqualTo:
-                                                                        currentUser
-                                                                            .uid),
-                                                                Filter('user2',
-                                                                    isEqualTo:
-                                                                        currentUser
-                                                                            .uid)))
-                                                            .get()
-                                                            .then((value) {
-                                                          setState(() {
-                                                            chatsId.add(value
-                                                                .docs[0]
-                                                                .data());
-                                                          });
-                                                        });
-
-                                                        for (int i = 0;
-                                                            i < chatsId.length;
-                                                            i++) {
-                                                          db
-                                                              .collection(
-                                                                  'removedChats')
-                                                              .add(chatsId[i]);
-                                                          db
-                                                              .collection(
-                                                                  'chats')
-                                                              .doc(chatsId[i]
-                                                                  ['chatId'])
-                                                              .delete();
-                                                        }
-                                                      }
-
-                                                      db
-                                                          .collection('users')
-                                                          .doc(currentUser.uid)
-                                                          .delete();
-                                                      firebaseAuth.currentUser!
-                                                          .delete();
-
-                                                      AuthService().signOut();
-
-                                                      Navigator.pushAndRemoveUntil(
-                                                        context,
-                                                        MaterialPageRoute(builder: (context) => LoginPage()),
-                                                            (route) => false,
-                                                      );
-
-                                                    },
-                                                    child: const Text('Да')),
-                                                const SizedBox(
-                                                  width: 20,
-                                                ),
-                                                ElevatedButton(
-                                                    style: ElevatedButton
-                                                        .styleFrom(
-                                                            backgroundColor: Colors
-                                                                .orangeAccent),
-                                                    onPressed: () {
-                                                      Navigator.pop(context);
-                                                    },
-                                                    child: const Text('Нет')),
-                                              ],
-                                            )
-                                          ]),
-                                        );
-                                      });
-                                },
-                                child: const Text(
-                                  'Удалить профиль',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    color: Colors.white,
-                                  ),
-                                ))
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  updateVisiterImage(String photourl) async {
-    var users = await db.collection('users').get();
-
-    for (int i = 0; i < users.size; i++) {
-      if (users.docs[i].id != firebaseAuth.currentUser!.uid) {
-        var collections = db
-            .collection('users')
-            .doc(users.docs[i].id)
-            .collection('visiters')
-            .where('uid', isEqualTo: firebaseAuth.currentUser!.uid)
-            .snapshots();
-
-        bool isEmpty = await collections.isEmpty;
-
-        var snapshot = await db
-            .collection('users')
-            .doc(users.docs[i].id)
-            .collection('visiters')
-            .where('uid', isEqualTo: firebaseAuth.currentUser!.uid)
-            .get();
-
-        if (!isEmpty && snapshot.docs.isNotEmpty) {
-          db
-              .collection('users')
-              .doc(users.docs[i].id)
-              .collection('visiters')
-              .doc(firebaseAuth.currentUser!.uid)
-              .update({'photoUrl': photourl});
-        }
+  Future<void> _choosePhoto() async {
+    if (_working || _pending != null) return;
+    try {
+      final pickerTimer = Stopwatch()..start();
+      final photo = await ImagePicker().pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 76,
+          maxWidth: 1440,
+          maxHeight: 1440);
+      profilePhotoMetric('picker_return', pickerTimer.elapsed,
+          count: photo == null ? 0 : 1);
+      if (mounted && _sameSession && photo != null) {
+        setState(() {
+          _image = photo;
+          _stagedPhoto = null;
+          _reservedPhotoPath = null;
+          _reservedPhotoDoc = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() =>
+            _notice = 'Не удалось открыть фотографии. Попробуйте ещё раз.');
       }
     }
   }
+
+  Future<void> _save() async {
+    if (_working || !_sameSession) return;
+    if (_pending == null) {
+      _locationOnly = false;
+      if (!_form.currentState!.validate()) return;
+      if (_country == null || (_region ?? '').isEmpty) {
+        setState(() => _notice = 'Выберите страну и регион.');
+        return;
+      }
+      final user = firebaseAuth.currentUser!;
+      final owner = _owner!;
+      final country = _country!;
+      final profile = firebaseFirestore.collection('users').doc(owner);
+      final photo = _image;
+      final imageDoc = photo == null
+          ? null
+          : _reservedPhotoPath == photo.path
+              ? _reservedPhotoDoc
+              : profile.collection('images').doc();
+      if (photo != null) {
+        _reservedPhotoPath = photo.path;
+        _reservedPhotoDoc = imageDoc;
+      }
+      final updates = <String, dynamic>{
+        'fullName': _name.text.trim(),
+        'age': int.parse(_age.text.trim()),
+        'rost': _height.text.trim(),
+        'about': _about.text.trim(),
+        'hobbi': _interests.text.trim(),
+        'deti': _children,
+        'country': country.name,
+        'countryCode': country.code,
+        'languageGroup': country.languageGroup,
+        'countrySegment': country.segment,
+        'region': _region,
+        'city': _region,
+      };
+      _deleting = false;
+      _pending = PendingWrite(() async {
+        ProfilePhotoUploadResult? uploaded =
+            _stagedPhoto?.path == photo?.path ? _stagedPhoto?.result : null;
+        if (photo != null) {
+          if (uploaded == null) {
+            final ref = FirebaseStorage.instance
+                .ref('users/$owner/photos/${imageDoc!.id}.jpg');
+            uploaded = await const ProfilePhotoUpload().upload(
+                file: File(photo.path),
+                imageRef: ref,
+                thumbnailRef: FirebaseStorage.instance
+                    .ref('users/$owner/photos/thumbs/${imageDoc.id}.jpg'),
+                onProgress: (value) {
+                  if (mounted &&
+                      _sameSession &&
+                      (_photoProgress == null ||
+                          (value - _photoProgress!).abs() >= .01 ||
+                          value == 1)) {
+                    setState(() => _photoProgress = value);
+                  }
+                });
+            _stagedPhoto =
+                (path: photo.path, document: imageDoc, result: uploaded);
+          }
+        }
+        if (firebaseAuth.currentUser?.uid != owner) {
+          throw StateError('Сеанс завершён');
+        }
+        final batch = firebaseFirestore.batch();
+        batch.update(profile, {
+          ...updates,
+          if (uploaded != null) 'profilePic': uploaded.url,
+          if (uploaded != null)
+            'profilePicThumb': uploaded.thumbnailUrl ?? FieldValue.delete(),
+        });
+        if (uploaded != null) {
+          batch.set(imageDoc!, {
+            'url': uploaded.url,
+            if (uploaded.thumbnailUrl != null)
+              'thumbnailUrl': uploaded.thumbnailUrl,
+          });
+        }
+        final writeTimer = Stopwatch()..start();
+        await batch.commit();
+        profilePhotoMetric('profile_write', writeTimer.elapsed);
+        if (firebaseAuth.currentUser?.uid != owner) {
+          throw StateError('Сеанс завершён');
+        }
+        // Keep the primary Firestore profile atomic. A later Auth synchronization
+        // error is reported as partial success, never as loss of saved fields.
+        final metadataTimer = Stopwatch()..start();
+        try {
+          await Future.wait([
+            user.updateDisplayName(updates['fullName'] as String),
+            if (uploaded != null) user.updatePhotoURL(uploaded.url),
+          ]).timeout(const Duration(seconds: 10));
+        } catch (_) {
+          throw const _ProfileMetadataIncomplete();
+        } finally {
+          profilePhotoMetric('auth_metadata', metadataTimer.elapsed);
+        }
+      });
+    }
+    await _wait();
+  }
+
+  Future<void> _saveLocation() async {
+    if (_working || _pending != null || !_sameSession) return;
+    final country = _country;
+    final region = _region;
+    if (country == null || region == null || region.isEmpty) {
+      setState(() => _notice = 'Выберите страну и регион.');
+      return;
+    }
+    _locationOnly = true;
+    _deleting = false;
+    _pending = PendingWrite(() => DatabaseService(uid: _owner)
+        .updateUserLocation(country: country, region: region));
+    await _wait();
+  }
+
+  Future<void> _delete() async {
+    if (_working || _pending != null || !_sameSession) return;
+    final password = await showDialog<String>(
+        context: context, builder: (_) => const _DeleteProfileDialog());
+    if (!mounted || password == null || !_sameSession) return;
+    _locationOnly = false;
+    _deleting = true;
+    _pending = PendingWrite(() => ProfileDeleteService().delete(password));
+    await _wait();
+  }
+
+  Future<void> _wait() async {
+    if (_working || _pending == null) return;
+    setState(() {
+      _working = true;
+      _notice = null;
+    });
+    try {
+      final known = await _pending!.wait(
+          timeout: _locationOnly || _image == null
+              ? const Duration(seconds: 15)
+              : const Duration(minutes: 3));
+      if (!mounted) return;
+      if (!known) {
+        setState(() => _notice =
+            'Подтверждение ещё не получено. Проверьте результат без повторной отправки.');
+        return;
+      }
+      _pending = null;
+      if (!_locationOnly) {
+        _stagedPhoto = null;
+        _reservedPhotoPath = null;
+        _reservedPhotoDoc = null;
+      }
+      if (_deleting) {
+        await AuthService().signOut();
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+      } else if (_sameSession) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.tr('Профиль сохранён'))));
+        if (_locationOnly) {
+          // Keep the form and any unsaved text/photo selection intact.
+          setState(() => _loaded = _load());
+        } else {
+          Navigator.of(context).pop();
+        }
+      }
+    } on ProfileDeletionIncomplete {
+      if (mounted) {
+        setState(() {
+          _pending = null;
+          _notice =
+              'Профиль скрыт, но удаление аккаунта не завершено. Повторите попытку или обратитесь в поддержку.';
+        });
+      }
+    } on _ProfileMetadataIncomplete {
+      if (mounted) {
+        setState(() {
+          _pending = null;
+          _notice =
+              'Профиль сохранён, но данные входа не обновились. Войдите снова.';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _pending = null;
+          _notice = _deleting
+              ? 'Не удалось удалить профиль. Проверьте пароль и подключение.'
+              : !_locationOnly && _image != null && _stagedPhoto == null
+                  ? 'Не удалось загрузить фотографии.'
+                  : 'Не удалось сохранить изменения. Попробуйте ещё раз.';
+        });
+      }
+    } finally {
+      if (mounted)
+        setState(() {
+          _working = false;
+          _photoProgress = null;
+        });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ClrsScaffold(
+      appBar: AppBar(title: Text(context.tr('Редактировать профиль'))),
+      body: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          future: _loaded,
+          builder: (context, snapshot) {
+            if (snapshot.hasError || !_sameSession) {
+              return Center(
+                  child: ClrsPanel(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(context.tr('Не удалось загрузить профиль.')),
+                TextButton(
+                    onPressed: () => setState(() {
+                          _loaded = _load();
+                        }),
+                    child: Text(context.tr('Повторить')))
+              ])));
+            }
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final data = snapshot.data!.data() ?? <String, dynamic>{};
+            final disabled = _working || _pending != null;
+            return ListView(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
+                children: [
+                  const ClrsBrandHeader(),
+                  Center(
+                      child: _image == null
+                          ? GroupAvatar(
+                              url:
+                                  '${data['profilePicThumb'] ?? data['profilePic'] ?? ''}',
+                              group: '${data['группа'] ?? ''}',
+                              size: 100)
+                          : ClipOval(
+                              child: Image.file(File(_image!.path),
+                                  width: 100,
+                                  height: 100,
+                                  cacheWidth: 320,
+                                  fit: BoxFit.cover))),
+                  Align(
+                      child: TextButton.icon(
+                          onPressed: disabled ? null : _choosePhoto,
+                          icon: const Icon(Icons.add_a_photo_outlined),
+                          label: Text(context.tr('Изменить главное фото')))),
+                  ProfileSection(
+                      title: context.tr('Обо мне'),
+                      child: Form(
+                          key: _form,
+                          child: Column(children: [
+                            _field(_name, 'Имя', disabled,
+                                validator: (s) => (s ?? '').trim().isEmpty
+                                    ? context.tr('Введите имя')
+                                    : null),
+                            _field(_age, 'Возраст', disabled, number: true,
+                                validator: (s) {
+                              final age = int.tryParse(s ?? '');
+                              return age == null || age < 18 || age > 100
+                                  ? context.tr(
+                                      'Возраст должен быть от 18 до 100 лет')
+                                  : null;
+                            }),
+                            _field(_height, 'Рост', disabled,
+                                number: true,
+                                validator: (s) => (s ?? '').trim().isEmpty
+                                    ? context.tr('Укажите рост')
+                                    : null),
+                            AbsorbPointer(
+                                absorbing: disabled,
+                                child: MeetingLocationFields(
+                                    countryCode:
+                                        data['countryCode']?.toString(),
+                                    region: data['region']?.toString(),
+                                    onChanged: (country, region) {
+                                      _country = country;
+                                      _region = region;
+                                    })),
+                            if ((data['countryCode']?.toString().trim() ?? '')
+                                    .isEmpty ||
+                                (data['region']?.toString().trim() ?? '')
+                                    .isEmpty)
+                              Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                      key: const ValueKey(
+                                          'profile-location-save'),
+                                      onPressed:
+                                          disabled ? null : _saveLocation,
+                                      icon: const Icon(
+                                          Icons.location_on_outlined),
+                                      label: Text(context.tr('Сохранить')))),
+                            const SizedBox(height: 12),
+                            SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(context.tr('Есть дети')),
+                                value: _children,
+                                onChanged: disabled
+                                    ? null
+                                    : (value) =>
+                                        setState(() => _children = value)),
+                            _field(_interests, 'Интересы и увлечения', disabled,
+                                multiline: true,
+                                validator: (s) => (s ?? '').trim().length < 20
+                                    ? context.tr('Минимум 20 символов')
+                                    : null),
+                            _field(_about, 'О себе', disabled,
+                                multiline: true,
+                                validator: (s) => (s ?? '').trim().length < 50
+                                    ? context.tr('Минимум 50 символов')
+                                    : null),
+                          ]))),
+                  if (_working) LinearProgressIndicator(value: _photoProgress),
+                  if (_notice != null)
+                    Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Text(context.tr(_notice!))),
+                  const SizedBox(height: 14),
+                  Align(
+                      child: ElevatedButton(
+                          onPressed: _working
+                              ? null
+                              : _pending != null
+                                  ? _wait
+                                  : _save,
+                          child: Text(context.tr(_pending != null
+                              ? 'Проверить результат'
+                              : 'Сохранить')))),
+                  const SizedBox(height: 20),
+                  TextButton.icon(
+                      onPressed: disabled ? null : _delete,
+                      icon: const Icon(Icons.delete_outline),
+                      label: Text(context.tr('Удалить профиль'))),
+                ]);
+          }));
+
+  Widget _field(TextEditingController controller, String label, bool disabled,
+          {bool number = false,
+          bool multiline = false,
+          FormFieldValidator<String>? validator}) =>
+      Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: TextFormField(
+              controller: controller,
+              enabled: !disabled,
+              keyboardType: number
+                  ? TextInputType.number
+                  : multiline
+                      ? TextInputType.multiline
+                      : TextInputType.text,
+              minLines: multiline ? 3 : 1,
+              maxLines: multiline ? null : 1,
+              scrollPhysics:
+                  multiline ? const NeverScrollableScrollPhysics() : null,
+              decoration: InputDecoration(
+                  labelText: context.tr(label), alignLabelWithHint: multiline),
+              validator: validator));
+}
+
+class _ProfileMetadataIncomplete implements Exception {
+  const _ProfileMetadataIncomplete();
+}
+
+class _DeleteProfileDialog extends StatefulWidget {
+  const _DeleteProfileDialog();
+  @override
+  State<_DeleteProfileDialog> createState() => _DeleteProfileDialogState();
+}
+
+class _DeleteProfileDialogState extends State<_DeleteProfileDialog> {
+  String _password = '';
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+          title: Text(context.tr('Удалить профиль?')),
+          content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(context.tr(
+                'Профиль станет недоступен другим пользователям. Для подтверждения введите пароль.')),
+            const SizedBox(height: 12),
+            TextField(
+                obscureText: true,
+                decoration: InputDecoration(labelText: context.tr('Пароль')),
+                onChanged: (value) => setState(() => _password = value)),
+          ])),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(context.tr('Отмена'))),
+            TextButton(
+                onPressed: _password.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, _password),
+                child: Text(context.tr('Удалить профиль')))
+          ]);
 }

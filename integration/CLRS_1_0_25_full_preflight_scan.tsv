@@ -1,0 +1,11 @@
+path	line	rule
+lib/service/app_backend.dart	21	literal_secret_assignment
+server/timeweb/api/test/server.test.mjs	68	url_userinfo
+server/timeweb/api/test/server.test.mjs	84	url_userinfo
+server/timeweb/test/auth-rest.test.mjs	5	literal_secret_assignment
+server/translation/test/google_provider.test.js	18	literal_secret_assignment
+server/translation/test/google_provider.test.js	75	literal_secret_assignment
+server/translation/test/google_provider.test.js	124	literal_secret_assignment
+test/content_translation_service_test.dart	112	url_userinfo
+tool/local_backend/photo_benchmark.dart	37	literal_secret_assignment
+tool/local_backend/seed.py	11	literal_secret_assignment
