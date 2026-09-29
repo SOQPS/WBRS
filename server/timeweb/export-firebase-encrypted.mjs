@@ -7,7 +7,7 @@ import { exportFirebase } from './export-core.mjs';
 import { validateExportPaths } from './export-paths.mjs';
 import { createAuthRestAdapter } from './auth-rest.mjs';
 
-function parseArgs(args) {
+export function parseArgs(args) {
   const values = {};
   const boolean = new Set(['confirm-read-cost']);
   for (let i = 0; i < args.length; i++) {
@@ -27,11 +27,19 @@ function parseArgs(args) {
   for (const name of Object.keys(values)) {
     if (!expected.has(name)) throw new Error('Unknown option');
   }
-  for (const name of ['project', 'bucket', 'out', 'key-file', 'max-auth-users',
+  const scope = values.scope ?? 'all';
+  if (!['all', 'storage', 'metadata'].includes(scope)
+      || (scope !== 'storage' && values['storage-prefix'])) {
+    throw new Error('A storage prefix requires --scope storage');
+  }
+  const required = ['project', 'bucket', 'out', 'key-file', 'max-auth-users',
     'max-auth-list-pages',
     'max-firestore-collections', 'max-firestore-references',
-    'max-firestore-list-pages', 'max-storage-objects',
-    'max-storage-list-pages', 'max-storage-bytes']) {
+    'max-firestore-list-pages'];
+  if (scope !== 'metadata') {
+    required.push('max-storage-objects', 'max-storage-list-pages', 'max-storage-bytes');
+  }
+  for (const name of required) {
     if (!values[name]) throw new Error(`Missing --${name}`);
   }
   if (values['confirm-project'] !== values.project
@@ -54,13 +62,13 @@ function parseArgs(args) {
     ['max-storage-list-pages', 'maxStorageListPages'],
     ['max-storage-bytes', 'maxStorageBytes'],
   ]) {
+    if (values[flag] === undefined && scope === 'metadata'
+        && ['max-storage-objects', 'max-storage-list-pages', 'max-storage-bytes'].includes(flag)) {
+      continue;
+    }
     if (!/^[1-9][0-9]*$/.test(values[flag])) throw new Error(`Invalid --${flag}`);
     limits[label] = Number(values[flag]);
     if (!Number.isSafeInteger(limits[label])) throw new Error(`Invalid --${flag}`);
-  }
-  const scope = values.scope ?? 'all';
-  if (!['all', 'storage'].includes(scope) || (scope === 'all' && values['storage-prefix'])) {
-    throw new Error('A storage prefix requires --scope storage');
   }
   return { values, limits, scope };
 }
@@ -114,34 +122,39 @@ async function main() {
   if (key.length !== 32) throw new Error('Key must contain 32 random bytes');
 
   // SDK imports happen only after all local guards and confirmations pass.
-  const [{ initializeApp, applicationDefault, deleteApp },
-    { getStorage }] = await Promise.all([
-    import('firebase-admin/app'), import('firebase-admin/storage'),
+  const [{ initializeApp, applicationDefault, deleteApp }, storageSdk] = await Promise.all([
+    import('firebase-admin/app'),
+    scope === 'metadata' ? Promise.resolve(null) : import('firebase-admin/storage'),
   ]);
   const credential = applicationDefault();
-  const app = initializeApp({ credential, projectId: values.project });
+  const app = storageSdk ? initializeApp({ credential, projectId: values.project }) : null;
   let writer;
   try {
     writer = await EncryptedArchiveWriter.create(output, key);
     const summary = await exportFirebase({
       auth: createAuthRestAdapter({ credential, projectId: values.project }),
       firestoreApi: firestoreApi(credential, values.project, values.database ?? '(default)'),
-      bucket: getStorage(app).bucket(values.bucket), writer,
+      bucket: storageSdk?.getStorage(app).bucket(values.bucket), writer,
       project: values.project, database: values.database ?? '(default)',
       bucketName: values.bucket, scope,
       storagePrefix: values['storage-prefix'] ?? '', limits,
     });
-    process.stdout.write(`Encrypted export complete: ${summary.authUsers} Auth users, `
+    const label = scope === 'metadata'
+      ? 'Encrypted partial metadata export complete'
+      : 'Encrypted export complete';
+    process.stdout.write(`${label}: ${summary.authUsers} Auth users, `
       + `${summary.firestoreDocuments} documents, ${summary.storageObjects} objects, `
       + `${summary.storageBytes} object bytes.\n`);
   } finally {
     if (writer) await writer.abort();
-    await deleteApp(app);
+    if (app) await deleteApp(app);
   }
 }
 
-main().catch(() => {
-  // SDK exceptions may contain private paths and data. Print no exception text.
-  process.stderr.write('Export failed; no complete archive was published.\n');
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(() => {
+    // SDK exceptions may contain private paths and data. Print no exception text.
+    process.stderr.write('Export failed; archive publication was not confirmed.\n');
+    process.exitCode = 1;
+  });
+}

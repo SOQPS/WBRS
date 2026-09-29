@@ -205,15 +205,19 @@ async function exportStorage(bucket, writer, summary, limits, prefix) {
 
 export async function exportFirebase({ auth, firestoreApi, bucket, writer,
   project, database = '(default)', bucketName, scope = 'all', storagePrefix = '', limits }) {
-  if (!['all', 'storage'].includes(scope) || (scope === 'all' && storagePrefix)) {
+  if (!['all', 'storage', 'metadata'].includes(scope)
+      || (scope !== 'storage' && storagePrefix)) {
     throw new Error('Only storage-only exports may use a prefix');
   }
   if (!project || !bucketName || !database || typeof storagePrefix !== 'string') {
     throw new Error('Source project, database and bucket are required');
   }
-  for (const label of ['maxAuthUsers', 'maxAuthListPages', 'maxFirestoreCollections',
-    'maxFirestoreReferences', 'maxFirestoreListPages', 'maxStorageObjects',
-    'maxStorageListPages', 'maxStorageBytes']) {
+  const requiredLimits = ['maxAuthUsers', 'maxAuthListPages', 'maxFirestoreCollections',
+    'maxFirestoreReferences', 'maxFirestoreListPages'];
+  if (scope !== 'metadata') {
+    requiredLimits.push('maxStorageObjects', 'maxStorageListPages', 'maxStorageBytes');
+  }
+  for (const label of requiredLimits) {
     positiveLimit(limits?.[label], label);
   }
   const summary = {
@@ -228,11 +232,13 @@ export async function exportFirebase({ auth, firestoreApi, bucket, writer,
       completeSource: scope === 'all', passwordHashesIncluded: false,
       snapshotConsistent: false,
     });
-    if (scope === 'all') {
+    if (scope !== 'storage') {
       await exportAuth(auth, writer, summary, limits);
       await exportFirestore(firestoreApi, writer, summary, limits, project, database);
     }
-    await exportStorage(bucket, writer, summary, limits, storagePrefix);
+    if (scope !== 'metadata') {
+      await exportStorage(bucket, writer, summary, limits, storagePrefix);
+    }
     await writer.finish(summary);
     return summary;
   } catch (error) {

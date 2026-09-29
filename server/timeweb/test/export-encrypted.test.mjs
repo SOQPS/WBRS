@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { EncryptedArchiveWriter, readEncryptedArchive } from '../encrypted-archive.mjs';
 import { exportFirebase } from '../export-core.mjs';
+import { parseArgs } from '../export-firebase-encrypted.mjs';
 import { validateExportPaths } from '../export-paths.mjs';
+import { scanImportArchive } from '../import-core.mjs';
 
 const limits = {
   maxAuthUsers: 10, maxAuthListPages: 10, maxFirestoreCollections: 10,
@@ -148,6 +150,95 @@ test('storage-only subset is labelled incomplete and tampering is detected', asy
   encrypted[30] ^= 1;
   await writeFile(path, encrypted);
   await assert.rejects(frames(path, key));
+});
+
+test('metadata export encrypts Auth and Firestore without reading Storage and cannot be imported as complete', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'clrs-export-metadata-'));
+  const archivePath = join(dir, 'metadata.clrsenc');
+  const key = randomBytes(32);
+  const writer = await EncryptedArchiveWriter.create(archivePath, key);
+  const source = fakeSources();
+  const summary = await exportFirebase({
+    ...source, bucket: undefined, writer, project: 'test-project', bucketName: 'test-bucket',
+    scope: 'metadata', limits: {
+      maxAuthUsers: limits.maxAuthUsers,
+      maxAuthListPages: limits.maxAuthListPages,
+      maxFirestoreCollections: limits.maxFirestoreCollections,
+      maxFirestoreReferences: limits.maxFirestoreReferences,
+      maxFirestoreListPages: limits.maxFirestoreListPages,
+    },
+  });
+  assert.equal(summary.authUsers, 1);
+  assert.equal(summary.firestoreDocuments, 3);
+  assert.equal(summary.firestoreMissingParents, 1);
+  assert.equal(summary.storageObjects, 0);
+  assert.equal(summary.storageBytes, 0);
+  assert.equal(summary.storageListPages, 0);
+  assert.equal((await stat(archivePath)).mode & 0o077, 0);
+  const encrypted = await readFile(archivePath);
+  assert.equal(encrypted.includes(Buffer.from('private text')), false);
+  assert.equal(encrypted.includes(Buffer.from('private@example.test')), false);
+  const restored = await frames(archivePath, key);
+  assert.equal(restored.some((frame) => frame.type === 'bytes'), false);
+  const records = restored.map((frame) => frame.record);
+  assert.equal(records[0].scope, 'metadata');
+  assert.equal(records[0].completeSource, false);
+  assert.equal(records[0].storagePrefix, '');
+  assert.equal(records[0].project, 'test-project');
+  assert.equal(records[0].bucket, 'test-bucket');
+  assert.deepEqual(records.find((record) => record.path === 'users/u1').fields, typedFields);
+  assert.equal(records.find((record) => record.kind === 'auth-user').user.passwordHash, undefined);
+  assert.equal(records.some((record) => record.kind === 'storage-object'), false);
+  assert.equal(records.at(-1).kind, 'end');
+  let imported = false;
+  await assert.rejects(scanImportArchive({
+    archivePath, key,
+    onAuth: () => { imported = true; },
+    onDocument: () => { imported = true; },
+    onObject: () => { imported = true; },
+  }), /complete CLRSX2 source/);
+  assert.equal(imported, false);
+});
+
+test('metadata CLI has explicit read bounds and refuses a Storage prefix', () => {
+  const args = [
+    '--project', 'test-project', '--bucket', 'test-bucket',
+    '--out', '/tmp/metadata.clrsenc', '--key-file', '/tmp/export.key',
+    '--scope', 'metadata', '--max-auth-users', '10', '--max-auth-list-pages', '2',
+    '--max-firestore-collections', '10', '--max-firestore-references', '20',
+    '--max-firestore-list-pages', '30',
+    '--confirm-project', 'test-project', '--confirm-bucket', 'test-bucket',
+    '--confirm-read-cost',
+  ];
+  const parsed = parseArgs(args);
+  assert.equal(parsed.scope, 'metadata');
+  assert.equal(parsed.limits.maxStorageBytes, undefined);
+  assert.equal(parsed.limits.maxFirestoreListPages, 30);
+  assert.throws(() => parseArgs([...args, '--storage-prefix', 'avatars/']),
+    /storage prefix/);
+  assert.throws(() => parseArgs(args.filter((arg) => arg !== '--confirm-read-cost')),
+    /confirmation required/);
+  const missingFirestoreLimit = [...args];
+  missingFirestoreLimit.splice(missingFirestoreLimit.indexOf('--max-firestore-list-pages'), 2);
+  assert.throws(() => parseArgs(missingFirestoreLimit),
+    /Missing --max-firestore-list-pages/);
+  assert.throws(() => parseArgs(args.map((arg) => arg === 'metadata' ? 'all' : arg)),
+    /Missing --max-storage-objects/);
+  assert.throws(() => parseArgs(args.map((arg) => arg === 'metadata' ? 'storage' : arg)),
+    /Missing --max-storage-objects/);
+});
+
+test('metadata export removes the partial file when a Firestore read limit is reached', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'clrs-export-metadata-limit-'));
+  const path = join(dir, 'metadata.clrsenc');
+  const writer = await EncryptedArchiveWriter.create(path, randomBytes(32));
+  const source = fakeSources();
+  await assert.rejects(exportFirebase({
+    ...source, bucket: undefined, writer, project: 'test-project',
+    bucketName: 'test-bucket', scope: 'metadata',
+    limits: { ...limits, maxFirestoreListPages: 1 },
+  }), /Firestore list-page limit reached/);
+  assert.deepEqual(await readdir(dir), []);
 });
 
 test('empty Auth pages still obey the explicit request limit', async () => {
