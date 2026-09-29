@@ -77,8 +77,8 @@ CLRS user or grants; the MySQL schema has not been applied, and no live data
 has been migrated.
 
 The existing 10 GB S3 bucket is public. The old Flask upload route uses
-`public-read` and returns direct object URLs; the inspected source does not
-establish whether that route uses this particular bucket. Making it private
+`public-read` and returns direct object URLs; a commented source line names
+this exact bucket, but the effective deployed configuration remains unverified. Making it private
 may therefore break old clients or links. Private CLRS photos must not be
 imported into the public bucket. No full CLRS API is deployed: the included
 server exposes infrastructure health/readiness endpoints, not the application
