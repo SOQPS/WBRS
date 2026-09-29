@@ -66,6 +66,24 @@ fixtures; no values are included in the report. The private Timeweb production
 audit JSON, service credentials, local auth data, logs, APKs, and dependency
 caches were excluded from the integration source paths.
 
+## Timeweb migration blockers
+
+The existing MySQL cluster has secure connections disabled. Enabling them in
+Timeweb changes connection details and may disconnect older clients, so the
+change was cancelled pending a coordinated transition. The prepared MySQL CLI
+and `/readyz` require verified TLS and cannot connect to this cluster as it
+stands. The separate `clrs_staging` database is empty and has no dedicated
+CLRS user or grants; the MySQL schema has not been applied, and no live data
+has been migrated.
+
+The existing 10 GB S3 bucket is public. The old Flask upload route uses
+`public-read` and returns direct object URLs; the inspected source does not
+establish whether that route uses this particular bucket. Making it private
+may therefore break old clients or links. Private CLRS photos must not be
+imported into the public bucket. No full CLRS API is deployed: the included
+server exposes infrastructure health/readiness endpoints, not the application
+flows needed to replace Firebase.
+
 ## Verification and limits
 
 Flutter 3.32.5 `pub get` resolved the merged dependencies. `flutter analyze
