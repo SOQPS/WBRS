@@ -405,7 +405,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Postarea nu a putut fi distribuită. Încearcă din nou.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Ștergerea nu a putut fi confirmată. Verifică-ți peretele înainte de a încerca din nou.",
   "Магазин подарков": "Magazin de cadouri",
-  "Дарить внимание. Создавать особенные моменты.": "Oferă atenție. Creează momente speciale.",
+  "Дарите внимание. Создавайте особенные моменты.": "Oferă atenție. Creează momente speciale.",
   "Ваш баланс": "Soldul tău",
   "Выбрать подарки": "Alege cadouri",
   "Выбранные подарки": "Cadouri selectate",
@@ -888,5 +888,6 @@
   "Выйти из аккаунта": "Deconectare",
   "Сохранить настройки": "Salvează setările",
   "Не удалось сохранить настройки": "Nu s-au putut salva setările",
-  "Главное фото: костюм, форма или классическая рубашка.": "Fotografia principală: costum, uniformă sau cămașă clasică."
+  "Главное фото: костюм, форма или классическая рубашка.": "Fotografia principală: costum, uniformă sau cămașă clasică.",
+  "Подарить текущему собеседнику": "Oferă interlocutorului actual"
 }

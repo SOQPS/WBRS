@@ -411,7 +411,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Objave ni bilo mogoče deliti. Poskusite znova.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Brisanja ni bilo mogoče potrditi. Pred ponovnim poskusom preverite svoj zid.",
   "Магазин подарков": "Trgovina z darili",
-  "Дарить внимание. Создавать особенные моменты.": "Podarite pozornost. Ustvarite posebne trenutke.",
+  "Дарите внимание. Создавайте особенные моменты.": "Podarite pozornost. Ustvarite posebne trenutke.",
   "Ваш баланс": "Vaše stanje",
   "Выбрать подарки": "Izberi darila",
   "Выбранные подарки": "Izbrana darila",
@@ -895,5 +895,6 @@
   "Выйти из аккаунта": "Odjava",
   "Сохранить настройки": "Shrani nastavitve",
   "Не удалось сохранить настройки": "Nastavitev ni bilo mogoče shraniti",
-  "Главное фото: костюм, форма или классическая рубашка.": "Glavna fotografija: obleka, uniforma ali klasična srajca."
+  "Главное фото: костюм, форма или классическая рубашка.": "Glavna fotografija: obleka, uniforma ali klasična srajca.",
+  "Подарить текущему собеседнику": "Podari trenutnemu sogovorniku"
 }

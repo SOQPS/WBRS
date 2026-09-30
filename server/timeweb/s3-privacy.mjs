@@ -38,17 +38,34 @@ async function confirmS3Settings(client, bucket) {
   const acl = await client.send(new GetBucketAclCommand({ Bucket: bucket }));
   if (!ownerOnly(acl)) throw new Error('Private media bucket ACL cannot be confirmed');
   try {
-    await client.send(new GetBucketPolicyCommand({ Bucket: bucket }));
+    const response = await client.send(new GetBucketPolicyCommand({ Bucket: bucket }));
+    // Timeweb returns an explicit empty policy after a private-type change.
+    // It grants no access. Accept only that exact shape; unknown/nonempty
+    // policies still block staging before any user data or probe is written.
+    let policy;
+    try {
+      if (typeof response.Policy !== 'string' || response.Policy.length > 65536) {
+        throw new Error('Invalid policy');
+      }
+      policy = JSON.parse(response.Policy);
+    } catch {
+      throw new Error('Private media bucket policy cannot be confirmed');
+    }
+    if (policy && policy.Version === '2012-10-17'
+        && Object.keys(policy).length === 2
+        && Array.isArray(policy.Statement) && policy.Statement.length === 0) return;
     // A private bucket can have a safe policy, but proving every possible
     // condition is out of scope. A dedicated migration bucket needs none.
-    throw new Error('Private media bucket has a policy');
+    throw new Error('Private media bucket has an unverified policy');
   } catch (error) {
     if (error?.name !== 'NoSuchBucketPolicy') throw error;
   }
 }
 
 async function anonymousProbe(client, bucket, endpoint, fetchImpl) {
-  const key = `clrs-import-quarantine/${randomBytes(32).toString('hex')}`;
+  // Keep disposable probes separate from imported user files so the
+  // technical role can delete probes without delete access to any media.
+  const key = `clrs-privacy-probe/${randomBytes(32).toString('hex')}`;
   const bytes = randomBytes(32); // Never send private user data as a probe.
   let attempted = false;
   try {

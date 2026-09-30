@@ -37,18 +37,20 @@ class ProfilePortrait extends StatelessWidget {
                     color: Color(0x4431241D),
                     child: Icon(Icons.person_outline,
                         size: 90, color: LrsTheme.peachLight))
-                : CachedNetworkImage(
-                    imageUrl: photo,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.topCenter,
-                    memCacheWidth:
-                        (MediaQuery.sizeOf(context).width * 2).round(),
-                    maxWidthDiskCache: 1440,
-                    fadeInDuration: const Duration(milliseconds: 120),
-                    placeholder: (_, __) =>
-                        const Center(child: CircularProgressIndicator()),
-                    errorWidget: (_, __, ___) =>
-                        const Icon(Icons.person_outline, size: 80))),
+                : ColoredBox(
+                    color: const Color(0xFF211911),
+                    child: CachedNetworkImage(
+                        imageUrl: photo,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.topCenter,
+                        memCacheWidth:
+                            (MediaQuery.sizeOf(context).width * 2).round(),
+                        maxWidthDiskCache: 1440,
+                        fadeInDuration: const Duration(milliseconds: 120),
+                        placeholder: (_, __) =>
+                            const Center(child: CircularProgressIndicator()),
+                        errorWidget: (_, __, ___) =>
+                            const Icon(Icons.person_outline, size: 80)))),
         Positioned.fill(
             child: DecoratedBox(
                 decoration: BoxDecoration(

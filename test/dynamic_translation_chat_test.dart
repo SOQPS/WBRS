@@ -115,9 +115,11 @@ void main() {
   Future<void> pump(WidgetTester tester, Widget child,
       {String code = 'ru',
       double scale = 1,
+      Size size = const Size(320, 640),
+      double keyboard = 0,
       ContentTranslationService? service}) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(320, 640);
+    tester.view.physicalSize = size;
     addTearDown(tester.view.reset);
     final localizations = catalog(code);
     await tester.pumpWidget(ContentTranslationScope(
@@ -132,7 +134,9 @@ void main() {
         ],
         builder: (context, widget) => MediaQuery(
             data: MediaQuery.of(context)
-                .copyWith(textScaler: TextScaler.linear(scale)),
+                .copyWith(
+                    textScaler: TextScaler.linear(scale),
+                    viewInsets: EdgeInsets.only(bottom: keyboard)),
             child: widget!),
         home: Scaffold(body: SingleChildScrollView(child: child)),
       ),
@@ -144,7 +148,8 @@ void main() {
       {bool personal = true,
       bool own = false,
       String text = _original,
-      bool quote = false}) {
+      bool quote = false,
+      String quoteText = _quote}) {
     final path =
         '${personal ? 'chats' : 'meets'}/$chatId/${personal ? 'chats' : 'messages'}/original';
     final data = <String, dynamic>{
@@ -157,7 +162,7 @@ void main() {
       'time': Timestamp.fromDate(DateTime(2026, 9, 22, 20)),
       if (quote)
         'replyMessage': {
-          'message': _quote,
+          'message': quoteText,
           'sendBy': 'Quote author',
           'name': 'Quote author',
         },
@@ -277,6 +282,55 @@ void main() {
           .value;
       expect((saved['replyMessage'] as Map)['message'], _original);
       expect(saved['message'], 'My original reply');
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final width in [320.0, 390.0]) {
+    testWidgets('Long quoted reply uses full-width text at ${width}dp',
+        (tester) async {
+      final longQuote = List.filled(8, 'Длинная исходная цитата без обрезания.')
+          .join(' ');
+      final longReply = List.filled(10, 'Развёрнутый ответ с полным текстом.')
+          .join('\n');
+      await pump(tester,
+          message(text: longQuote, quote: true, quoteText: longQuote),
+          size: Size(width, 640), keyboard: 220);
+      final bubbleQuote = tester.widget<TranslatableText>(
+          find.byWidgetPredicate((widget) => widget is TranslatableText &&
+              widget.text == longQuote && !widget.showAction));
+      expect(bubbleQuote.maxLines, isNull);
+      expect(bubbleQuote.overflow, isNull);
+
+      final original = find.byWidgetPredicate((widget) =>
+          widget is TranslatableText &&
+          widget.text == longQuote &&
+          widget.showAction);
+      await tester.ensureVisible(original);
+      await tester.longPress(original);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ответить'));
+      await tester.pump();
+      final watch = Stopwatch()..start();
+      while (tester.widget<TextField>(find.byType(TextField)).readOnly &&
+          watch.elapsed < const Duration(seconds: 5)) {
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+      final dialog = find.byType(AlertDialog);
+      expect(tester.getSize(dialog).width, greaterThan(width - 32));
+      final preview = tester.widget<TranslatableText>(find.descendant(
+          of: dialog,
+          matching: find.byWidgetPredicate((widget) =>
+              widget is TranslatableText && widget.text == longQuote)));
+      expect(preview.maxLines, isNull);
+      expect(preview.overflow, isNull);
+      final input = find.byType(TextField);
+      expect(tester.widget<TextField>(input).maxLines, isNull);
+      await tester.enterText(input, longReply);
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(input).controller!.text, longReply);
       expect(tester.takeException(), isNull);
     });
   }

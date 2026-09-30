@@ -10,7 +10,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/pages/admin/users.dart';
 import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.dart';
-import 'package:wbrs/service/admin_access.dart';
 import 'package:wbrs/service/admin_private_directory.dart';
 import 'package:wbrs/service/session_service.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -429,6 +428,73 @@ void main() {
     expect(find.text('legacy@example.invalid'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('other profile shows legacy email only for a claimed admin',
+      (tester) async {
+    await show(
+        tester,
+        SomebodyProfile(
+            uid: 'target',
+            photoUrl: '',
+            name: 'Target',
+            userInfo: Map.from(target),
+            privateEmail: false));
+    db.emit('users/target/images', []);
+    await tester.pump();
+    final claimedAdmin = auth.currentUser as _User;
+    await tester.scrollUntilVisible(find.text('Электронная почта'), 220,
+        maxScrolls: 40, scrollable: find.byType(Scrollable).first);
+    expect(find.text('legacy@example.invalid'), findsOneWidget);
+    final reads = claimedAdmin.tokenReads;
+    await tester.pump();
+    expect(claimedAdmin.tokenReads, reads,
+        reason: 'A rebuild must not refresh the token again');
+    await tester.pumpWidget(const SizedBox());
+
+    auth.user = _User('ordinary', Future.value(_Claims({})));
+    await show(
+        tester,
+        SomebodyProfile(
+            uid: 'target',
+            photoUrl: '',
+            name: 'Target',
+            userInfo: Map.from(target),
+            privateEmail: false));
+    db.emit('users/target/images', []);
+    await tester.pump();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1800));
+    await tester.pump();
+    expect(find.text('legacy@example.invalid'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('legacy email stays hidden after logout and same-UID login',
+      (tester) async {
+    await show(
+        tester,
+        SomebodyProfile(
+            uid: 'target',
+            photoUrl: '',
+            name: 'Target',
+            userInfo: Map.from(target),
+            privateEmail: false));
+    db.emit('users/target/images', []);
+    await tester.pump();
+    await tester.scrollUntilVisible(find.text('Электронная почта'), 220,
+        maxScrolls: 40, scrollable: find.byType(Scrollable).first);
+    expect(find.text('legacy@example.invalid'), findsOneWidget);
+
+    auth.switchTo(null);
+    await tester.pump();
+    expect(find.text('legacy@example.invalid'), findsNothing);
+    final pending = Completer<IdTokenResult>();
+    auth.switchTo(_User('admin', pending.future));
+    await tester.pump();
+    expect(find.text('legacy@example.invalid'), findsNothing);
+    pending.complete(_Claims({}));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('legacy@example.invalid'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('ordinary private-mode profile never queries or renders email',
       (tester) async {
     auth.user = _User('ordinary', Future.value(_Claims({})));
@@ -449,10 +515,9 @@ void main() {
     expect(db.privateQueries, 0);
     await tester.pumpWidget(const SizedBox());
   });
-  test('approved identities remain compatible with existing AdminAccess policy',
+  test('a legacy UID without a server claim cannot read private email',
       () async {
-    auth.user =
-        _User(AdminAccess.approvedUids.first, Future.value(_Claims({})));
-    expect(await directory().email('target').first, 'private@example.invalid');
+    auth.user = _User('legacy-approved-uid', Future.value(_Claims({})));
+    await expectLater(directory().email('target').first, throwsStateError);
   });
 }

@@ -1,11 +1,30 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
+import { readFile, statfs } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EncryptedArchiveWriter } from './encrypted-archive.mjs';
 import { exportFirebase } from './export-core.mjs';
 import { validateExportPaths } from './export-paths.mjs';
 import { createAuthRestAdapter } from './auth-rest.mjs';
+
+const STORAGE_DISK_RESERVE = 2n * 1024n ** 3n;
+
+// maxStorageBytes is a hard source-byte cap. Require enough space for that
+// whole cap before starting, then retain a 2 GiB floor as objects arrive.
+// Archive frame overhead and Auth/Firestore metadata fit inside that floor.
+export async function ensureStorageHeadroom(directory, sourceBytes,
+    { statfsImpl = statfs, reserveBytes = STORAGE_DISK_RESERVE } = {}) {
+  if (!Number.isSafeInteger(sourceBytes) || sourceBytes < 0
+      || typeof reserveBytes !== 'bigint' || reserveBytes < 0n) {
+    throw new Error('Invalid Storage disk limit');
+  }
+  const disk = await statfsImpl(directory, { bigint: true });
+  const available = BigInt(disk.bavail) * BigInt(disk.bsize);
+  if (available < BigInt(sourceBytes) + reserveBytes) {
+    throw new Error('Insufficient free disk for bounded Storage export');
+  }
+  return available;
+}
 
 export function parseArgs(args) {
   const values = {};
@@ -20,7 +39,7 @@ export function parseArgs(args) {
   const expected = new Set([
     'project', 'database', 'bucket', 'out', 'key-file', 'scope', 'storage-prefix',
     'max-auth-users', 'max-auth-list-pages', 'max-firestore-collections', 'max-firestore-references',
-    'max-firestore-list-pages', 'max-storage-objects',
+    'max-firestore-list-pages', 'max-firestore-concurrency', 'max-storage-objects',
     'max-storage-list-pages', 'max-storage-bytes',
     'confirm-project', 'confirm-bucket', 'confirm-read-cost',
   ]);
@@ -70,6 +89,9 @@ export function parseArgs(args) {
     limits[label] = Number(values[flag]);
     if (!Number.isSafeInteger(limits[label])) throw new Error(`Invalid --${flag}`);
   }
+  const concurrency = values['max-firestore-concurrency'] ?? '1';
+  if (!/^[1-8]$/.test(concurrency)) throw new Error('Invalid --max-firestore-concurrency');
+  limits.maxFirestoreConcurrency = Number(concurrency);
   return { values, limits, scope };
 }
 
@@ -129,6 +151,9 @@ async function main() {
   );
   const key = await readFile(keyFile);
   if (key.length !== 32) throw new Error('Key must contain 32 random bytes');
+  if (scope !== 'metadata') {
+    await ensureStorageHeadroom(dirname(output), limits.maxStorageBytes);
+  }
 
   // SDK imports happen only after all local guards and confirmations pass.
   const [{ initializeApp, applicationDefault, deleteApp }, storageSdk] = await Promise.all([
@@ -147,6 +172,8 @@ async function main() {
       project: values.project, database: values.database ?? '(default)',
       bucketName: values.bucket, scope,
       storagePrefix: values['storage-prefix'] ?? '', limits,
+      beforeStorageObject: scope === 'metadata' ? undefined : (size) =>
+        ensureStorageHeadroom(dirname(output), size),
     });
     const label = scope === 'metadata'
       ? 'Encrypted partial metadata export complete'

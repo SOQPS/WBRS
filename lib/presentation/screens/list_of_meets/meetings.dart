@@ -491,48 +491,122 @@ class MeetingGuidePage extends StatelessWidget {
     'Вы — компания и хотите устроить что-то масштабное. Один пусть создаёт коллективную встречу, опишите кратко предложение.',
     'Когда кто-нибудь вступит, придёт уведомление как создателю.',
   ];
+  static const _stepTitles = [
+    'Индивидуальная встреча',
+    'Коллективная встреча',
+    'Коллективная встреча',
+    'Участники встречи',
+  ];
+  static const _stepIcons = [
+    Icons.person_outline,
+    Icons.group_outlined,
+    Icons.groups_outlined,
+    Icons.how_to_reg_outlined,
+  ];
   @override
   Widget build(BuildContext context) => ClrsScaffold(
-        appBar: AppBar(title: Text(context.tr('Аннотация на встречу:'))),
-        body: SafeArea(
-            top: false,
-            child: ListView(
-                key: const ValueKey('meeting-guide-scroll'),
-                padding: const EdgeInsets.all(16),
-                children: [
-                  const ClrsBrandHeader(),
-                  Text(context.tr('Как создать встречу'),
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  for (int i = 0; i < _steps.length; i++)
-                    Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: ClrsPanel(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  CircleAvatar(
-                                      radius: 15,
-                                      backgroundColor: const Color(0xBBA76843),
-                                      child: Text(context.l10n.number(i + 1),
-                                          style: const TextStyle(
-                                              color: LrsTheme.text))),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                      child: Text(context.tr(_steps[i]),
-                                          style: const TextStyle(
-                                              fontSize: 16, height: 1.3))),
-                                ]))),
-                  const ClrsValuesFooter(),
-                  ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: LrsTheme.peach,
-                          foregroundColor: LrsTheme.background,
-                          minimumSize: const Size.fromHeight(48)),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(context.tr('Понятно'))),
-                ])),
-      );
+    appBar: AppBar(
+      toolbarHeight: 56 * MediaQuery.textScalerOf(context).scale(1).clamp(1, 2),
+      title: Text(context.tr('Аннотация на встречу:')),
+    ),
+    body: SafeArea(
+      top: false,
+      child: LayoutBuilder(
+        builder: (context, constraints) => ListView(
+          key: const ValueKey('meeting-guide-scroll'),
+          padding: const EdgeInsets.all(16),
+          children: [
+            const ClrsBrandHeader(),
+            Text(
+              context.tr('Как создать встречу'),
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 12),
+            for (int i = 0; i < _steps.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    // The panel's right edge is at two thirds of
+                    // the viewport; the family photo stays visible.
+                    width: constraints.maxWidth * 2 / 3 - 16,
+                    child: ClrsPanel(
+                      key: ValueKey('meeting-guide-step-${i + 1}'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: MediaQuery.textScalerOf(
+                                  context,
+                                ).scale(15).clamp(15, 30),
+                                backgroundColor: const Color(0xBBA76843),
+                                child: Text(
+                                  context.l10n.number(i + 1),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: LrsTheme.text,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  context.tr(_stepTitles[i]),
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                _stepIcons[i],
+                                color: LrsTheme.peachLight,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  context.tr(_steps[i]),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            const ClrsValuesFooter(),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: LrsTheme.peach,
+                foregroundColor: LrsTheme.background,
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: () => Navigator.pop(context),
+              child: Text(context.tr('Понятно')),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

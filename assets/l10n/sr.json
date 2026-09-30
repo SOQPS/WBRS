@@ -405,7 +405,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Nije moguće podeliti objavu. Pokušajte ponovo.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Nije moguće potvrditi brisanje. Proverite zid pre ponovnog pokušaja.",
   "Магазин подарков": "Prodavnica poklona",
-  "Дарить внимание. Создавать особенные моменты.": "Pokažite pažnju. Stvorite posebne trenutke.",
+  "Дарите внимание. Создавайте особенные моменты.": "Pokažite pažnju. Stvorite posebne trenutke.",
   "Ваш баланс": "Vaš saldo",
   "Выбрать подарки": "Izaberi poklone",
   "Выбранные подарки": "Izabrani pokloni",
@@ -888,5 +888,6 @@
   "Выйти из аккаунта": "Odjavi se",
   "Сохранить настройки": "Sačuvaj podešavanja",
   "Не удалось сохранить настройки": "Podešavanja nisu sačuvana",
-  "Главное фото: костюм, форма или классическая рубашка.": "Glavna fotografija: odelo, uniforma ili klasična košulja."
+  "Главное фото: костюм, форма или классическая рубашка.": "Glavna fotografija: odelo, uniforma ili klasična košulja.",
+  "Подарить текущему собеседнику": "Pokloni trenutnom sagovorniku"
 }

@@ -63,7 +63,7 @@ function emptyTables() {
 // SHA-256 unique keys. It is intentionally not a substitute for a MySQL run.
 function fakeMySql({ database = 'clrs_staging', version = '8.4.6',
   sqlMode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION',
-  charset = 'utf8mb4', schemaVersion = 1 } = {}) {
+  charset = 'utf8mb4', schemaVersion = 1, ignoreStrictMode = false } = {}) {
   let committed = emptyTables();
   let working = null;
   let readOnly = false;
@@ -73,6 +73,8 @@ function fakeMySql({ database = 'clrs_staging', version = '8.4.6',
     calls,
     async query(sql) {
       calls.push({ sql });
+      if (sql === "SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'"
+          && !ignoreStrictMode) sqlMode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';
       if (sql.startsWith('SET SESSION') || sql.startsWith('SET TRANSACTION')) return [[], []];
       if (sql.startsWith('START TRANSACTION')) {
         assert.equal(working, null);
@@ -294,7 +296,7 @@ test('target guards require clrs_staging, MySQL 8.4, strict utf8mb4 and schema 1
   await assert.rejects(unopened.verifyDb.verifyAuth({}), /transaction is not open/);
   for (const options of [
     { database: 'default_db' }, { version: '8.0.42' },
-    { sqlMode: 'NO_ENGINE_SUBSTITUTION' }, { charset: 'latin1' },
+    { sqlMode: 'NO_ENGINE_SUBSTITUTION', ignoreStrictMode: true }, { charset: 'latin1' },
     { schemaVersion: 2 },
   ]) {
     const client = fakeMySql(options);
@@ -303,4 +305,16 @@ test('target guards require clrs_staging, MySQL 8.4, strict utf8mb4 and schema 1
     await adapter.rollback();
     assert.equal(client.data.source, null);
   }
+});
+
+test('managed nonstrict defaults are corrected on the pinned connection before transaction', async (t) => {
+  const input = await archive(t);
+  const client = fakeMySql({ sqlMode: 'IGNORE_SPACE' });
+  await stageImport({ ...input, db: adapters(client).importDb, media,
+    beforeWrite: async () => {}, beforeCommit: async () => {}, dryRun: false });
+  const strictIndex = client.calls.findIndex(({ sql }) => sql.startsWith('SET SESSION sql_mode'));
+  const transactionIndex = client.calls.findIndex(({ sql }) => sql === 'START TRANSACTION');
+  assert.ok(strictIndex >= 0 && strictIndex < transactionIndex);
+  assert.equal(client.calls.some(({ sql }) => /SET GLOBAL/.test(sql)), false);
+  assert.equal(client.data.auth.size, 1);
 });

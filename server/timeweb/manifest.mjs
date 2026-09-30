@@ -228,7 +228,7 @@ export async function collectManifest({ auth, firestore, bucket, bucketName, key
 
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   if (!manifest || manifest.schemaVersion !== 2
       || !FINGERPRINT.test(manifest.hmacKeyId)
       || !FINGERPRINT.test(manifest.source?.project)

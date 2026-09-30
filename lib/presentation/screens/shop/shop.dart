@@ -1,7 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -122,7 +121,7 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  context.tr('Дарить внимание. Создавать особенные моменты.'),
+                  context.tr('Дарите внимание. Создавайте особенные моменты.'),
                   style: const TextStyle(
                     color: LrsTheme.text,
                     fontSize: 15,
@@ -235,44 +234,19 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
       final recipient = await showDialog<_GiftRecipient>(
         context: context,
         barrierColor: const Color(0x33000000),
-        builder: (dialogContext) {
-          final screenWidth = MediaQuery.sizeOf(dialogContext).width;
-          final panelWidth = math.min(
-            screenWidth - 12,
-            math.max(280.0, screenWidth * 0.67),
-          );
-          return Dialog(
-            alignment: Alignment.centerLeft,
-            insetPadding: EdgeInsets.zero,
-            backgroundColor: Colors.transparent,
-            child: SizedBox(
-              width: panelWidth,
-              height:
-                  MediaQuery.sizeOf(dialogContext).height -
-                  MediaQuery.viewInsetsOf(dialogContext).bottom,
-              child: Material(
-                color: const Color(0xE02F2017),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.horizontal(
-                    right: Radius.circular(20),
-                  ),
-                  side: BorderSide(color: LrsTheme.actionBorder),
-                ),
-                child: _GiftRecipientSheet(
-                  db: db,
-                  auth: auth,
-                  ownerUid: ownerUid,
-                  giftName: name,
-                  giftImagePath: imagePath,
-                  preferredRecipientUid: widget.preferredRecipientUid,
-                  preferredChatId: widget.preferredChatId,
-                  onSend: (recipient) =>
-                      _sendGift(ownerUid, name, imagePath, recipient),
-                ),
-              ),
-            ),
-          );
-        },
+        builder: (_) => _GiftRecipientDialog(
+          child: _GiftRecipientSheet(
+            db: db,
+            auth: auth,
+            ownerUid: ownerUid,
+            giftName: name,
+            giftImagePath: imagePath,
+            preferredRecipientUid: widget.preferredRecipientUid,
+            preferredChatId: widget.preferredChatId,
+            onSend: (recipient) =>
+                _sendGift(ownerUid, name, imagePath, recipient),
+          ),
+        ),
       );
       if (!mounted || auth.currentUser?.uid != ownerUid || recipient == null) {
         return;
@@ -332,9 +306,7 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     final recipientData = recipientSnapshot.data();
     if (!recipientSnapshot.exists ||
         recipientData == null ||
-        recipientData['deleted'] == true ||
-        recipientData['status'] == 'deleted' ||
-        recipientData['registrationStatus'] == 'deleted') {
+        !_isGiftRecipientActive(recipientData)) {
       throw StateError('Gift recipient unavailable');
     }
     final chatWith = recipientData['chatWithId'];
@@ -1259,6 +1231,53 @@ class _GiftRecipient {
   }
 }
 
+bool _isGiftRecipientActive(Map<String, dynamic> profile) =>
+    profile['deleted'] != true &&
+    profile['disabled'] != true &&
+    profile['status'] != 'deleted' &&
+    profile['status'] != 'blocked' &&
+    profile['registrationStatus'] != 'deleted';
+
+class _GiftRecipientDialog extends StatelessWidget {
+  const _GiftRecipientDialog({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedPadding(
+    padding:
+        MediaQuery.viewInsetsOf(context) + const EdgeInsets.only(right: 12),
+    duration: const Duration(milliseconds: 100),
+    curve: Curves.decelerate,
+    child: LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: Alignment.centerLeft,
+        // Material Dialog imposes a 280 dp minimum, which hides the free
+        // right third on small phones. Use the route's available bounds.
+        child: SizedBox(
+          key: const ValueKey('gift-recipient-panel'),
+          width: constraints.maxWidth * 2 / 3,
+          height: constraints.maxHeight,
+          child: Material(
+            color: const Color(0xE02F2017),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(20)),
+              side: BorderSide(color: LrsTheme.actionBorder),
+            ),
+            child: MediaQuery.removeViewInsets(
+              context: context,
+              removeLeft: true,
+              removeTop: true,
+              removeRight: true,
+              removeBottom: true,
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 @visibleForTesting
 Widget giftRecipientSheetForTesting({
   required FirebaseFirestore db,
@@ -1266,14 +1285,21 @@ Widget giftRecipientSheetForTesting({
   required String ownerUid,
   String? preferredRecipientUid,
   String? preferredChatId,
-}) => _GiftRecipientSheet(
-  db: db,
-  auth: auth,
-  ownerUid: ownerUid,
-  preferredRecipientUid: preferredRecipientUid,
-  preferredChatId: preferredChatId,
-  onSend: (_) async {},
-);
+  Future<void> Function(String uid, String chatId)? onSend,
+  bool asDialog = false,
+}) {
+  final sheet = _GiftRecipientSheet(
+    db: db,
+    auth: auth,
+    ownerUid: ownerUid,
+    preferredRecipientUid: preferredRecipientUid,
+    preferredChatId: preferredChatId,
+    onSend: (recipient) async {
+      await onSend?.call(recipient.uid, recipient.chatId);
+    },
+  );
+  return asDialog ? _GiftRecipientDialog(child: sheet) : sheet;
+}
 
 class _GiftRecipientSheet extends StatefulWidget {
   const _GiftRecipientSheet({
@@ -1359,9 +1385,7 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
       final profile = profileSnapshot?.data();
       if (profileSnapshot?.exists != true ||
           profile == null ||
-          profile['deleted'] == true ||
-          profile['status'] == 'deleted' ||
-          profile['registrationStatus'] == 'deleted') {
+          !_isGiftRecipientActive(profile)) {
         continue;
       }
       recipients.add(
@@ -1379,21 +1403,9 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
     if (mounted &&
         widget.auth.currentUser?.uid == widget.ownerUid &&
         widget.preferredRecipientUid != null) {
-      final exact = recipients
-          .where(
-            (recipient) =>
-                recipient.uid == widget.preferredRecipientUid &&
-                recipient.chatId == widget.preferredChatId,
-          )
-          .toList();
-      final byUid = recipients
-          .where((recipient) => recipient.uid == widget.preferredRecipientUid)
-          .toList();
-      if (exact.isNotEmpty || byUid.isNotEmpty) {
-        final preferred = exact.isNotEmpty ? exact.first : byUid.first;
-        if (_matchesSearch(preferred)) {
-          setState(() => _selected = preferred);
-        }
+      final preferred = _preferredRecipient(recipients);
+      if (preferred != null && _matchesSearch(preferred)) {
+        setState(() => _selected = preferred);
       }
     }
     return recipients;
@@ -1402,9 +1414,34 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
   bool _matchesSearch(_GiftRecipient recipient) =>
       recipient.name.toLowerCase().contains(_searchTerm.trim().toLowerCase());
 
+  _GiftRecipient? _preferredRecipient(List<_GiftRecipient> recipients) {
+    _GiftRecipient? sameUser;
+    for (final recipient in recipients) {
+      if (recipient.uid != widget.preferredRecipientUid) continue;
+      if (recipient.chatId == widget.preferredChatId) return recipient;
+      sameUser ??= recipient;
+    }
+    return sameUser;
+  }
+
+  Future<void> _sendCurrent(List<_GiftRecipient> recipients) async {
+    final recipient = _preferredRecipient(recipients);
+    if (!mounted ||
+        _sending ||
+        _sendAttempted ||
+        recipient == null ||
+        !_matchesSearch(recipient) ||
+        widget.auth.currentUser?.uid != widget.ownerUid) {
+      return;
+    }
+    setState(() => _selected = recipient);
+    await _send();
+  }
+
   Future<void> _send() async {
     final recipient = _selected;
-    if (_sending ||
+    if (!mounted ||
+        _sending ||
         _sendAttempted ||
         recipient == null ||
         !_matchesSearch(recipient) ||
@@ -1419,12 +1456,13 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
       await widget.onSend(recipient);
       if (!mounted) return;
       setState(() => _sending = false);
+      if (widget.auth.currentUser?.uid != widget.ownerUid) return;
       Navigator.pop(context, recipient);
     } catch (_) {
       if (mounted) {
         setState(() {
           _sending = false;
-          _sendUnconfirmed = true;
+          _sendUnconfirmed = widget.auth.currentUser?.uid == widget.ownerUid;
         });
       }
     }
@@ -1470,7 +1508,7 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      context.tr(widget.giftName ?? ''),
+                      context.tr(widget.giftName ?? 'Подарок'),
                       softWrap: true,
                       style: const TextStyle(color: LrsTheme.text),
                     ),
@@ -1500,6 +1538,47 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
               ),
             ),
             const SizedBox(height: 8),
+            if (widget.preferredRecipientUid != null)
+              FutureBuilder<List<_GiftRecipient>>(
+                future: _recipients,
+                builder: (context, snapshot) {
+                  final loaded =
+                      snapshot.connectionState == ConnectionState.done &&
+                      !snapshot.hasError &&
+                      snapshot.hasData;
+                  final recipient = loaded
+                      ? _preferredRecipient(snapshot.data!)
+                      : null;
+                  final canSend =
+                      recipient != null &&
+                      _matchesSearch(recipient) &&
+                      widget.auth.currentUser?.uid == widget.ownerUid &&
+                      !_sending &&
+                      !_sendAttempted;
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: const ValueKey('gift-current-recipient'),
+                      onPressed: canSend
+                          ? () => _sendCurrent(snapshot.data!)
+                          : null,
+                      style: TextButton.styleFrom(
+                        foregroundColor: LrsTheme.text,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 6,
+                        ),
+                        minimumSize: Size.zero,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: Text(
+                        context.tr('Подарить текущему собеседнику'),
+                        softWrap: true,
+                      ),
+                    ),
+                  );
+                },
+              ),
             if (_sendUnconfirmed)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

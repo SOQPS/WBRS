@@ -20,7 +20,8 @@ class _CatalogDelegate extends LocalizationsDelegate<ClrsLocalizations> {
 
   @override
   Future<ClrsLocalizations> load(Locale locale) => SynchronousFuture(
-      ClrsLocalizations(locale, catalogs[locale.languageCode]!));
+    ClrsLocalizations(locale, catalogs[locale.languageCode]!),
+  );
 
   @override
   bool shouldReload(_CatalogDelegate old) => false;
@@ -34,10 +35,23 @@ void main() {
     'Вы — компания и хотите устроить что-то масштабное. Один пусть создаёт коллективную встречу, опишите кратко предложение.',
     'Когда кто-нибудь вступит, придёт уведомление как создателю.',
   ];
+  const titles = [
+    'Индивидуальная встреча',
+    'Коллективная встреча',
+    'Коллективная встреча',
+    'Участники встречи',
+  ];
+  const icons = [
+    Icons.person_outline,
+    Icons.group_outlined,
+    Icons.groups_outlined,
+    Icons.how_to_reg_outlined,
+  ];
   final catalogs = <String, Map<String, dynamic>>{
     for (final code in ClrsLocalizations.codes)
       code: Map<String, dynamic>.from(
-          jsonDecode(File('assets/l10n/$code.json').readAsStringSync()) as Map),
+        jsonDecode(File('assets/l10n/$code.json').readAsStringSync()) as Map,
+      ),
   };
 
   setUpAll(() async {
@@ -49,71 +63,117 @@ void main() {
     }
   });
 
-  Future<void> pumpGuide(WidgetTester tester, String code,
-      {double textScale = 1}) async {
+  Future<void> pumpGuide(
+    WidgetTester tester,
+    String code, {
+    double textScale = 1,
+  }) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(MaterialApp(
-      theme: LrsTheme.theme,
-      locale: ClrsLocalizations.localeFor(code),
-      supportedLocales: ClrsLocalizations.supportedLocales,
-      localizationsDelegates: [
-        _CatalogDelegate(catalogs),
-        ...ClrsLocalizations.delegates.skip(1),
-      ],
-      // A normal Android status bar and three-button navigation bar leave
-      // less space than a frameless 360x640 preview.
-      builder: (context, child) => MediaQuery(
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: LrsTheme.theme,
+        locale: ClrsLocalizations.localeFor(code),
+        supportedLocales: ClrsLocalizations.supportedLocales,
+        localizationsDelegates: [
+          _CatalogDelegate(catalogs),
+          ...ClrsLocalizations.delegates.skip(1),
+        ],
+        // A normal Android status bar and three-button navigation bar leave
+        // less space than a frameless 360x640 preview.
+        builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(
             padding: const EdgeInsets.only(top: 24, bottom: 48),
             viewPadding: const EdgeInsets.only(top: 24, bottom: 48),
             textScaler: TextScaler.linear(textScale),
           ),
-          child: child!),
-      home: Builder(
+          child: child!,
+        ),
+        home: Builder(
           builder: (context) => Scaffold(
-              body: TextButton(
-                  key: const ValueKey('open-guide'),
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const MeetingGuidePage())),
-                  child: const Text('Open guide')))),
-    ));
+            body: TextButton(
+              key: const ValueKey('open-guide'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MeetingGuidePage()),
+              ),
+              child: const Text('Open guide'),
+            ),
+          ),
+        ),
+      ),
+    );
     await tester.tap(find.byKey(const ValueKey('open-guide')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: '$code initial layout');
   }
 
   Finder guideScroll() => find.descendant(
-      of: find.byKey(const ValueKey('meeting-guide-scroll')),
-      matching: find.byType(Scrollable));
+    of: find.byKey(const ValueKey('meeting-guide-scroll')),
+    matching: find.byType(Scrollable),
+  );
 
   for (final code in ClrsLocalizations.codes) {
-    testWidgets('meeting guide $code is fully reachable at 360x640',
-        (tester) async {
+    testWidgets('meeting guide $code is fully reachable at 360x640', (
+      tester,
+    ) async {
       await pumpGuide(tester, code);
       final scroll = guideScroll();
       // ListView builds cards as they enter the viewport; the loop below
       // checks that all four complete instructions are reachable.
       expect(find.byType(ClrsPanel), findsAtLeastNWidgets(1));
 
-      for (final key in steps) {
+      for (var index = 0; index < steps.length; index++) {
+        final key = steps[index];
         final text = find.text(catalogs[code]![key]);
         await tester.scrollUntilVisible(text, 180, scrollable: scroll);
         await tester.ensureVisible(text);
         await tester.pumpAndSettle();
-        expect(text.hitTestable(), findsOneWidget,
-            reason: '$code: each complete instruction must be reachable');
         expect(
-            tester.widget<Text>(text).style!.fontSize, greaterThanOrEqualTo(16),
-            reason: 'Fit the text without shrinking the normal body font');
-        expect(tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
-            isFalse);
+          text.hitTestable(),
+          findsOneWidget,
+          reason: '$code: each complete instruction must be reachable',
+        );
+        expect(
+          tester.widget<Text>(text).style!.fontSize,
+          greaterThanOrEqualTo(16),
+          reason: 'Fit the text without shrinking the normal body font',
+        );
+        expect(
+          tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
+          isFalse,
+        );
+        expect(tester.widget<Text>(text).maxLines, isNull);
+        expect(
+          tester.widget<Text>(text).overflow,
+          isNot(TextOverflow.ellipsis),
+        );
+        final panel = find.byKey(ValueKey('meeting-guide-step-${index + 1}'));
+        final bounds = tester.getRect(panel);
+        expect(bounds.left, 16);
+        expect(
+          bounds.right,
+          closeTo(360 * 2 / 3, .01),
+          reason: '$code: the right third stays clear of instruction panels',
+        );
+        expect(
+          find.descendant(
+            of: panel,
+            matching: find.text(catalogs[code]![titles[index]]),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: panel, matching: find.byIcon(icons[index])),
+          findsOneWidget,
+        );
       }
 
-      final done =
-          find.widgetWithText(ElevatedButton, catalogs[code]!['Понятно']);
+      final done = find.widgetWithText(
+        ElevatedButton,
+        catalogs[code]!['Понятно'],
+      );
       await tester.scrollUntilVisible(done, 180, scrollable: scroll);
       await tester.pumpAndSettle();
       expect(done.hitTestable(), findsOneWidget);
@@ -125,22 +185,37 @@ void main() {
     });
   }
 
-  testWidgets('meeting guide keeps full text and Done reachable at 200%',
-      (tester) async {
+  testWidgets('meeting guide keeps full text and Done reachable at 200%', (
+    tester,
+  ) async {
     await pumpGuide(tester, 'ru', textScale: 2);
     final scroll = guideScroll();
-    expect(tester.state<ScrollableState>(scroll).position.maxScrollExtent,
-        greaterThan(0));
-    for (final key in steps) {
+    expect(
+      tester.state<ScrollableState>(scroll).position.maxScrollExtent,
+      greaterThan(0),
+    );
+    for (var index = 0; index < steps.length; index++) {
+      final key = steps[index];
       final text = find.text(catalogs['ru']![key]);
       await tester.scrollUntilVisible(text, 180, scrollable: scroll);
       await tester.ensureVisible(text);
       await tester.pumpAndSettle();
       expect(text.hitTestable(), findsOneWidget);
-      expect(tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
-          isFalse);
+      expect(
+        tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
+        isFalse,
+      );
+      expect(tester.widget<Text>(text).maxLines, isNull);
+      expect(tester.widget<Text>(text).overflow, isNot(TextOverflow.ellipsis));
+      final panel = find.byKey(ValueKey('meeting-guide-step-${index + 1}'));
+      expect(tester.getRect(panel).right, closeTo(240, .01));
       expect(tester.takeException(), isNull);
     }
+    final footer = find.byType(ClrsValuesFooter);
+    await tester.scrollUntilVisible(footer, 180, scrollable: scroll);
+    await tester.ensureVisible(footer);
+    await tester.pumpAndSettle();
+    expect(footer.hitTestable(), findsOneWidget);
     final done = find.widgetWithText(ElevatedButton, 'Понятно');
     await tester.scrollUntilVisible(done, 180, scrollable: scroll);
     await tester.pumpAndSettle();

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { EncryptedArchiveWriter, readEncryptedArchive } from '../encrypted-archive.mjs';
 import { exportFirebase } from '../export-core.mjs';
-import { parseArgs } from '../export-firebase-encrypted.mjs';
+import { ensureStorageHeadroom, parseArgs } from '../export-firebase-encrypted.mjs';
 import { validateExportPaths } from '../export-paths.mjs';
 import { scanImportArchive } from '../import-core.mjs';
 
@@ -131,6 +131,33 @@ test('a failed byte stream leaves no published or partial archive', async () => 
     project: 'test-project', bucketName: 'test-bucket',
     scope: 'storage', storagePrefix: 'avatars/', limits,
   }), /synthetic read failure/);
+  assert.deepEqual(await readdir(dir), []);
+});
+
+test('disk preflight requires the full byte cap plus reserve', async () => {
+  const disk = (available) => async () => ({ bavail: BigInt(available), bsize: 1n });
+  await assert.rejects(ensureStorageHeadroom('/unused', 101,
+    { statfsImpl: disk(200), reserveBytes: 100n }), /Insufficient free disk/);
+  assert.equal(await ensureStorageHeadroom('/unused', 101,
+    { statfsImpl: disk(201), reserveBytes: 100n }), 201n);
+  await assert.rejects(ensureStorageHeadroom('/unused', -1,
+    { statfsImpl: disk(201), reserveBytes: 100n }), /Invalid Storage disk limit/);
+});
+
+test('low disk before a Storage object aborts without an archive', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'clrs-export-disk-'));
+  const path = join(dir, 'export.clrsenc');
+  const writer = await EncryptedArchiveWriter.create(path, randomBytes(32));
+  let checkedSize = 0;
+  await assert.rejects(exportFirebase({
+    ...fakeSources(), writer, project: 'test-project', bucketName: 'test-bucket',
+    scope: 'storage', limits,
+    beforeStorageObject: async (size) => {
+      checkedSize = size;
+      throw new Error('Insufficient free disk for bounded Storage export');
+    },
+  }), /Insufficient free disk/);
+  assert.equal(checkedSize, fakeSources().content.length);
   assert.deepEqual(await readdir(dir), []);
 });
 

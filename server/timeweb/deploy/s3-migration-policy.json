@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InspectOnlyExistingBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketAcl", "s3:GetBucketPolicy"],
+      "Resource": "arn:aws:s3:::0c47012a-fdbc-43ee-96f3-49e43cea0d00"
+    },
+    {
+      "Sid": "ReadAndVerifyExistingObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectAcl"],
+      "Resource": "arn:aws:s3:::0c47012a-fdbc-43ee-96f3-49e43cea0d00/*"
+    },
+    {
+      "Sid": "WriteOnlyMigrationAndProbePrefixes",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": [
+        "arn:aws:s3:::0c47012a-fdbc-43ee-96f3-49e43cea0d00/clrs-import-quarantine/*",
+        "arn:aws:s3:::0c47012a-fdbc-43ee-96f3-49e43cea0d00/clrs-privacy-probe/*"
+      ]
+    },
+    {
+      "Sid": "DeleteOnlyDisposablePrivacyProbes",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": "arn:aws:s3:::0c47012a-fdbc-43ee-96f3-49e43cea0d00/clrs-privacy-probe/*"
+    }
+  ]
+}

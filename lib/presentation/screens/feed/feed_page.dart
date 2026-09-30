@@ -16,6 +16,7 @@ import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 import 'package:wbrs/app/widgets/drawer.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
 import 'package:wbrs/presentation/screens/feed/post_detail_page.dart';
+import 'package:wbrs/presentation/screens/feed/post_author_wall.dart';
 import 'package:wbrs/presentation/screens/feed/share_to_chat_sheet.dart';
 import 'package:wbrs/service/social_service.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -601,6 +602,7 @@ class _PostCardState extends State<_PostCard> {
     final data = widget.data;
     final image = data['imageUrl']?.toString() ?? '';
     final authorPhoto = data['authorPhoto']?.toString() ?? '';
+    final authorUid = postAuthorUid(data);
     final text = data['text']?.toString() ?? '';
     final sharedText = data['sharedText']?.toString() ?? '';
     final sharedImage = data['sharedImageUrl']?.toString() ?? '';
@@ -621,30 +623,40 @@ class _PostCardState extends State<_PostCard> {
             padding: EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Row(
               children: [
-                GroupAvatar(
-                    url: authorPhoto,
-                    group: data['authorGroup']?.toString() ?? '',
-                    size: 44),
-                SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        data['authorName']?.toString() ?? 'CLRS',
-                        style: TextStyle(
-                          color: LrsTheme.text,
-                          fontWeight: FontWeight.w800,
+                  child: InkWell(
+                    onTap: authorUid.isEmpty
+                        ? null
+                        : () => openPostAuthorWall(context, data),
+                    child: Row(children: [
+                      GroupAvatar(
+                          url: authorPhoto,
+                          group: data['authorGroup']?.toString() ?? '',
+                          size: 44),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              data['authorName']?.toString() ?? 'CLRS',
+                              style: TextStyle(
+                                color: LrsTheme.text,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              data['createdAt'] is Timestamp
+                                  ? context.l10n.dateTime(
+                                      (data['createdAt'] as Timestamp).toDate())
+                                  : context.tr('Публикация'),
+                              style: TextStyle(
+                                  color: LrsTheme.muted, fontSize: 11),
+                            ),
+                          ],
                         ),
                       ),
-                      Text(
-                        data['createdAt'] is Timestamp
-                            ? context.l10n.dateTime(
-                                (data['createdAt'] as Timestamp).toDate())
-                            : context.tr('Публикация'),
-                        style: TextStyle(color: LrsTheme.muted, fontSize: 11),
-                      ),
-                    ],
+                    ]),
                   ),
                 ),
                 IconButton(

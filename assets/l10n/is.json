@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Ekki tókst að deila færslunni. Reyndu aftur.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Ekki tókst að staðfesta eyðinguna. Athugaðu vegginn þinn áður en þú reynir aftur.",
   "Магазин подарков": "Gjafaverslun",
-  "Дарить внимание. Создавать особенные моменты.": "Sýndu umhyggju. Skapaðu sérstakar stundir.",
+  "Дарите внимание. Создавайте особенные моменты.": "Sýndu umhyggju. Skapaðu sérstakar stundir.",
   "Ваш баланс": "Inneignin þín",
   "Выбрать подарки": "Velja gjafir",
   "Выбранные подарки": "Valdar gjafir",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Skrá út",
   "Сохранить настройки": "Vista stillingar",
   "Не удалось сохранить настройки": "Ekki tókst að vista stillingar",
-  "Главное фото: костюм, форма или классическая рубашка.": "Aðalmynd: jakkaföt, einkennisbúningur eða klassísk skyrta."
+  "Главное фото: костюм, форма или классическая рубашка.": "Aðalmynd: jakkaföt, einkennisbúningur eða klassísk skyrta.",
+  "Подарить текущему собеседнику": "Gefa núverandi spjallfélaga gjöf"
 }

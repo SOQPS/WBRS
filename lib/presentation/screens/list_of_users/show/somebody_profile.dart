@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/widgets/fullscreen_image_slider.dart';
@@ -16,6 +17,7 @@ import 'package:wbrs/service/invisibility_state.dart';
 import 'package:wbrs/service/pending_write.dart';
 import 'package:wbrs/service/social_service.dart';
 import 'package:wbrs/service/admin_private_directory.dart';
+import 'package:wbrs/service/admin_access.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -46,20 +48,45 @@ class _SomebodyProfileState extends State<SomebodyProfile> {
   bool _chatToGift = false, _busy = false;
   PendingWrite? _friendRequest;
   bool _friendSent = false;
+  bool _admin = false;
+  bool _adminAuthInitialized = false;
+  int _adminRevision = 0;
+  late final StreamSubscription<User?> _adminSession;
   String? _notice;
   bool get _sameSession =>
       _owner != null && firebaseAuth.currentUser?.uid == _owner;
   @override
   void initState() {
     super.initState();
+    _adminSession = firebaseAuth.authStateChanges().listen((user) {
+      if (!_adminAuthInitialized) {
+        _adminAuthInitialized = true;
+        if (user?.uid == _owner) return;
+      }
+      if (!mounted) return;
+      _adminRevision++;
+      setState(() => _admin = false);
+      if (user?.uid == _owner) unawaited(_loadAdmin());
+    });
     if (widget.privateEmail)
       _privateDirectory = AdminPrivateDirectory(enabled: true);
     _subscribe();
+    unawaited(_loadAdmin());
     unawaited(_recordVisit());
+  }
+
+  Future<void> _loadAdmin() async {
+    if (!_sameSession) return;
+    final revision = _adminRevision;
+    final allowed = await AdminAccess.current();
+    if (mounted && _sameSession && revision == _adminRevision) {
+      setState(() => _admin = allowed);
+    }
   }
 
   @override
   void dispose() {
+    _adminSession.cancel();
     unawaited(_privateDirectory?.dispose());
     super.dispose();
   }
@@ -297,11 +324,6 @@ class _SomebodyProfileState extends State<SomebodyProfile> {
             final g = savedAccountGroup(d) ?? '';
             final matches =
                 group.isNotEmpty && getListOfGroup(group).contains(g);
-            final admin = const [
-              'T4zb6OLzDgMh0qrfp3eEahNKmNl1',
-              'lyNcv2xr33Ms6G9fI0bhBEcDKFj2',
-              'vLeB8v4b1pUL8h5dtxJSkifF2v72'
-            ].contains(_owner);
             return ListView(
                 padding: const EdgeInsets.only(bottom: 24),
                 children: [
@@ -428,7 +450,7 @@ class _SomebodyProfileState extends State<SomebodyProfile> {
                         builder: (email) => ProfileSection(
                             title: context.tr('Электронная почта'),
                             child: SelectableText(email)))
-                  else if (admin && d['email'] != null)
+                  else if (_admin && d['email'] != null)
                     ProfileSection(
                         title: context.tr('Электронная почта'),
                         child: SelectableText('${d['email']}')),

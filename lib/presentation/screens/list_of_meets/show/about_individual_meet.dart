@@ -205,7 +205,7 @@ class _AboutIndividualMeetState extends State<AboutIndividualMeet> {
                   return Center(
                     child: Text(
                       pageContext.tr(
-                        'Не удалось загрузить участников. Проверьте подключение.',
+                        'Не удалось загрузить данные. Проверьте подключение.',
                       ),
                     ),
                   );

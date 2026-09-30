@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Could not share the post. Please try again.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Could not confirm deletion. Check your wall before trying again.",
   "Магазин подарков": "Gift shop",
-  "Дарить внимание. Создавать особенные моменты.": "Show you care. Create special moments.",
+  "Дарите внимание. Создавайте особенные моменты.": "Show you care. Create special moments.",
   "Ваш баланс": "Your balance",
   "Выбрать подарки": "Choose gifts",
   "Выбранные подарки": "Selected gifts",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Sign out",
   "Сохранить настройки": "Save settings",
   "Не удалось сохранить настройки": "Could not save settings",
-  "Главное фото: костюм, форма или классическая рубашка.": "Main photo: a suit, uniform, or classic shirt."
+  "Главное фото: костюм, форма или классическая рубашка.": "Main photo: a suit, uniform, or classic shirt.",
+  "Подарить текущему собеседнику": "Give to the current chat partner"
 }

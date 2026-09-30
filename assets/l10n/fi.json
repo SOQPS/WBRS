@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Julkaisua ei voitu jakaa. Yritä uudelleen.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Poistoa ei voitu vahvistaa. Tarkista seinäsi ennen uutta yritystä.",
   "Магазин подарков": "Lahjakauppa",
-  "Дарить внимание. Создавать особенные моменты.": "Osoita välittämistä. Luo erityisiä hetkiä.",
+  "Дарите внимание. Создавайте особенные моменты.": "Osoita välittämistä. Luo erityisiä hetkiä.",
   "Ваш баланс": "Saldosi",
   "Выбрать подарки": "Valitse lahjoja",
   "Выбранные подарки": "Valitut lahjat",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Kirjaudu ulos",
   "Сохранить настройки": "Tallenna asetukset",
   "Не удалось сохранить настройки": "Asetusten tallennus epäonnistui",
-  "Главное фото: костюм, форма или классическая рубашка.": "Pääkuva: puku, univormu tai klassinen kauluspaita."
+  "Главное фото: костюм, форма или классическая рубашка.": "Pääkuva: puku, univormu tai klassinen kauluspaita.",
+  "Подарить текущему собеседнику": "Anna lahja nykyiselle keskustelukumppanille"
 }

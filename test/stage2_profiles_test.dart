@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -297,6 +298,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getSize(find.byType(ProfilePortrait)).height,
         greaterThan(300));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('profile hero keeps the bottom of a tall main photo',
+      (tester) async {
+    await page(
+        tester,
+        Scaffold(
+            body: ListView(children: const [
+          ProfilePortrait(
+              photo: 'https://example.invalid/portrait.jpg',
+              name: 'Алексей',
+              group: '',
+              location: '',
+              online: true),
+        ])),
+        size: const Size(360, 640));
+    final image = tester.widget<CachedNetworkImage>(
+        find.descendant(
+            of: find.byType(ProfilePortrait),
+            matching: find.byType(CachedNetworkImage)));
+    final hero = tester.getSize(find.byType(ProfilePortrait));
+    final fitted = applyBoxFit(image.fit!, const Size(640, 1120), hero);
+    expect(fitted.source.height, 1120,
+        reason: 'The portrait must not crop the lower part of the source');
     expect(tester.takeException(), isNull);
   });
 

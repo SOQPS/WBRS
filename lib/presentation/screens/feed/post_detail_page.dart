@@ -11,6 +11,7 @@ import 'package:wbrs/service/social_service.dart';
 import 'package:wbrs/service/comment_submission.dart';
 import 'package:wbrs/service/pending_write.dart';
 import 'package:wbrs/presentation/screens/feed/share_to_chat_sheet.dart';
+import 'package:wbrs/presentation/screens/feed/post_author_wall.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 
 class PostDetailPage extends StatefulWidget {
@@ -361,6 +362,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   Widget _postHeader() {
     final image = widget.post['imageUrl']?.toString() ?? '';
     final text = widget.post['text']?.toString() ?? '';
+    final authorUid = postAuthorUid(widget.post);
     return Container(
       padding: EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -370,10 +372,15 @@ class _PostDetailPageState extends State<PostDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            widget.post['authorName']?.toString() ?? 'CLRS',
-            style: TextStyle(
-                color: LrsTheme.peachLight, fontWeight: FontWeight.w800),
+          InkWell(
+            onTap: authorUid.isEmpty
+                ? null
+                : () => openPostAuthorWall(context, widget.post),
+            child: Text(
+              widget.post['authorName']?.toString() ?? 'CLRS',
+              style: TextStyle(
+                  color: LrsTheme.peachLight, fontWeight: FontWeight.w800),
+            ),
           ),
           if (text.isNotEmpty) ...[
             SizedBox(height: 8),

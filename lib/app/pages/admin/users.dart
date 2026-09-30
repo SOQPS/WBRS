@@ -127,8 +127,8 @@ class _UsersState extends State<Users> {
               child: _privateSessionView(StreamBuilder(
                   stream: users,
                   builder: (context, snapshot) {
-                    if (widget.privateEmail &&
-                        (snapshot.hasError ||
+                    if (snapshot.hasError ||
+                        (widget.privateEmail &&
                             !_privateDirectory!.isCurrentSession)) {
                       return Center(
                           child: Text(context

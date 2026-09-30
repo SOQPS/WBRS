@@ -125,6 +125,9 @@ function transaction(client, expectedDatabase, readOnly) {
       if (opened) throw new Error('Import transaction already open');
       assertSource(source);
       await client.query("SET SESSION time_zone = '+00:00'");
+      // Timeweb's managed default is not strict; set only this pinned
+      // migration connection before opening its transaction.
+      await client.query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'");
       await client.query(`SET TRANSACTION ISOLATION LEVEL ${readOnly ? 'REPEATABLE READ' : 'SERIALIZABLE'}`);
       await client.query(`START TRANSACTION${readOnly ? ' READ ONLY' : ''}`);
       opened = true;

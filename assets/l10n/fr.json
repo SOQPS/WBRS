@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Impossible de partager la publication. Réessayez.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "La suppression n’a pas pu être confirmée. Vérifiez votre mur avant de réessayer.",
   "Магазин подарков": "Boutique de cadeaux",
-  "Дарить внимание. Создавать особенные моменты.": "Offrir de l’attention. Créer des moments uniques.",
+  "Дарите внимание. Создавайте особенные моменты.": "Offrez de l’attention. Créez des moments uniques.",
   "Ваш баланс": "Votre solde",
   "Выбрать подарки": "Choisir des cadeaux",
   "Выбранные подарки": "Cadeaux sélectionnés",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Se déconnecter",
   "Сохранить настройки": "Enregistrer les paramètres",
   "Не удалось сохранить настройки": "Impossible d’enregistrer les paramètres",
-  "Главное фото: костюм, форма или классическая рубашка.": "Photo principale : costume, uniforme ou chemise classique."
+  "Главное фото: костюм, форма или классическая рубашка.": "Photo principale : costume, uniforme ou chemise classique.",
+  "Подарить текущему собеседнику": "Offrir à l’interlocuteur actuel"
 }

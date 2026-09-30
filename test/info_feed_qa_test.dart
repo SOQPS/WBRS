@@ -50,6 +50,8 @@ class _Comments extends Fake implements SocialService {
   bool current = true;
   @override
   bool get isCurrentSession => current;
+  @override
+  Future<bool> canModerateComments() async => false;
   int shares = 0;
   Object? sendError;
   Object? likeError;

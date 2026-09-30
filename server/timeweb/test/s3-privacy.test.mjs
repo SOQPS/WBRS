@@ -24,16 +24,17 @@ function fakePrivacy({ type = 'private', acl = privateAcl,
       if (unsupported) throw new Error('S3 privacy API unsupported');
       if (name === 'GetBucketAclCommand' || name === 'GetObjectAclCommand') return acl;
       if (name === 'GetBucketPolicyCommand') {
-        if (policy) return { Policy: '{"Statement":[]}' };
+        if (policy) return { Policy: policy };
         throw { name: 'NoSuchBucketPolicy', $metadata: { httpStatusCode: 404 } };
       }
       if (name === 'PutObjectCommand') {
         assert.equal(command.input.IfNoneMatch, '*');
-        assert.match(command.input.Key, /^clrs-import-quarantine\/[a-f0-9]{64}$/);
+        assert.match(command.input.Key, /^clrs-privacy-probe\/[a-f0-9]{64}$/);
         if (uncertainPut) throw new Error('PUT response lost');
         return {};
       }
       if (name === 'DeleteObjectCommand') {
+        assert.match(command.input.Key, /^clrs-privacy-probe\/[a-f0-9]{64}$/);
         calls.deleted++;
         return {};
       }
@@ -46,7 +47,7 @@ function fakePrivacy({ type = 'private', acl = privateAcl,
       return Response.json({ bucket: { id: 17, name: 'private-clrs', type } });
     }
     calls.anonymous++;
-    assert.match(String(url), /^https:\/\/s3\.twcstorage\.ru\/private-clrs\/clrs-import-quarantine\/[a-f0-9]{64}$/);
+    assert.match(String(url), /^https:\/\/s3\.twcstorage\.ru\/private-clrs\/clrs-privacy-probe\/[a-f0-9]{64}$/);
     assert.equal(options.headers['cache-control'], 'no-store');
     return new Response('', { status: anonymousStatus });
   };
@@ -72,13 +73,30 @@ test('public Timeweb bucket type is rejected before any S3 upload', async () => 
   assert.deepEqual(fake.calls.s3, []);
 });
 
-test('public bucket ACL or any bucket policy blocks staging', async () => {
+test('public bucket ACL or nonempty bucket policy blocks staging', async () => {
   const openAcl = fakePrivacy({ acl: publicAcl });
   await assert.rejects(assertPrivateMediaBucket(options(openAcl)), /ACL/);
   assert.equal(openAcl.calls.s3.includes('PutObjectCommand'), false);
-  const openPolicy = fakePrivacy({ policy: true });
-  await assert.rejects(assertPrivateMediaBucket(options(openPolicy)), /bucket has a policy/);
+  const openPolicy = fakePrivacy({ policy: JSON.stringify({Version:'2012-10-17',
+    Statement:[{Effect:'Allow',Principal:'*',Action:'s3:GetObject',Resource:'*'}]}) });
+  await assert.rejects(assertPrivateMediaBucket(options(openPolicy)), /unverified policy/);
   assert.equal(openPolicy.calls.s3.includes('PutObjectCommand'), false);
+});
+
+test('Timeweb explicit empty policy grants no access and permits privacy probe', async () => {
+  const fake = fakePrivacy({policy:'{"Version":"2012-10-17","Statement":[]}'});
+  await assertPrivateMediaBucket(options(fake));
+  assert.equal(fake.calls.anonymous,1);
+  assert.equal(fake.calls.deleted,1);
+});
+
+test('malformed or unexpected empty policy blocks before upload', async () => {
+  for (const policy of ['not json','{"Statement":[]}',
+    '{"Version":"2012-10-17","Statement":[],"Unknown":true}']) {
+    const fake = fakePrivacy({policy});
+    await assert.rejects(assertPrivateMediaBucket(options(fake)), /policy/);
+    assert.equal(fake.calls.s3.includes('PutObjectCommand'),false);
+  }
 });
 
 test('unsupported privacy API fails closed without uploading', async () => {

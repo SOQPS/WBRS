@@ -1,5 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
 
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -369,10 +371,11 @@ class _MessageTileState extends State<MessageTile> {
             const SizedBox(width: 5),
             Flexible(
                 child: Container(
-              constraints: BoxConstraints(maxWidth: size.width * 0.74),
+              constraints: BoxConstraints(
+                  maxWidth: size.width * (isReply ? 0.9 : 0.74)),
               margin: widget.sentByMe
-                  ? const EdgeInsets.only(left: 30)
-                  : const EdgeInsets.only(right: 30),
+                  ? EdgeInsets.only(left: isReply ? 8 : 30)
+                  : EdgeInsets.only(right: isReply ? 8 : 30),
               padding: const EdgeInsets.only(
                 top: 10,
                 bottom: 10,
@@ -430,8 +433,6 @@ class _MessageTileState extends State<MessageTile> {
                             '${msg['replyMessage']['message'] ?? ''}',
                             autoTranslate: true,
                             showAction: false,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                                 fontSize: 12, color: Colors.white),
                           ),
@@ -647,9 +648,12 @@ class _MessageReplySheetState extends State<_MessageReplySheet> {
   @override
   Widget build(BuildContext context) => AlertDialog(
           scrollable: true,
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           title: Text(context.tr('Написать ответ')),
           content: SizedBox(
-              width: 420,
+              width: math.min(560, MediaQuery.sizeOf(context).width - 56),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 if (_restoring) const LinearProgressIndicator(),
                 if ('${widget.quote['message'] ?? ''}'.trim().isNotEmpty)
@@ -661,16 +665,14 @@ class _MessageReplySheetState extends State<_MessageReplySheet> {
                         '${widget.quote['message']}',
                         autoTranslate: true,
                         showAction: false,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: LrsTheme.muted),
                       ),
                     ),
                   ),
                 TextField(
                     controller: _controller,
-                    minLines: 1,
-                    maxLines: 4,
+                    minLines: 3,
+                    maxLines: null,
                     readOnly: _restoring ||
                         _failedRestore ||
                         _sending ||

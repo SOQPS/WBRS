@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Det gick inte att dela inlägget. Försök igen.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Det gick inte att bekräfta borttagningen. Kontrollera din vägg innan du försöker igen.",
   "Магазин подарков": "Presentbutik",
-  "Дарить внимание. Создавать особенные моменты.": "Visa omtanke. Skapa speciella stunder.",
+  "Дарите внимание. Создавайте особенные моменты.": "Visa omtanke. Skapa speciella stunder.",
   "Ваш баланс": "Ditt saldo",
   "Выбрать подарки": "Välj presenter",
   "Выбранные подарки": "Valda presenter",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Logga ut",
   "Сохранить настройки": "Spara inställningar",
   "Не удалось сохранить настройки": "Det gick inte att spara inställningarna",
-  "Главное фото: костюм, форма или классическая рубашка.": "Huvudfoto: kostym, uniform eller klassisk skjorta."
+  "Главное фото: костюм, форма или классическая рубашка.": "Huvudfoto: kostym, uniform eller klassisk skjorta.",
+  "Подарить текущему собеседнику": "Ge till den aktuella samtalspartnern"
 }

@@ -49,13 +49,13 @@ void main() {
     setupFirebaseCoreMocks();
     await Firebase.initializeApp();
   });
-  test('Only server claims or approved identities grant admin access', () {
+  test('Only a server claim grants admin access', () {
     expect(AdminAccess.authorized('ordinary-user', null), isFalse);
     expect(AdminAccess.authorized('ordinary-user', {'role': 'admin'}), isFalse);
     expect(AdminAccess.authorized('ordinary-user', {'isAdmin': true}), isFalse);
     expect(AdminAccess.authorized('ordinary-user', {'admin': true}), isTrue);
-    expect(
-        AdminAccess.authorized(AdminAccess.approvedUids.first, null), isTrue);
+    expect(AdminAccess.authorized('legacy-approved-uid', null), isFalse);
+    expect(AdminAccess.authorized('', {'admin': true}), isFalse);
   });
 
   testWidgets('Admin route hides previous account while next claim is pending',

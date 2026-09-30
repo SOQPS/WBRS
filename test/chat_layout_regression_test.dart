@@ -278,6 +278,67 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Group meeting pages leave the family background visible',
+      (tester) async {
+    final members = ['viewer', 'other', for (var i = 0; i < 12; i++) 'member$i'];
+    db.documents['meets/meeting']!['users'] = members;
+    for (var i = 0; i < 12; i++) {
+      db.documents['users/member$i'] = {
+        'uid': 'member$i',
+        'fullName': 'Участник $i с длинным именем',
+        'age': 33,
+        'country': 'Россия',
+        'region': 'Москва',
+        'profilePic': '',
+        'группа': 'красно-белая',
+      };
+    }
+    await pumpScreen(
+        tester,
+        ChatPage(
+            submissions: submissions,
+            groupId: 'meeting',
+            groupName: longName,
+            users: members,
+            isUserJoin: true),
+        const Size(390, 844),
+        1.3);
+    db.emit('meets/meeting/messages', []);
+    await tester.pumpAndSettle();
+
+    void expectLeftColumn(String key) {
+      final column = find.byKey(ValueKey(key));
+      expect(column, findsOneWidget);
+      expect(tester.getTopLeft(column).dx, 0);
+      expect(tester.getSize(column).width, closeTo(390 * .68, 1));
+    }
+
+    expectLeftColumn('meeting-chat-column');
+    await tester.ensureVisible(find.text('О встрече'));
+    await tester.tap(find.text('О встрече'));
+    await tester.pumpAndSettle();
+    expectLeftColumn('meeting-description-column');
+    expect(find.textContaining(longMessage), findsWidgets);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Список участников'));
+    await tester.tap(find.text('Список участников'));
+    await tester.pumpAndSettle();
+    expectLeftColumn('meeting-participants-column');
+    await tester.scrollUntilVisible(
+        find.text('Участник 11 с длинным именем'), 250,
+        scrollable: find
+            .descendant(
+                of: find.byKey(const ValueKey('meeting-participants')),
+                matching: find.byType(Scrollable))
+            .first);
+    await tester.pumpAndSettle();
+    expect(find.text('Участник 11 с длинным именем').hitTestable(),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final entry in [
     ('Пикник в парке', 'Прогулка после обеда', 'meeting_picnic.jpg'),
     ('Кофе в парке', 'Встречаемся у кафе', 'meeting_coffee.jpg'),

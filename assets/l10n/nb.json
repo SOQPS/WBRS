@@ -399,7 +399,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Kunne ikke dele innlegget. Prøv igjen.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Kunne ikke bekrefte slettingen. Sjekk veggen din før du prøver igjen.",
   "Магазин подарков": "Gavebutikk",
-  "Дарить внимание. Создавать особенные моменты.": "Vis omtanke. Skap spesielle øyeblikk.",
+  "Дарите внимание. Создавайте особенные моменты.": "Vis omtanke. Skap spesielle øyeblikk.",
   "Ваш баланс": "Saldoen din",
   "Выбрать подарки": "Velg gaver",
   "Выбранные подарки": "Valgte gaver",
@@ -881,5 +881,6 @@
   "Выйти из аккаунта": "Logg ut",
   "Сохранить настройки": "Lagre innstillinger",
   "Не удалось сохранить настройки": "Kunne ikke lagre innstillingene",
-  "Главное фото: костюм, форма или классическая рубашка.": "Hovedbilde: dress, uniform eller klassisk skjorte."
+  "Главное фото: костюм, форма или классическая рубашка.": "Hovedbilde: dress, uniform eller klassisk skjorte.",
+  "Подарить текущему собеседнику": "Gi til den nåværende samtalepartneren"
 }

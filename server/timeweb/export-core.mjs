@@ -78,20 +78,42 @@ async function exportAuth(auth, writer, summary, limits) {
   } while (token);
 }
 
-async function exportFirestore(api, writer, summary, limits, project, database) {
+async function exportFirestore(api, writer, summary, limits, project, database,
+    concurrency) {
   const sourcePrefix = `projects/${project}/databases/${database}/documents`;
   const queue = [];
   const seenCollections = new Set();
   const seenDocuments = new Set();
+  const active = new Set();
+  let failure;
+  let writes = Promise.resolve();
+  let notify;
+  let available;
+  const resetNotification = () => {
+    available = new Promise((resolve) => { notify = resolve; });
+  };
+  resetNotification();
+  const checkRunning = () => { if (failure) throw failure; };
+  const writeDocument = (record) => {
+    // AES-GCM frame offsets/nonces must never be written concurrently. Each
+    // worker waits for this chain before issuing its next child-list request.
+    writes = writes.then(async () => {
+      checkRunning();
+      await writer.writeJson(record);
+    });
+    return writes;
+  };
 
   async function addCollections(parent) {
     const tokens = new Set();
     let token;
     do {
+      checkRunning();
       if (++summary.firestoreListPages > limits.maxFirestoreListPages) {
         throw new Error('Firestore list-page limit reached');
       }
       const page = await api.listCollectionIds(parent, token);
+      checkRunning();
       if (!Array.isArray(page?.collectionIds)) throw new Error('Invalid collection page');
       for (const id of page.collectionIds) {
         if (typeof id !== 'string' || !id || id.includes('/')) {
@@ -105,23 +127,25 @@ async function exportFirestore(api, writer, summary, limits, project, database) 
           throw new Error('Firestore collection limit reached');
         }
         queue.push(path);
+        notify();
       }
       token = nextToken(page.nextPageToken, tokens);
     } while (token);
   }
 
-  await addCollections('');
-  for (let cursor = 0; cursor < queue.length; cursor++) {
-    const collectionPath = queue[cursor];
+  async function exportCollection(collectionPath) {
     const tokens = new Set();
     let token;
     do {
+      checkRunning();
       if (++summary.firestoreListPages > limits.maxFirestoreListPages) {
         throw new Error('Firestore list-page limit reached');
       }
       const page = await api.listDocuments(collectionPath, token);
+      checkRunning();
       if (!Array.isArray(page?.documents)) throw new Error('Invalid document page');
       for (const document of page.documents) {
+        checkRunning();
         const path = documentPath(document.name, sourcePrefix, collectionPath);
         if (seenDocuments.has(path)) throw new Error('Duplicate document path');
         seenDocuments.add(path);
@@ -137,7 +161,7 @@ async function exportFirestore(api, writer, summary, limits, project, database) 
                   || document.fields === null || Array.isArray(document.fields)))) {
             throw new Error('Invalid typed Firestore document');
           }
-          await writer.writeJson({
+          await writeDocument({
             kind: 'firestore-document', path, fields: document.fields ?? {},
             createTime: document.createTime, updateTime: document.updateTime,
           });
@@ -151,9 +175,32 @@ async function exportFirestore(api, writer, summary, limits, project, database) 
       token = nextToken(page.nextPageToken, tokens);
     } while (token);
   }
+  await addCollections('');
+  let cursor = 0;
+  while (cursor < queue.length || active.size) {
+    while (!failure && cursor < queue.length && active.size < concurrency) {
+      const path = queue[cursor++];
+      const job = exportCollection(path).catch((error) => {
+        failure ??= error;
+        notify();
+      }).finally(() => active.delete(job));
+      active.add(job);
+    }
+    if (!active.size) break;
+    // New child collections can become available before a large parent job
+    // completes. Wake to fill spare worker slots as soon as they are queued.
+    await Promise.race([...active, available]);
+    resetNotification();
+  }
+  // All active readers are drained before the caller may abort the writer.
+  // A rejected write chain is also observed, so queued frames cannot survive
+  // archive abort or create an unhandled rejection.
+  try { await writes; } catch (error) { failure ??= error; }
+  if (failure) throw failure;
 }
 
-async function exportStorage(bucket, writer, summary, limits, prefix) {
+async function exportStorage(bucket, writer, summary, limits, prefix,
+    beforeStorageObject) {
   const seenTokens = new Set();
   const seenObjects = new Set();
   let query = { autoPaginate: false, maxResults: 100, prefix };
@@ -175,6 +222,10 @@ async function exportStorage(bucket, writer, summary, limits, prefix) {
       if (!metadata.generation || expected > limits.maxStorageBytes - summary.storageBytes) {
         throw new Error('Storage generation missing or byte limit reached');
       }
+      // Check the remaining local capacity before writing or downloading this
+      // object. The callback is supplied by the CLI and is also testable with
+      // an in-memory writer.
+      if (beforeStorageObject) await beforeStorageObject(expected);
       await writer.writeJson({ kind: 'storage-object', name: file.name, metadata });
       const pinned = bucket.file(file.name, { generation: metadata.generation });
       const hash = createHash('sha256');
@@ -209,7 +260,8 @@ async function exportStorage(bucket, writer, summary, limits, prefix) {
 }
 
 export async function exportFirebase({ auth, firestoreApi, bucket, writer,
-  project, database = '(default)', bucketName, scope = 'all', storagePrefix = '', limits }) {
+  project, database = '(default)', bucketName, scope = 'all', storagePrefix = '',
+  limits, beforeStorageObject }) {
   if (!['all', 'storage', 'metadata'].includes(scope)
       || (scope !== 'storage' && storagePrefix)) {
     throw new Error('Only storage-only exports may use a prefix');
@@ -225,6 +277,11 @@ export async function exportFirebase({ auth, firestoreApi, bucket, writer,
   for (const label of requiredLimits) {
     positiveLimit(limits?.[label], label);
   }
+  const firestoreConcurrency = limits.maxFirestoreConcurrency ?? 1;
+  if (!Number.isInteger(firestoreConcurrency) || firestoreConcurrency < 1
+      || firestoreConcurrency > 8) {
+    throw new Error('Firestore concurrency must be an integer from 1 to 8');
+  }
   const summary = {
     authUsers: 0, authListPages: 0, firestoreDocuments: 0, firestoreMissingParents: 0,
     firestoreReferences: 0, firestoreCollections: 0, firestoreListPages: 0,
@@ -236,13 +293,16 @@ export async function exportFirebase({ auth, firestoreApi, bucket, writer,
       scope, storagePrefix, startedAt: new Date().toISOString(),
       completeSource: scope === 'all', passwordHashesIncluded: false,
       snapshotConsistent: false,
+      firestoreConcurrency,
     });
     if (scope !== 'storage') {
       await exportAuth(auth, writer, summary, limits);
-      await exportFirestore(firestoreApi, writer, summary, limits, project, database);
+      await exportFirestore(firestoreApi, writer, summary, limits, project, database,
+        firestoreConcurrency);
     }
     if (scope !== 'metadata') {
-      await exportStorage(bucket, writer, summary, limits, storagePrefix);
+      await exportStorage(bucket, writer, summary, limits, storagePrefix,
+        beforeStorageObject);
     }
     await writer.finish(summary);
     return summary;

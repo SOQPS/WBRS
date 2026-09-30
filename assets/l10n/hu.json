@@ -393,7 +393,7 @@
   "Не удалось поделиться публикацией. Попробуйте ещё раз.": "Nem sikerült megosztani a bejegyzést. Próbálja újra.",
   "Не удалось подтвердить удаление. Проверьте стену перед повтором.": "Nem sikerült megerősíteni a törlést. Újrapróbálkozás előtt ellenőrizze az üzenőfalát.",
   "Магазин подарков": "Ajándékbolt",
-  "Дарить внимание. Создавать особенные моменты.": "Ajándékozzon figyelmet. Teremtsen különleges pillanatokat.",
+  "Дарите внимание. Создавайте особенные моменты.": "Ajándékozzon figyelmet. Teremtsen különleges pillanatokat.",
   "Ваш баланс": "Az Ön egyenlege",
   "Выбрать подарки": "Ajándékok kiválasztása",
   "Выбранные подарки": "Kiválasztott ajándékok",
@@ -874,5 +874,6 @@
   "Выйти из аккаунта": "Kijelentkezés",
   "Сохранить настройки": "Beállítások mentése",
   "Не удалось сохранить настройки": "A beállítások mentése sikertelen",
-  "Главное фото: костюм, форма или классическая рубашка.": "Fő fotó: öltöny, egyenruha vagy klasszikus ing."
+  "Главное фото: костюм, форма или классическая рубашка.": "Fő fotó: öltöny, egyenruha vagy klasszikus ing.",
+  "Подарить текущему собеседнику": "Ajándék a jelenlegi beszélgetőpartnernek"
 }

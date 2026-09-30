@@ -5,16 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 
-/// User profile fields are editable and must never grant administration.
+/// Only a Firebase Auth custom claim grants administration. Profile fields and
+/// client-side UID lists cannot authorize privileged access.
 class AdminAccess {
-  static const approvedUids = {
-    'T4zb6OLzDgMh0qrfp3eEahNKmNl1',
-    'lyNcv2xr33Ms6G9fI0bhBEcDKFj2',
-    'vLeB8v4b1pUL8h5dtxJSkifF2v72',
-  };
-
   static bool authorized(String uid, Map<String, dynamic>? claims) =>
-      approvedUids.contains(uid) || claims?['admin'] == true;
+      uid.isNotEmpty && claims?['admin'] == true;
 
   static Future<bool> current() async {
     final user = firebaseAuth.currentUser;

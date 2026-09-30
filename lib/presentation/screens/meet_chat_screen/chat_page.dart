@@ -47,6 +47,9 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  static double _leftColumnWidth(double availableWidth) =>
+      math.min(availableWidth, math.max(availableWidth * .68, 248));
+
   final _messageController = TextEditingController();
   final _messageScrollController = ScrollController();
   final _summaryScrollController = ScrollController();
@@ -370,15 +373,24 @@ class _ChatPageState extends State<ChatPage> {
         MaterialPageRoute(
             builder: (context) => ClrsScaffold(
                   appBar: AppBar(title: Text(context.tr('Описание встречи'))),
-                  body: SingleChildScrollView(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                        const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 16),
-                            child: ClrsBrandHeader()),
-                        _descriptionPanel(full: true),
-                      ])),
+                  body: LayoutBuilder(
+                      builder: (context, constraints) => Align(
+                          alignment: Alignment.topLeft,
+                          child: SizedBox(
+                              key: const ValueKey('meeting-description-column'),
+                              width: _leftColumnWidth(constraints.maxWidth),
+                              height: constraints.maxHeight,
+                              child: SingleChildScrollView(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                    const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 16),
+                                        child: ClrsBrandHeader()),
+                                    _descriptionPanel(full: true),
+                                  ]))))),
                 )));
   }
 
@@ -414,7 +426,16 @@ class _ChatPageState extends State<ChatPage> {
                               : null,
                       body: SafeArea(
                           top: false,
-                          child: CustomScrollView(
+                          child: LayoutBuilder(
+                              builder: (context, constraints) => Align(
+                                  alignment: Alignment.topLeft,
+                                  child: SizedBox(
+                                      key: const ValueKey(
+                                          'meeting-participants-column'),
+                                      width: _leftColumnWidth(
+                                          constraints.maxWidth),
+                                      height: constraints.maxHeight,
+                                      child: CustomScrollView(
                               key: const ValueKey('meeting-participants'),
                               slivers: [
                                 const SliverToBoxAdapter(
@@ -588,7 +609,7 @@ class _ChatPageState extends State<ChatPage> {
                                                     },
                                               label: Text(context
                                                   .tr('Выйти из встречи'))))),
-                              ])),
+                              ]))))),
                     ),
                   ])),
         ));
@@ -744,9 +765,9 @@ class _ChatPageState extends State<ChatPage> {
                         builder: (context, constraints) => Align(
                             alignment: Alignment.topLeft,
                             child: SizedBox(
+                                key: const ValueKey('meeting-chat-column'),
                                 height: constraints.maxHeight,
-                                width: math.min(constraints.maxWidth,
-                                    math.max(constraints.maxWidth * .68, 248)),
+                                width: _leftColumnWidth(constraints.maxWidth),
                                 child: Column(children: [
                               if (_membershipNotice != null ||
                                   _membershipRequest != null)
