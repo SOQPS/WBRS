@@ -38,7 +38,10 @@ class Podarok {
 
 class ShopPage extends StatefulWidget {
   final int? tabIndex;
-  const ShopPage({super.key, this.tabIndex});
+  final String? preferredRecipientUid;
+  final String? preferredChatId;
+  const ShopPage({super.key, this.tabIndex, this.preferredRecipientUid,
+      this.preferredChatId});
 
   @override
   State<ShopPage> createState() => _ShopPageState();
@@ -230,6 +233,8 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
             db: db,
             auth: auth,
             ownerUid: ownerUid,
+            preferredRecipientUid: widget.preferredRecipientUid,
+            preferredChatId: widget.preferredChatId,
             onSend: (recipient) =>
                 _sendGift(ownerUid, name, imagePath, recipient),
           ),
@@ -259,7 +264,7 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
         ChatScreen(
           chatWithUsername: recipient.name,
           photoUrl: recipient.imageUrl,
-          id: ownerUid,
+          id: recipient.uid,
           chatId: recipient.chatId,
         ),
       );
@@ -287,10 +292,15 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     if (!mounted || auth.currentUser?.uid != ownerUid) {
       throw StateError('Gift session changed');
     }
-    if (!recipientSnapshot.exists) {
+    final recipientData = recipientSnapshot.data();
+    if (!recipientSnapshot.exists ||
+        recipientData == null ||
+        recipientData['deleted'] == true ||
+        recipientData['status'] == 'deleted' ||
+        recipientData['registrationStatus'] == 'deleted') {
       throw StateError('Gift recipient unavailable');
     }
-    final chatWith = recipientSnapshot.data()?['chatWithId'];
+    final chatWith = recipientData['chatWithId'];
     final isUserInChat = chatWith == ownerUid;
     final senderName = auth.currentUser!.displayName;
     final giftMessage = {
@@ -1166,7 +1176,7 @@ class _GiftRecipient {
   final String name;
   final String imageUrl;
 
-  static _GiftRecipient? fromChat(
+  static String? otherUidFromChat(
     QueryDocumentSnapshot<Map<String, dynamic>> chat,
     String ownerUid,
   ) {
@@ -1175,27 +1185,40 @@ class _GiftRecipient {
     if (!first && data['user2'] != ownerUid) return null;
     final uid = '${first ? data['user2'] ?? '' : data['user1'] ?? ''}';
     if (uid.isEmpty || uid == ownerUid) return null;
-    return _GiftRecipient(
-      chatId: '${data['chatId'] ?? chat.id}',
-      uid: uid,
-      name:
-          '${first ? data['user2Nickname'] ?? '' : data['user1Nickname'] ?? ''}',
-      imageUrl:
-          '${first ? data['user2_image'] ?? '' : data['user1_image'] ?? ''}',
-    );
+    return uid;
   }
 }
+
+@visibleForTesting
+Widget giftRecipientSheetForTesting({
+  required FirebaseFirestore db,
+  required FirebaseAuth auth,
+  required String ownerUid,
+  String? preferredRecipientUid,
+  String? preferredChatId,
+}) => _GiftRecipientSheet(
+      db: db,
+      auth: auth,
+      ownerUid: ownerUid,
+      preferredRecipientUid: preferredRecipientUid,
+      preferredChatId: preferredChatId,
+      onSend: (_) async {},
+    );
 
 class _GiftRecipientSheet extends StatefulWidget {
   const _GiftRecipientSheet({
     required this.db,
     required this.auth,
     required this.ownerUid,
+    this.preferredRecipientUid,
+    this.preferredChatId,
     required this.onSend,
   });
   final FirebaseFirestore db;
   final FirebaseAuth auth;
   final String ownerUid;
+  final String? preferredRecipientUid;
+  final String? preferredChatId;
   final Future<void> Function(_GiftRecipient recipient) onSend;
 
   @override
@@ -1226,10 +1249,55 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
         )
         .get()
         .timeout(const Duration(seconds: 20));
-    return snapshot.docs
-        .map((chat) => _GiftRecipient.fromChat(chat, widget.ownerUid))
-        .whereType<_GiftRecipient>()
-        .toList();
+    final chats = [...snapshot.docs]..sort((a, b) {
+      final aStamp = a.data()['lastMessageSendTs'];
+      final bStamp = b.data()['lastMessageSendTs'];
+      return (bStamp is Timestamp ? bStamp.millisecondsSinceEpoch : 0)
+          .compareTo(aStamp is Timestamp ? aStamp.millisecondsSinceEpoch : 0);
+    });
+    final profiles = <String, Future<DocumentSnapshot<Map<String, dynamic>>>>{};
+    for (final chat in chats) {
+      final uid = _GiftRecipient.otherUidFromChat(chat, widget.ownerUid);
+      if (uid != null) {
+        profiles.putIfAbsent(uid, () => widget.db.collection('users').doc(uid)
+            .get().timeout(const Duration(seconds: 20)));
+      }
+    }
+    final users = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    await Future.wait(profiles.entries.map((entry) async {
+      users[entry.key] = await entry.value;
+    }));
+    final recipients = <_GiftRecipient>[];
+    for (final chat in chats) {
+      final uid = _GiftRecipient.otherUidFromChat(chat, widget.ownerUid);
+      if (uid == null) continue;
+      final profileSnapshot = users[uid];
+      final profile = profileSnapshot?.data();
+      if (profileSnapshot?.exists != true || profile == null ||
+          profile['deleted'] == true || profile['status'] == 'deleted' ||
+          profile['registrationStatus'] == 'deleted') {
+        continue;
+      }
+      recipients.add(_GiftRecipient(
+        chatId: chat.id,
+        uid: uid,
+        name: profile['fullName']?.toString() ?? '',
+        imageUrl: (profile['profilePicThumb'] ?? profile['profilePic'])
+            ?.toString() ?? '',
+      ));
+    }
+    if (mounted && widget.auth.currentUser?.uid == widget.ownerUid &&
+        widget.preferredRecipientUid != null) {
+      final exact = recipients.where((recipient) =>
+          recipient.uid == widget.preferredRecipientUid &&
+          recipient.chatId == widget.preferredChatId).toList();
+      final byUid = recipients.where((recipient) =>
+          recipient.uid == widget.preferredRecipientUid).toList();
+      if (exact.isNotEmpty || byUid.isNotEmpty) {
+        setState(() => _selected = exact.isNotEmpty ? exact.first : byUid.first);
+      }
+    }
+    return recipients;
   }
 
   Future<void> _send() async {
@@ -1303,9 +1371,10 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
                                     Text(context
                                         .tr('Не удалось загрузить чаты.')),
                                     TextButton(
-                                      onPressed: () => setState(
-                                        () => _recipients = _loadRecipients(),
-                                      ),
+                                      onPressed: () => setState(() {
+                                        _selected = null;
+                                        _recipients = _loadRecipients();
+                                      }),
                                       child: Text(context.tr('Повторить')),
                                     ),
                                   ],

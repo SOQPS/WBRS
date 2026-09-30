@@ -105,8 +105,10 @@ void main() {
         expect(find.byType(TextField).hitTestable(), findsOneWidget);
         expect(find.byTooltip('Отправить сообщение').hitTestable(),
             findsOneWidget);
+        expect(find.text('Подарить Подарок ❤️').hitTestable(), findsOneWidget);
         await tester.enterText(
             find.byType(TextField), 'Текст не должен теряться');
+        expect(find.text('Подарить Подарок ❤️').hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
     }

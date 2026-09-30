@@ -40,12 +40,17 @@ library, and the existing payment QR asset remain unchanged.
 The GitHub donation banner and its external QR action were retained while the
 five-section CLRS navigation was integrated. The drawer's QR target and
 `ShopPage` destination match `origin/dev`; the registration balance literal and
-`globalBalance` declaration are unchanged. The approved six photographic gift
-assets are absent from the checked GitHub branches. Legacy gift PNGs still
-contain lettering baked into their pixels; the separate title/description
-layout cannot remove that lettering. No replacement art was generated and no
-catalog prices were changed pending the approved source assets and price
-decision.
+`globalBalance` declaration are unchanged. Twenty-nine legacy gift PNGs with
+lettering baked into their pixels were replaced with existing, caption-free
+versions from the prior CLRS QA working copy. Titles and descriptions now render
+below the artwork, including the cabbage rabbit, with no repeated title. The
+six photographic assets shown in the approved shop mockup are still absent
+from the checked sources; these legacy illustrations do not exactly reproduce
+that mockup. No new art was generated and no catalog prices were changed.
+The personal chat now has a persistent “Подарить Подарок ❤️” action and opens
+the owned-gifts tab with the current correspondent selected. The recipient
+picker reads current profiles, excludes deleted users, and orders chats newest
+first rather than displaying stale names and photos stored in chat documents.
 
 There is one unresolved behavior risk: `ShopPage` still calls
 `NotificationsService.sendPushMessage`, while CLRS 1.0.25 uses a server hint
@@ -96,19 +101,20 @@ flows needed to replace Firebase.
 Flutter 3.32.5 `clean` and `pub get` completed. Full `flutter analyze
 --no-pub` reported zero errors, one pre-existing `unused_element` warning in
 `lib/core/utils/inputs.dart`, and informational lints, so its exit status was
-1. The full `flutter test --no-pub` run initially had 648 passes and 13
-failures: outdated meeting-guide and notification-style expectations, a
-missing localization key, and one unrelated author-request test that passed
-on isolated rerun. After the related changes, the targeted 49-test recheck
-and the gift localization-usage test passed. The full suite was not repeated.
+1. After the related changes, the targeted 49-test recheck, gift localization
+check, personal-chat tests, and gift-recipient tests passed. The final full
+suite had 762 passes and one failure in the unrelated author-request test;
+that test passed on isolated rerun.
 The Android release-flavor build completed; the APK is delivered outside this
-source archive as `CLRS-1.0.25-39-github-integration-test.apk` (SHA-256
-`26c40063dfdc6420fd9443ec3a37939b508fe2f3fbc6d68693e30567d261a5d2`). Its
+source archive as `CLRS-1.0.25-39-gifts-chat-review.apk` (SHA-256
+`0eea00372b52d0a9d48c5e81a78dae9f8bc63108a97db871de31808c596b1cd2`). Its
 certificate is **Android Debug**, so this is an installable test build, not a
 store-signed production release. The isolated Android emulator displayed the
 new login screen without overflow and confirmed that registration cannot
-proceed until the consent box is checked. A logged-in gift catalog and live account
-flows were not available for device verification.
+proceed until the consent box is checked. The current APK also launched on the
+same Android emulator. Targeted personal-chat and gift-recipient tests passed.
+A logged-in gift catalog and live account flows were not available for device
+verification.
 
 This integration commit itself did not deploy Firebase rules, migrate Timeweb
 data, or change live backend services. A temporary auth-only Storage rule was

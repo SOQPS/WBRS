@@ -431,13 +431,34 @@ class _ChatScreenState extends State<ChatScreen> {
                                             style: const TextStyle(
                                                 fontSize: 12,
                                                 color: LrsTheme.muted))),
-                                    IconButton(
-                                        tooltip: context.tr('Подарить подарок'),
-                                        onPressed: () => nextScreen(
-                                            context, const ShopPage()),
-                                        icon: const Icon(Icons.card_giftcard,
-                                            color: LrsTheme.peach)),
                                   ])),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: TextButton.icon(
+                                    style: TextButton.styleFrom(
+                                        foregroundColor: Colors.white),
+                                    onPressed: () => nextScreen(
+                                      context,
+                                      ShopPage(
+                                        tabIndex: 1,
+                                        preferredRecipientUid: widget.id,
+                                        preferredChatId: widget.chatId,
+                                      ),
+                                    ),
+                                    icon: const Icon(Icons.card_giftcard),
+                                    label: Text(
+                                      context.l10n.locale.languageCode == 'ru'
+                                          ? 'Подарить Подарок ❤️'
+                                          : '${context.tr('Подарить подарок')} ❤️',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                             Expanded(child: _messageList()),
                             if (_notice != null)
                               ConstrainedBox(
