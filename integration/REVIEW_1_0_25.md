@@ -51,6 +51,10 @@ The personal chat now has a persistent “Подарить Подарок ❤️
 the owned-gifts tab with the current correspondent selected. The recipient
 picker reads current profiles, excludes deleted users, and orders chats newest
 first rather than displaying stale names and photos stored in chat documents.
+The profile wall now includes the author's published posts alongside reposts,
+without duplicating a post shared on its own wall. Legacy posts without a
+`status` field are displayed read-only on the actual author's wall; they are
+not silently treated as published in the global feed.
 
 There is one unresolved behavior risk: `ShopPage` still calls
 `NotificationsService.sendPushMessage`, while CLRS 1.0.25 uses a server hint
@@ -104,17 +108,27 @@ Flutter 3.32.5 `clean` and `pub get` completed. Full `flutter analyze
 1. After the related changes, the targeted 49-test recheck, gift localization
 check, personal-chat tests, and gift-recipient tests passed. The final full
 suite had 762 passes and one failure in the unrelated author-request test;
-that test passed on isolated rerun.
+that test passed on isolated rerun. After the wall change, 27 focused wall,
+feed and recovery tests passed; the changed wall file had no analysis errors
+or warnings.
 The Android release-flavor build completed; the APK is delivered outside this
-source archive as `CLRS-1.0.25-39-gifts-chat-review.apk` (SHA-256
-`0eea00372b52d0a9d48c5e81a78dae9f8bc63108a97db871de31808c596b1cd2`). Its
+source archive as `CLRS-1.0.25-39-gifts-wall-review.apk` (SHA-256
+`784db4e519d502fbb9c571bdfa1a4f262a3f0fc074264273330227a9899d6b48`). Its
 certificate is **Android Debug**, so this is an installable test build, not a
 store-signed production release. The isolated Android emulator displayed the
 new login screen without overflow and confirmed that registration cannot
-proceed until the consent box is checked. The current APK also launched on the
-same Android emulator. Targeted personal-chat and gift-recipient tests passed.
+proceed until the consent box is checked. The current APK installed and launched
+on the same Android emulator. Targeted personal-chat and gift-recipient tests passed.
 A logged-in gift catalog and live account flows were not available for device
 verification.
+
+Read-only production checks on 2026-09-30 found the feed and region indexes
+`READY`. The `posts` collection contained two older records without `status`
+and no record with `status: published`; the global feed therefore has no item
+to show. The client is prepared to display the old records read-only on their
+actual author's wall; they are not automatically published into the global feed.
+No production data or rules
+were changed during this check.
 
 This integration commit itself did not deploy Firebase rules, migrate Timeweb
 data, or change live backend services. A temporary auth-only Storage rule was

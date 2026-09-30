@@ -20,6 +20,9 @@ class ProfileWallPage extends StatefulWidget {
 
 class _ProfileWallPageState extends State<ProfileWallPage> {
   late Stream<QuerySnapshot<Map<String, dynamic>>> _wall = _load();
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _authored = _loadAuthored();
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _legacyAuthored =
+      _loadLegacyAuthored();
   Stream<QuerySnapshot<Map<String, dynamic>>> _load() => firebaseFirestore
       .collection('users')
       .doc(widget.userUid)
@@ -27,13 +30,49 @@ class _ProfileWallPageState extends State<ProfileWallPage> {
       .orderBy('createdAt', descending: true)
       .snapshots();
 
+  // Equality-only filters avoid a new composite index for profile walls.
+  Stream<QuerySnapshot<Map<String, dynamic>>> _loadAuthored() => firebaseFirestore
+      .collection('posts')
+      .where('status', isEqualTo: 'published')
+      .where('authorUid', isEqualTo: widget.userUid)
+      .snapshots();
+
+  // Older posts used authorId and had no status. Keep them read-only until
+  // their reaction/comment data can be migrated without changing live records.
+  Stream<QuerySnapshot<Map<String, dynamic>>> _loadLegacyAuthored() =>
+      firebaseFirestore.collection('posts')
+          .where('authorId', isEqualTo: widget.userUid).snapshots();
+
+  @override
+  void didUpdateWidget(covariant ProfileWallPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userUid != widget.userUid) {
+      _wall = _load();
+      _authored = _loadAuthored();
+      _legacyAuthored = _loadLegacyAuthored();
+    }
+  }
+
+  int _time(Map<String, dynamic> data) {
+    final value = data['createdAt'];
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is DateTime) return value.millisecondsSinceEpoch;
+    return 0;
+  }
+
   @override
   Widget build(BuildContext context) => ClrsScaffold(
         appBar: AppBar(title: Text(context.tr('Стена'))),
         body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: _wall,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
+          builder: (context, wallSnapshot) =>
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _authored,
+          builder: (context, authoredSnapshot) =>
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _legacyAuthored,
+          builder: (context, legacySnapshot) {
+            if (wallSnapshot.hasError || authoredSnapshot.hasError) {
               return Center(
                   child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
@@ -42,44 +81,76 @@ class _ProfileWallPageState extends State<ProfileWallPage> {
                               Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(context.tr('Не удалось загрузить публикации.')),
                         TextButton(
-                            onPressed: () => setState(() => _wall = _load()),
+                            onPressed: () => setState(() {
+                              _wall = _load();
+                              _authored = _loadAuthored();
+                              _legacyAuthored = _loadLegacyAuthored();
+                            }),
                             child: Text(context.tr('Повторить'))),
                       ]))));
             }
-            if (!snapshot.hasData)
+            if (!wallSnapshot.hasData || !authoredSnapshot.hasData)
               return const Center(child: CircularProgressIndicator());
-            final docs = snapshot.data!.docs;
+            final authored = authoredSnapshot.data!.docs.where((doc) =>
+                doc.data()['status'] == 'published' &&
+                doc.data()['authorUid'] == widget.userUid).toList();
+            final legacy = (legacySnapshot.data?.docs ?? []).where((doc) =>
+                !doc.data().containsKey('status') &&
+                doc.data()['authorId'] == widget.userUid).toList();
+            final authoredIds = authored.map((doc) => doc.id).toSet();
+            authoredIds.addAll(legacy.map((doc) => doc.id));
+            final entries = <({String id, String postId, String? commentId,
+                bool authored, bool legacy, int time})>[
+              for (final doc in authored)
+                (id: 'post_${doc.id}', postId: doc.id, commentId: null,
+                    authored: true, legacy: false, time: _time(doc.data())),
+              for (final doc in legacy)
+                (id: 'legacy_${doc.id}', postId: doc.id, commentId: null,
+                    authored: true, legacy: true, time: _time(doc.data())),
+              for (final doc in wallSnapshot.data!.docs)
+                if (doc.data()['sharedCommentId'] != null ||
+                    !authoredIds.contains(doc.data()['sharedPostId']?.toString() ?? doc.id))
+                  (id: 'share_${doc.id}',
+                    postId: doc.data()['sharedPostId']?.toString() ?? doc.id,
+                    commentId: doc.data()['sharedCommentId']?.toString(),
+                    authored: false, legacy: false, time: _time(doc.data())),
+            ]..sort((a, b) => b.time.compareTo(a.time));
             return ListView.separated(
               padding: const EdgeInsets.all(16),
-              itemCount: docs.isEmpty ? 1 : docs.length,
+              itemCount: entries.isEmpty ? 1 : entries.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
-                if (docs.isEmpty)
+                if (entries.isEmpty)
                   return ClrsPanel(
                       child: Text(context.tr(
                           'Здесь появятся публикации, которыми вы поделились.')));
-                final id = docs[index].data()['sharedPostId']?.toString() ??
-                    docs[index].id;
-                final commentId =
-                    docs[index].data()['sharedCommentId']?.toString();
+                final entry = entries[index];
                 return _WallPost(
-                    key: ValueKey(docs[index].id),
-                    postId: id,
-                    commentId: commentId,
-                    owner: widget.userUid == firebaseAuth.currentUser?.uid);
+                    key: ValueKey(entry.id),
+                    postId: entry.postId,
+                    commentId: entry.commentId,
+                    owner: !entry.authored &&
+                        widget.userUid == firebaseAuth.currentUser?.uid,
+                    authored: entry.authored,
+                    legacy: entry.legacy);
               },
             );
           },
+          ),
+          ),
         ),
       );
 }
 
 class _WallPost extends StatefulWidget {
   const _WallPost(
-      {super.key, required this.postId, this.commentId, required this.owner});
+      {super.key, required this.postId, this.commentId, required this.owner,
+      this.authored = false, this.legacy = false});
   final String postId;
   final String? commentId;
   final bool owner;
+  final bool authored;
+  final bool legacy;
   @override
   State<_WallPost> createState() => _WallPostState();
 }
@@ -163,12 +234,18 @@ class _WallPostState extends State<_WallPost> {
         stream: _post,
         builder: (context, snapshot) {
           final post = snapshot.data?.data();
-          final available = post != null && post['status'] == 'published';
+          final available = post != null &&
+              (post['status'] == 'published' ||
+                  (widget.legacy && !post.containsKey('status')));
+          final image = widget.legacy && post?['images'] is List &&
+                  (post!['images'] as List).isNotEmpty
+              ? (post['images'] as List).first.toString()
+              : post?['imageUrl']?.toString() ?? '';
           return ClrsPanel(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Row(children: [
+                if (!widget.authored) Row(children: [
                   Expanded(
                       child: Text(context.tr(widget.commentId == null
                               ? 'Репост'
@@ -196,7 +273,8 @@ class _WallPostState extends State<_WallPost> {
                 else ...[
                   Row(children: [
                     GroupAvatar(
-                        url: post['authorPhoto']?.toString() ?? '',
+                        url: (post['authorPhoto'] ?? post['authorAvatar'])
+                            ?.toString() ?? '',
                         group: post['authorGroup']?.toString() ?? '',
                         size: 36),
                     const SizedBox(width: 10),
@@ -212,17 +290,22 @@ class _WallPostState extends State<_WallPost> {
                       (post['text']?.toString() ?? '').isNotEmpty)
                     TranslatableText(post['text'].toString(),
                         showAction: false),
-                  if (widget.commentId == null &&
-                      (post['imageUrl']?.toString() ?? '').isNotEmpty)
+                  if (widget.commentId == null && image.isNotEmpty)
                     Padding(
                         padding: const EdgeInsets.only(top: 10),
                         child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child: CachedNetworkImage(
-                                imageUrl: post['imageUrl'].toString(),
+                                imageUrl: image,
                                 errorWidget: (_, __, ___) =>
                                     const Icon(Icons.broken_image_outlined)))),
-                  if (widget.commentId == null) TextButton.icon(
+                  if (widget.legacy) Row(children: [
+                    const Icon(Icons.favorite_border, size: 18),
+                    Text(' ${post['likesCount'] ?? 0}  '),
+                    const Icon(Icons.chat_bubble_outline, size: 18),
+                    Text(' ${post['commentsCount'] ?? 0}'),
+                  ]),
+                  if (widget.commentId == null && !widget.legacy) TextButton.icon(
                       onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute(
                               builder: (_) => PostDetailPage(
