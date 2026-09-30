@@ -32,19 +32,26 @@ branch does not deploy them.
 ## Payment boundary
 
 `payment_preservation.json` records a byte comparison against `origin/dev`.
-`shop.dart`, `oplata.dart`, `robokassa_webview.dart`, `web_page.dart`, the
-Robokassa Android library, and the existing payment QR asset are unchanged.
+`shop.dart` now changes the gift catalog UI and opens the recipient sheet before
+loading only the current user's chats. The catalog purchase prices, balance
+checks and writes, and Robokassa handlers retain their prior behavior.
+`oplata.dart`, `robokassa_webview.dart`, `web_page.dart`, the Robokassa Android
+library, and the existing payment QR asset remain unchanged.
 The GitHub donation banner and its external QR action were retained while the
 five-section CLRS navigation was integrated. The drawer's QR target and
 `ShopPage` destination match `origin/dev`; the registration balance literal and
-`globalBalance` declaration are unchanged. Gift art, paid shop modules,
-payment tests, and payment localization transformation scripts were excluded.
+`globalBalance` declaration are unchanged. The approved six photographic gift
+assets are absent from the checked GitHub branches. Legacy gift PNGs still
+contain lettering baked into their pixels; the separate title/description
+layout cannot remove that lettering. No replacement art was generated and no
+catalog prices were changed pending the approved source assets and price
+decision.
 
-There is one unresolved behavior risk: the old `ShopPage` still calls
+There is one unresolved behavior risk: `ShopPage` still calls
 `NotificationsService.sendPushMessage`, while CLRS 1.0.25 uses a server hint
 instead of embedding a Firebase service account in the APK. With the server
 notification flag off, a gift notification may not be delivered. A successful
-build cannot verify that flow. The payment transaction code is unchanged.
+build cannot verify that flow. The payment transaction handlers are unchanged.
 
 ## Credential boundary
 
@@ -86,28 +93,30 @@ flows needed to replace Firebase.
 
 ## Verification and limits
 
-Flutter 3.32.5 `pub get` resolved the merged dependencies. `flutter analyze
---no-pub` finished with zero errors, one existing `unused_element` warning,
-and informational lints (exit 1 because of lint findings). Android
-`flutter build apk --release --flavor production --no-pub` succeeded and
-produced the APK preserved outside the repository at
-`artifacts/clrs_github_integration_2026-09-30/CLRS-1.0.25-39-github-integration-test.apk`, SHA-256
-`bf9ad83ff9e8235454b5cfe0503a437055df9520184c3f544513c9f485ccd988`.
-The APK certificate is **Android Debug**: this is an installable test build,
-not a store-signed production release. The first targeted run had one failing
-test because its test tap hit the timeout snackbar covering the like button;
-the feed implementation was byte-identical to the reviewed source. The test
-now waits for the snackbar to clear, matching its neighboring test. The final
-targeted run passed **28/28** tests across feed QA, sharing/permissions,
-retained reactions, and notification navigation. A staged-diff secret scan
-found two non-secret fixtures: an emulator-only demo Firebase option and a
-URL-with-userinfo case in a test. It found no newly staged live credentials.
-The scan lists path, line, and rule only; no values are recorded.
+Flutter 3.32.5 `clean` and `pub get` completed. Full `flutter analyze
+--no-pub` reported zero errors, one pre-existing `unused_element` warning in
+`lib/core/utils/inputs.dart`, and informational lints, so its exit status was
+1. The full `flutter test --no-pub` run initially had 648 passes and 13
+failures: outdated meeting-guide and notification-style expectations, a
+missing localization key, and one unrelated author-request test that passed
+on isolated rerun. After the related changes, the targeted 49-test recheck
+and the gift localization-usage test passed. The full suite was not repeated.
+The Android release-flavor build completed; the APK is delivered outside this
+source archive as `CLRS-1.0.25-39-github-integration-test.apk` (SHA-256
+`26c40063dfdc6420fd9443ec3a37939b508fe2f3fbc6d68693e30567d261a5d2`). Its
+certificate is **Android Debug**, so this is an installable test build, not a
+store-signed production release. The isolated Android emulator displayed the
+new login screen without overflow and confirmed that registration cannot
+proceed until the consent box is checked. A logged-in gift catalog and live account
+flows were not available for device verification.
 
 This integration commit itself did not deploy Firebase rules, migrate Timeweb
 data, or change live backend services. A temporary auth-only Storage rule was
 published separately, and an empty Timeweb `clrs_staging` database was created;
 the Timeweb state is recorded in `server/timeweb/README.md`, while the
 published Storage rule source and rollback tooling are in `tool/security/`.
+An encrypted, private Firebase metadata export contains 8,202 Auth users and
+70,412 Firestore documents, but no Storage/photo files or transferable
+password hashes. It is not a complete migration source, and no import was run.
 Payment and gift flows need device/account checks before release; this review
 proves source preservation and a local Android build only.

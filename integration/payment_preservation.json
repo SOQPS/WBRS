@@ -1,12 +1,15 @@
 {
   "direct_protected_files_unchanged": {
-    "lib/presentation/screens/shop/shop.dart": true,
+    "lib/presentation/screens/shop/shop.dart": false,
     "lib/app/widgets/oplata.dart": true,
     "lib/app/widgets/robokassa_webview.dart": true,
     "lib/app/widgets/web_page.dart": true,
     "android/lib/Robokassa_Library-release.aar": true,
     "assets/pay/qr.jpeg": true
   },
+  "shop_ui_changed_for_approved_gift_design": true,
+  "shop_purchase_prices_and_balance_writes_unchanged": true,
+  "shop_gift_send_remains_non_atomic_as_in_base": true,
   "donation_banner_code_equivalent_after_format": true,
   "drawer_qr_url_same": true,
   "drawer_shop_route_same": true
