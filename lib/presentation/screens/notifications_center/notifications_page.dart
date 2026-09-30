@@ -136,13 +136,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   const EdgeInsets.symmetric(horizontal: 3),
                               visualDensity: VisualDensity.compact,
                               materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
+                                  MaterialTapTargetSize.padded,
                               selected: _filter == filter,
                               showCheckmark: false,
                               labelStyle: TextStyle(
                                   color: _filter == filter
-                                      ? LrsTheme.text
-                                      : LrsTheme.peachLight,
+                                      ? LrsTheme.peachLight
+                                      : LrsTheme.text,
                                   fontWeight: _filter == filter
                                       ? FontWeight.w700
                                       : FontWeight.w400),
@@ -150,7 +150,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   color: _filter == filter
                                       ? LrsTheme.peachLight
                                       : const Color(0x66E7B092),
-                                  width: _filter == filter ? 1.2 : 0.8),
+                                  width: _filter == filter ? 2 : 0.8),
                               selectedColor: Color(0x775E3C2A),
                               backgroundColor: Color(0x5531241D),
                               onSelected: (_) =>
