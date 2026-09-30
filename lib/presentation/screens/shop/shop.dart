@@ -1286,12 +1286,16 @@ Widget giftRecipientSheetForTesting({
   String? preferredRecipientUid,
   String? preferredChatId,
   Future<void> Function(String uid, String chatId)? onSend,
+  String? giftName,
+  String? giftImagePath,
   bool asDialog = false,
 }) {
   final sheet = _GiftRecipientSheet(
     db: db,
     auth: auth,
     ownerUid: ownerUid,
+    giftName: giftName,
+    giftImagePath: giftImagePath,
     preferredRecipientUid: preferredRecipientUid,
     preferredChatId: preferredChatId,
     onSend: (recipient) async {
@@ -1474,160 +1478,179 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
     child: SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    context.tr('Кому подарить?'),
-                    style: const TextStyle(
-                      color: LrsTheme.text,
-                      fontFamily: 'CormorantGaramond',
-                      fontSize: 27,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: context.tr('Закрыть'),
-                  onPressed: _sending ? null : () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: LrsTheme.text),
-                ),
-              ],
-            ),
-            if (widget.giftImagePath != null) ...[
-              Row(
+        // Let headers, recipients and the action share one scroll viewport.
+        // A fixed header/footer Column can exceed the height above Gboard,
+        // especially when translated text or accessibility fonts wrap.
+        child: CustomScrollView(
+          key: const ValueKey('gift-recipient-scroll'),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
                 children: [
-                  Image.asset(
-                    widget.giftImagePath!,
-                    width: 54,
-                    height: 54,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      context.tr(widget.giftName ?? 'Подарок'),
-                      softWrap: true,
-                      style: const TextStyle(color: LrsTheme.text),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                context.tr('Выберите собеседника.'),
-                style: const TextStyle(color: LrsTheme.muted),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              onChanged: (value) => setState(() {
-                _searchTerm = value;
-                if (_selected != null && !_matchesSearch(_selected!)) {
-                  _selected = null;
-                }
-              }),
-              decoration: InputDecoration(
-                hintText: context.tr('Поиск по имени'),
-                prefixIcon: const Icon(Icons.search),
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (widget.preferredRecipientUid != null)
-              FutureBuilder<List<_GiftRecipient>>(
-                future: _recipients,
-                builder: (context, snapshot) {
-                  final loaded =
-                      snapshot.connectionState == ConnectionState.done &&
-                      !snapshot.hasError &&
-                      snapshot.hasData;
-                  final recipient = loaded
-                      ? _preferredRecipient(snapshot.data!)
-                      : null;
-                  final canSend =
-                      recipient != null &&
-                      _matchesSearch(recipient) &&
-                      widget.auth.currentUser?.uid == widget.ownerUid &&
-                      !_sending &&
-                      !_sendAttempted;
-                  return Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      key: const ValueKey('gift-current-recipient'),
-                      onPressed: canSend
-                          ? () => _sendCurrent(snapshot.data!)
-                          : null,
-                      style: TextButton.styleFrom(
-                        foregroundColor: LrsTheme.text,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 6,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          context.tr('Кому подарить?'),
+                          style: const TextStyle(
+                            color: LrsTheme.text,
+                            fontFamily: 'CormorantGaramond',
+                            fontSize: 27,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                        minimumSize: Size.zero,
-                        textStyle: const TextStyle(fontSize: 12),
                       ),
-                      child: Text(
-                        context.tr('Подарить текущему собеседнику'),
-                        softWrap: true,
+                      IconButton(
+                        tooltip: context.tr('Закрыть'),
+                        onPressed: _sending
+                            ? null
+                            : () => Navigator.pop(context),
+                        icon: const Icon(Icons.close, color: LrsTheme.text),
                       ),
-                    ),
-                  );
-                },
-              ),
-            if (_sendUnconfirmed)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  context.tr(
-                    'Предыдущая отправка ожидает подтверждения. Проверьте результат.',
+                    ],
                   ),
-                  style: const TextStyle(color: LrsTheme.peachLight),
-                ),
-              ),
-            Expanded(
-              child: widget.auth.currentUser?.uid != widget.ownerUid
-                  ? Center(
-                      child: Text(context.tr('Сеанс завершён. Войдите снова.')),
-                    )
-                  : FutureBuilder<List<_GiftRecipient>>(
+                  if (widget.giftImagePath != null) ...[
+                    Row(
+                      children: [
+                        Image.asset(
+                          widget.giftImagePath!,
+                          width: 54,
+                          height: 54,
+                          fit: BoxFit.contain,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            context.tr(widget.giftName ?? 'Подарок'),
+                            softWrap: true,
+                            style: const TextStyle(color: LrsTheme.text),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      context.tr('Выберите собеседника.'),
+                      style: const TextStyle(color: LrsTheme.muted),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    onChanged: (value) => setState(() {
+                      _searchTerm = value;
+                      if (_selected != null && !_matchesSearch(_selected!)) {
+                        _selected = null;
+                      }
+                    }),
+                    decoration: InputDecoration(
+                      hintText: context.tr('Поиск по имени'),
+                      prefixIcon: const Icon(Icons.search),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (widget.preferredRecipientUid != null)
+                    FutureBuilder<List<_GiftRecipient>>(
                       future: _recipients,
                       builder: (context, snapshot) {
-                        if (snapshot.hasError) {
-                          return Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(context.tr('Не удалось загрузить чаты.')),
-                                TextButton(
-                                  onPressed: () => setState(() {
-                                    _selected = null;
-                                    _recipients = _loadRecipients();
-                                  }),
-                                  child: Text(context.tr('Повторить')),
-                                ),
-                              ],
+                        final loaded =
+                            snapshot.connectionState == ConnectionState.done &&
+                            !snapshot.hasError &&
+                            snapshot.hasData;
+                        final recipient = loaded
+                            ? _preferredRecipient(snapshot.data!)
+                            : null;
+                        final canSend =
+                            recipient != null &&
+                            _matchesSearch(recipient) &&
+                            widget.auth.currentUser?.uid == widget.ownerUid &&
+                            !_sending &&
+                            !_sendAttempted;
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            key: const ValueKey('gift-current-recipient'),
+                            onPressed: canSend
+                                ? () => _sendCurrent(snapshot.data!)
+                                : null,
+                            style: TextButton.styleFrom(
+                              foregroundColor: LrsTheme.text,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 6,
+                              ),
+                              minimumSize: Size.zero,
+                              textStyle: const TextStyle(fontSize: 12),
                             ),
-                          );
-                        }
-                        if (!snapshot.hasData) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        final recipients = snapshot.data!
-                            .where(
-                              (recipient) => recipient.name
-                                  .toLowerCase()
-                                  .contains(_searchTerm.trim().toLowerCase()),
-                            )
-                            .toList();
-                        if (recipients.isEmpty) {
-                          return Center(
+                            child: Text(
+                              context.tr('Подарить текущему собеседнику'),
+                              softWrap: true,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  if (_sendUnconfirmed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        context.tr(
+                          'Предыдущая отправка ожидает подтверждения. Проверьте результат.',
+                        ),
+                        style: const TextStyle(color: LrsTheme.peachLight),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            widget.auth.currentUser?.uid != widget.ownerUid
+                ? SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Text(context.tr('Сеанс завершён. Войдите снова.')),
+                    ),
+                  )
+                : FutureBuilder<List<_GiftRecipient>>(
+                    future: _recipients,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return SliverToBoxAdapter(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(context.tr('Не удалось загрузить чаты.')),
+                              TextButton(
+                                onPressed: () => setState(() {
+                                  _selected = null;
+                                  _recipients = _loadRecipients();
+                                }),
+                                child: Text(context.tr('Повторить')),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      if (!snapshot.hasData) {
+                        return const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                        );
+                      }
+                      final recipients = snapshot.data!
+                          .where(
+                            (recipient) => recipient.name
+                                .toLowerCase()
+                                .contains(_searchTerm.trim().toLowerCase()),
+                          )
+                          .toList();
+                      if (recipients.isEmpty) {
+                        return SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
                             child: Text(
                               context.tr(
                                 _searchTerm.trim().isEmpty
@@ -1635,76 +1658,81 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
                                     : 'Здесь нет подходящих чатов',
                               ),
                             ),
-                          );
-                        }
-                        return ListView.builder(
-                          itemCount: recipients.length,
-                          itemBuilder: (context, index) {
-                            final recipient = recipients[index];
-                            final selected =
-                                _selected?.chatId == recipient.chatId;
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 6),
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? const Color(0x996A422E)
-                                    : LrsTheme.actionGlass,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: selected
-                                      ? LrsTheme.peach
-                                      : LrsTheme.actionBorder,
-                                ),
-                              ),
-                              child: ListTile(
-                                dense: true,
-                                selected: selected,
-                                leading: CircleAvatar(
-                                  backgroundImage: recipient.imageUrl.isEmpty
-                                      ? null
-                                      : NetworkImage(recipient.imageUrl),
-                                  child: recipient.imageUrl.isEmpty
-                                      ? const Icon(Icons.person)
-                                      : null,
-                                ),
-                                title: Text(
-                                  recipient.name.isEmpty
-                                      ? recipient.uid
-                                      : recipient.name,
-                                ),
-                                trailing: Icon(
-                                  selected
-                                      ? Icons.radio_button_checked
-                                      : Icons.radio_button_unchecked,
-                                  color: LrsTheme.peachLight,
-                                ),
-                                onTap: _sending || _sendAttempted
-                                    ? null
-                                    : () =>
-                                          setState(() => _selected = recipient),
-                              ),
-                            );
-                          },
+                          ),
                         );
-                      },
-                    ),
-            ),
-            if (_selected != null)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _sending || _sendAttempted ? null : _send,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xCCDB936E),
-                    foregroundColor: LrsTheme.background,
+                      }
+                      return SliverList.builder(
+                        itemCount: recipients.length,
+                        itemBuilder: (context, index) {
+                          final recipient = recipients[index];
+                          final selected =
+                              _selected?.chatId == recipient.chatId;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? const Color(0x996A422E)
+                                  : LrsTheme.actionGlass,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: selected
+                                    ? LrsTheme.peach
+                                    : LrsTheme.actionBorder,
+                              ),
+                            ),
+                            child: ListTile(
+                              dense: true,
+                              selected: selected,
+                              leading: CircleAvatar(
+                                backgroundImage: recipient.imageUrl.isEmpty
+                                    ? null
+                                    : NetworkImage(recipient.imageUrl),
+                                child: recipient.imageUrl.isEmpty
+                                    ? const Icon(Icons.person)
+                                    : null,
+                              ),
+                              title: Text(
+                                recipient.name.isEmpty
+                                    ? recipient.uid
+                                    : recipient.name,
+                              ),
+                              trailing: Icon(
+                                selected
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                color: LrsTheme.peachLight,
+                              ),
+                              onTap: _sending || _sendAttempted
+                                  ? null
+                                  : () => setState(() => _selected = recipient),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
-                  child: _sending
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(context.tr('Подарить')),
+            if (_selected != null)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _sending || _sendAttempted ? null : _send,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xCCDB936E),
+                        foregroundColor: LrsTheme.background,
+                      ),
+                      child: _sending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Text(context.tr('Подарить')),
+                    ),
+                  ),
                 ),
               ),
           ],

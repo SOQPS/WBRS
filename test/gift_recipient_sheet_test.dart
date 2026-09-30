@@ -9,13 +9,31 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 // ignore: depend_on_referenced_packages
 import 'package:firebase_core_platform_interface/test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wbrs/presentation/screens/shop/shop.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 
 import 'support/layout_firebase_fakes.dart';
+
+class _CatalogDelegate extends LocalizationsDelegate<ClrsLocalizations> {
+  const _CatalogDelegate(this.catalog);
+  final Map<String, dynamic> catalog;
+
+  @override
+  bool isSupported(Locale locale) =>
+      const ['en', 'ru'].contains(locale.languageCode);
+
+  @override
+  Future<ClrsLocalizations> load(Locale locale) =>
+      SynchronousFuture(ClrsLocalizations(locale, catalog));
+
+  @override
+  bool shouldReload(_CatalogDelegate old) => false;
+}
 
 class _GiftFirestore extends LayoutFirestore {
   @override
@@ -69,10 +87,30 @@ Future<void> _openPicker(
   String? preferredUid = 'person-0',
   String? preferredChatId = 'chat-0',
   Future<void> Function(String uid, String chatId)? onSend,
+  String? localeCode,
+  double textScale = 1,
+  bool withGiftPreview = false,
 }) async {
+  final catalog = localeCode == null
+      ? null
+      : Map<String, dynamic>.from(
+          jsonDecode(File('assets/l10n/$localeCode.json').readAsStringSync())
+              as Map,
+        );
   await tester.pumpWidget(
     MaterialApp(
       theme: LrsTheme.theme,
+      locale: localeCode == null ? null : Locale(localeCode),
+      supportedLocales: ClrsLocalizations.supportedLocales,
+      localizationsDelegates: catalog == null
+          ? null
+          : [_CatalogDelegate(catalog), ...ClrsLocalizations.delegates.skip(1)],
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(
@@ -85,6 +123,8 @@ Future<void> _openPicker(
                 preferredRecipientUid: preferredUid,
                 preferredChatId: preferredChatId,
                 onSend: onSend,
+                giftName: withGiftPreview ? 'Кофе и круассан' : null,
+                giftImagePath: withGiftPreview ? 'assets/gifts/2.png' : null,
                 asDialog: true,
               ),
             ),
@@ -103,6 +143,13 @@ void main() {
   setUpAll(() async {
     setupFirebaseCoreMocks();
     await Firebase.initializeApp();
+    for (final font in {
+      'MaterialIcons': 'fonts/MaterialIcons-Regular.otf',
+      'Lato': 'assets/fonts/Lato-Regular.ttf',
+      'CormorantGaramond': 'assets/fonts/CormorantGaramond-Variable.ttf',
+    }.entries) {
+      await (FontLoader(font.key)..addFont(rootBundle.load(font.value))).load();
+    }
   });
 
   testWidgets(
@@ -539,6 +586,97 @@ void main() {
     expect(tester.getSize(find.byKey(_panel)).width, closeTo(205.333333, .01));
     expect(tester.takeException(), isNull);
   });
+
+  for (final code in ['en', 'ru']) {
+    for (final keyboardHeight in [274.0, 300.0]) {
+      for (final textScale in [1.0, 2.0]) {
+        testWidgets(
+          'Full $code gift picker remains reachable with $keyboardHeight dp keyboard and ${textScale * 100}% text',
+          (tester) async {
+            tester.view.physicalSize = const Size(360, 640);
+            tester.view.devicePixelRatio = 1;
+            tester.view.padding = const FakeViewPadding(
+              left: 18,
+              top: 24,
+              right: 22,
+            );
+            tester.view.viewPadding = const FakeViewPadding(
+              left: 18,
+              top: 24,
+              right: 22,
+              bottom: 48,
+            );
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            addTearDown(tester.view.resetPadding);
+            addTearDown(tester.view.resetViewPadding);
+            addTearDown(tester.view.resetViewInsets);
+            final db = _GiftFirestore()..serveEmittedQueries = true;
+            addTearDown(db.close);
+            _seedRecipients(db);
+            final sent = <String>[];
+            await _openPicker(
+              tester,
+              db: db,
+              auth: LayoutAuth(),
+              localeCode: code,
+              textScale: textScale,
+              withGiftPreview: true,
+              onSend: (uid, chatId) async => sent.add('$uid/$chatId'),
+            );
+            await tester.ensureVisible(find.byType(TextField));
+            await tester.pumpAndSettle();
+            await tester.tap(find.byType(TextField));
+            tester.view.viewInsets = FakeViewPadding(bottom: keyboardHeight);
+            await tester.pumpAndSettle();
+            final bounds = tester.getRect(find.byKey(_panel));
+            expect(bounds.width, closeTo((360 - 18 - 22 - 12) * 2 / 3, .01));
+            expect(bounds.bottom, closeTo(640 - keyboardHeight, .01));
+            expect(
+              tester.takeException(),
+              isNull,
+              reason: '$code keyboard initial',
+            );
+            final scroll = find
+                .descendant(
+                  of: find.byKey(const Key('gift-recipient-scroll')),
+                  matching: find.byType(Scrollable),
+                )
+                .first;
+            Future<void> reach(Finder target) async {
+              await tester.scrollUntilVisible(target, 120, scrollable: scroll);
+              await tester.ensureVisible(target);
+              await tester.pumpAndSettle();
+              final rect = tester.getRect(target);
+              expect(rect.left, greaterThanOrEqualTo(bounds.left));
+              expect(rect.right, lessThanOrEqualTo(bounds.right));
+              expect(rect.top, greaterThanOrEqualTo(bounds.top));
+              expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
+              expect(
+                tester.takeException(),
+                isNull,
+                reason: '$code reachable action',
+              );
+            }
+
+            await reach(find.byKey(_currentAction));
+            expect(
+              tester.widget<TextButton>(find.byKey(_currentAction)).onPressed,
+              isNotNull,
+            );
+            await reach(find.text('Собеседник 0'));
+            final footer = find.byType(ElevatedButton);
+            await reach(footer);
+            await tester.tap(footer);
+            await tester.pumpAndSettle();
+            expect(sent, ['person-0/chat-0']);
+            expect(find.byKey(_panel), findsNothing);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
 
   test(
     'Current-recipient action has a nonempty bundled value for all 23 UI languages',
