@@ -22,7 +22,7 @@ class ClrsAuthShell extends StatelessWidget {
   Widget build(BuildContext context) => ClrsScaffold(
       backgroundAsset: 'assets/final_design/family_back.png',
       body: SafeArea(child: LayoutBuilder(builder: (context, constraints) {
-        final compact = constraints.maxHeight < 560 ||
+        final compact = constraints.maxHeight < 525 ||
             MediaQuery.textScalerOf(context).scale(16) > 24;
         if (loginLayout) {
           final loginCompact = compact ||
@@ -116,10 +116,10 @@ class ClrsAuthShell extends StatelessWidget {
                                     alignment: Alignment.topCenter,
                                     children: [
                                       Padding(
-                                          padding: EdgeInsets.only(
-                                              top: compact ? 4 : 30),
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
                                           child: ClrsLogo(
-                                              size: compact ? 52 : 56,
+                                              size: compact ? 48 : 50,
                                               centered: true,
                                               subtitleSans: true)),
                                       const Positioned(
