@@ -60,7 +60,9 @@ async function exportAuth(auth, writer, summary, limits) {
     if (++summary.authListPages > limits.maxAuthListPages) {
       throw new Error('Auth list-page limit reached');
     }
-    const page = await auth.listUsers(1000, token);
+    const remaining = limits.maxAuthUsers - summary.authUsers;
+    if (remaining < 1) throw new Error('Auth user limit reached');
+    const page = await auth.listUsers(Math.min(1000, remaining), token);
     if (!Array.isArray(page?.users)) throw new Error('Invalid Auth page');
     for (const user of page.users) {
       const record = authMetadata(user);
@@ -70,6 +72,9 @@ async function exportAuth(auth, writer, summary, limits) {
       await writer.writeJson({ kind: 'auth-user', user: record });
     }
     token = nextToken(page.pageToken, seen);
+    if (token && summary.authUsers === limits.maxAuthUsers) {
+      throw new Error('Auth user limit reached');
+    }
   } while (token);
 }
 

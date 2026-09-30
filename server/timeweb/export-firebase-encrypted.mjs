@@ -77,17 +77,26 @@ function pathSegments(path) {
   return path.split('/').map(encodeURIComponent).join('/');
 }
 
-function firestoreApi(credential, project, database) {
+export function firestoreApi(credential, project, database, fetchImpl = fetch) {
   const resource = `projects/${project}/databases/${encodeURIComponent(database)}/documents`;
   const endpoint = `https://firestore.googleapis.com/v1/${resource}`;
   async function request(url, options) {
     const token = await credential.getAccessToken();
-    const response = await fetch(url, {
+    const headers = {
+      Authorization: `Bearer ${token.access_token}`,
+      ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
+    };
+    const quotaProject = credential.getQuotaProjectId?.();
+    if (quotaProject) {
+      if (!/^[a-z][a-z0-9-]{4,62}$/.test(quotaProject)) {
+        throw new Error('Invalid Firestore quota project');
+      }
+      headers['x-goog-user-project'] = quotaProject;
+    }
+    const response = await fetchImpl(url, {
       ...options,
-      headers: {
-        Authorization: `Bearer ${token.access_token}`,
-        ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
-      },
+      headers,
+      signal: AbortSignal.timeout(30000),
     });
     if (!response.ok) throw new Error(`Firestore read failed (HTTP ${response.status})`);
     return response.json();

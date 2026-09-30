@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copy current media objects into a separate versioned private backup bucket.
 set -Eeuo pipefail
+set +x
 umask 077
 
 die() { printf 'Media backup stopped: %s\n' "$1" >&2; exit 1; }
@@ -20,7 +21,8 @@ set -a
 source "$env_file"
 set +a
 for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION S3_ENDPOINT \
-  MEDIA_S3_BUCKET BACKUP_S3_BUCKET BACKUP_MEDIA_PREFIX; do
+  TIMEWEB_API_TOKEN MEDIA_S3_BUCKET BACKUP_S3_BUCKET BACKUP_S3_BUCKET_ID \
+  BACKUP_MEDIA_PREFIX; do
   [[ -n ${!name:-} ]] || die "missing setting: $name"
 done
 [[ $S3_ENDPOINT == https://* ]] || die 'S3 endpoint must use HTTPS'
@@ -28,6 +30,7 @@ for bucket in "$MEDIA_S3_BUCKET" "$BACKUP_S3_BUCKET"; do
   [[ $bucket =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ ]] || die 'invalid S3 bucket'
 done
 [[ $MEDIA_S3_BUCKET != "$BACKUP_S3_BUCKET" ]] || die 'media and backup buckets must differ'
+[[ $BACKUP_S3_BUCKET_ID =~ ^[1-9][0-9]*$ ]] || die 'invalid backup bucket ID'
 [[ $BACKUP_MEDIA_PREFIX =~ ^[A-Za-z0-9/_-]+$ ]] || die 'invalid backup prefix'
 
 if [[ $execute == false ]]; then
@@ -35,14 +38,20 @@ if [[ $execute == false ]]; then
   exit 0
 fi
 command -v aws >/dev/null 2>&1 || die 'missing program: aws'
+command -v node >/dev/null 2>&1 || die 'missing program: node'
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 for bucket in "$MEDIA_S3_BUCKET" "$BACKUP_S3_BUCKET"; do
   versioning=$(aws --endpoint-url "$S3_ENDPOINT" s3api get-bucket-versioning \
     --bucket "$bucket" --query Status --output text)
   [[ $versioning == Enabled ]] || die "versioning is not enabled for $bucket"
 done
+node "$script_dir/check-private-media-bucket.mjs" "$BACKUP_S3_BUCKET" "$BACKUP_S3_BUCKET_ID" \
+  || die 'backup bucket privacy preflight failed'
 # Deliberately omit --delete. Older copies survive a deletion in the source bucket.
 aws --endpoint-url "$S3_ENDPOINT" s3 sync \
   "s3://$MEDIA_S3_BUCKET/" "s3://$BACKUP_S3_BUCKET/$BACKUP_MEDIA_PREFIX/" \
   --only-show-errors >/dev/null
+node "$script_dir/check-private-media-bucket.mjs" "$BACKUP_S3_BUCKET" "$BACKUP_S3_BUCKET_ID" \
+  || die 'backup bucket privacy recheck failed; inspect the copied objects'
 printf 'Current media objects copied to private backup prefix %s. Restore spot checks are still required.\n' \
   "$BACKUP_MEDIA_PREFIX"
