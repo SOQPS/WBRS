@@ -87,7 +87,8 @@ class ProfilePortrait extends StatelessWidget {
                         children: [
                           SizedBox(
                               height: MediaQuery.paddingOf(context).top +
-                                  MediaQuery.sizeOf(context).width * .20),
+                                  (MediaQuery.sizeOf(context).width * .62)
+                                      .clamp(190.0, 300.0)),
                           Wrap(
                               spacing: 10,
                               runSpacing: 4,

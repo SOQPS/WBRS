@@ -1,6 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -40,8 +41,12 @@ class ShopPage extends StatefulWidget {
   final int? tabIndex;
   final String? preferredRecipientUid;
   final String? preferredChatId;
-  const ShopPage({super.key, this.tabIndex, this.preferredRecipientUid,
-      this.preferredChatId});
+  const ShopPage({
+    super.key,
+    this.tabIndex,
+    this.preferredRecipientUid,
+    this.preferredChatId,
+  });
 
   @override
   State<ShopPage> createState() => _ShopPageState();
@@ -87,132 +92,136 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) => ClrsScaffold(
-        drawer: const MyDrawer(),
-        bottomNavigationBar: const MyBottomNavigationBar(),
-        body: NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) => [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
+    drawer: const MyDrawer(),
+    bottomNavigationBar: const MyBottomNavigationBar(),
+    body: NestedScrollView(
+      headerSliverBuilder: (context, innerBoxIsScrolled) => [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: ClrsBrandHeader()),
-                        Padding(
-                          padding: EdgeInsets.only(top: 15),
-                          child: ClrsMotto(size: 16),
-                        ),
-                      ],
+                    Expanded(child: ClrsBrandHeader()),
+                    Padding(
+                      padding: EdgeInsets.only(top: 15),
+                      child: ClrsMotto(size: 16),
                     ),
-                    Text(
-                      context.tr('Магазин подарков'),
-                      style: const TextStyle(
-                        color: LrsTheme.text,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      context
-                          .tr('Дарить внимание. Создавать особенные моменты.'),
-                      style: const TextStyle(
-                        color: LrsTheme.text,
-                        fontSize: 15,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    StreamBuilder(
-                      stream: db
-                          .collection('users')
-                          .doc(auth.currentUser!.uid)
-                          .snapshots(),
-                      builder: (context, snapshot) {
-                        if (snapshot.hasData) {
-                          globalBalance = snapshot.data!['balance'];
-                        }
-                        final shownBalance =
-                            snapshot.hasData ? globalBalance : 0;
-                        return ClrsPanel(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 11,
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.monetization_on_outlined,
-                                color: LrsTheme.peach,
-                                size: 25,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      TextSpan(
-                                          text: context.tr('Ваш баланс: ')),
-                                      TextSpan(
-                                        text: '$shownBalance Ag',
-                                        style: const TextStyle(
-                                          color: LrsTheme.peach,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  style: const TextStyle(
-                                    color: LrsTheme.text,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    _shopActions(context),
-                    const SizedBox(height: 10),
                   ],
                 ),
-              ),
-            ),
-            SliverAppBar(
-              forceElevated: innerBoxIsScrolled,
-              backgroundColor: const Color(0xB3211813),
-              pinned: true,
-              foregroundColor: LrsTheme.text,
-              toolbarHeight: 0,
-              bottom: TabBar(
-                unselectedLabelColor: LrsTheme.muted,
-                indicatorColor: LrsTheme.peach,
-                indicatorSize: TabBarIndicatorSize.label,
-                labelColor: LrsTheme.text,
-                controller: _controller,
-                tabs: [
-                  Tab(text: context.tr('Выбрать подарки')),
-                  Tab(text: context.tr('Выбранные подарки')),
-                ],
-                isScrollable: true,
-              ),
-            ),
-          ],
-          body: StreamBuilder(
-            stream:
-                db.collection('users').doc(auth.currentUser!.uid).snapshots(),
-            builder: (context, snapshot) => TabBarView(
-              controller: _controller,
-              children: [first(context), second(snapshot.data, context)],
+                Text(
+                  context.tr('Магазин подарков'),
+                  style: const TextStyle(
+                    color: LrsTheme.text,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  context.tr('Дарить внимание. Создавать особенные моменты.'),
+                  style: const TextStyle(
+                    color: LrsTheme.text,
+                    fontSize: 15,
+                    height: 1.25,
+                  ),
+                ),
+                Text(
+                  context.tr('Ближе, чем кажется.'),
+                  style: const TextStyle(
+                    color: LrsTheme.text,
+                    fontSize: 15,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                StreamBuilder(
+                  stream: db
+                      .collection('users')
+                      .doc(auth.currentUser!.uid)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      globalBalance = snapshot.data!['balance'];
+                    }
+                    final shownBalance = snapshot.hasData ? globalBalance : 0;
+                    return ClrsPanel(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.monetization_on_outlined,
+                            color: LrsTheme.peach,
+                            size: 25,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(text: context.tr('Ваш баланс: ')),
+                                  TextSpan(
+                                    text: '$shownBalance Ag',
+                                    style: const TextStyle(
+                                      color: LrsTheme.peach,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              style: const TextStyle(
+                                color: LrsTheme.text,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _shopActions(context),
+                const SizedBox(height: 10),
+              ],
             ),
           ),
         ),
-      );
+        SliverAppBar(
+          forceElevated: innerBoxIsScrolled,
+          backgroundColor: const Color(0xB3211813),
+          pinned: true,
+          foregroundColor: LrsTheme.text,
+          toolbarHeight: 0,
+          bottom: TabBar(
+            unselectedLabelColor: LrsTheme.muted,
+            indicatorColor: LrsTheme.peach,
+            indicatorSize: TabBarIndicatorSize.label,
+            labelColor: LrsTheme.text,
+            controller: _controller,
+            tabs: [
+              Tab(text: context.tr('Выбрать подарки')),
+              Tab(text: context.tr('Выбранные подарки')),
+            ],
+            isScrollable: true,
+          ),
+        ),
+      ],
+      body: StreamBuilder(
+        stream: db.collection('users').doc(auth.currentUser!.uid).snapshots(),
+        builder: (context, snapshot) => TabBarView(
+          controller: _controller,
+          children: [first(context), second(snapshot.data, context)],
+        ),
+      ),
+    ),
+  );
 
   Future<void> _showGiftRecipientSheet(
     BuildContext context,
@@ -223,22 +232,47 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     if (_openingGiftRecipient || ownerUid == null) return;
     _openingGiftRecipient = true;
     try {
-      final recipient = await showModalBottomSheet<_GiftRecipient>(
+      final recipient = await showDialog<_GiftRecipient>(
         context: context,
-        isScrollControlled: true,
-        backgroundColor: LrsTheme.surface,
-        builder: (_) => SizedBox(
-          height: MediaQuery.sizeOf(context).height * .7,
-          child: _GiftRecipientSheet(
-            db: db,
-            auth: auth,
-            ownerUid: ownerUid,
-            preferredRecipientUid: widget.preferredRecipientUid,
-            preferredChatId: widget.preferredChatId,
-            onSend: (recipient) =>
-                _sendGift(ownerUid, name, imagePath, recipient),
-          ),
-        ),
+        barrierColor: const Color(0x33000000),
+        builder: (dialogContext) {
+          final screenWidth = MediaQuery.sizeOf(dialogContext).width;
+          final panelWidth = math.min(
+            screenWidth - 12,
+            math.max(280.0, screenWidth * 0.67),
+          );
+          return Dialog(
+            alignment: Alignment.centerLeft,
+            insetPadding: EdgeInsets.zero,
+            backgroundColor: Colors.transparent,
+            child: SizedBox(
+              width: panelWidth,
+              height:
+                  MediaQuery.sizeOf(dialogContext).height -
+                  MediaQuery.viewInsetsOf(dialogContext).bottom,
+              child: Material(
+                color: const Color(0xE02F2017),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.horizontal(
+                    right: Radius.circular(20),
+                  ),
+                  side: BorderSide(color: LrsTheme.actionBorder),
+                ),
+                child: _GiftRecipientSheet(
+                  db: db,
+                  auth: auth,
+                  ownerUid: ownerUid,
+                  giftName: name,
+                  giftImagePath: imagePath,
+                  preferredRecipientUid: widget.preferredRecipientUid,
+                  preferredChatId: widget.preferredChatId,
+                  onSend: (recipient) =>
+                      _sendGift(ownerUid, name, imagePath, recipient),
+                ),
+              ),
+            ),
+          );
+        },
       );
       if (!mounted || auth.currentUser?.uid != ownerUid || recipient == null) {
         return;
@@ -285,10 +319,13 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     final coll = db.collection('users').doc(ownerUid);
     final ownerDoc = await coll.get();
     final userInfo = ownerDoc.data() as Map;
-    final Map<String, dynamic> initGifts =
-        userInfo.containsKey('gifts') ? userInfo['gifts'] : {};
-    final recipientSnapshot =
-        await db.collection('users').doc(recipient.uid).get();
+    final Map<String, dynamic> initGifts = userInfo.containsKey('gifts')
+        ? userInfo['gifts']
+        : {};
+    final recipientSnapshot = await db
+        .collection('users')
+        .doc(recipient.uid)
+        .get();
     if (!mounted || auth.currentUser?.uid != ownerUid) {
       throw StateError('Gift session changed');
     }
@@ -364,8 +401,10 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     db.collection('users').doc(recipient.uid).update({
       'presentedGifts': presentedGifts,
     });
-    final tokenDoc =
-        await firebaseFirestore.collection('TOKENS').doc(recipient.uid).get();
+    final tokenDoc = await firebaseFirestore
+        .collection('TOKENS')
+        .doc(recipient.uid)
+        .get();
     final notificationBody = {
       'message': '$senderName подарил вам подарок $name ❤️',
     };
@@ -449,78 +488,84 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
             Row(
               children: [
                 Expanded(
-                    child: ElevatedButton(
-                  onPressed: () async {
-                    if (sold) {
-                      await _showGiftRecipientSheet(context, name, url);
-                      return;
-                    }
-                    DocumentReference coll =
-                        db.collection('users').doc(auth.currentUser!.uid);
-                    DocumentSnapshot data = await coll.get();
-                    Map userInfo = data.data() as Map;
-                    Map<String, dynamic> initGifts =
-                        userInfo.containsKey('gifts') ? userInfo['gifts'] : {};
-
-                    if (!sold) {
-                      if (globalBalance < price) {
-                        showSnackbar(
-                          context,
-                          Colors.redAccent,
-                          'Недостаточно серебра',
-                        );
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      if (sold) {
+                        await _showGiftRecipientSheet(context, name, url);
                         return;
                       }
+                      DocumentReference coll = db
+                          .collection('users')
+                          .doc(auth.currentUser!.uid);
+                      DocumentSnapshot data = await coll.get();
+                      Map userInfo = data.data() as Map;
+                      Map<String, dynamic> initGifts =
+                          userInfo.containsKey('gifts')
+                          ? userInfo['gifts']
+                          : {};
 
-                      setState(() {
-                        globalBalance -= price;
-                      });
+                      if (!sold) {
+                        if (globalBalance < price) {
+                          showSnackbar(
+                            context,
+                            Colors.redAccent,
+                            'Недостаточно серебра',
+                          );
+                          return;
+                        }
 
-                      coll.update({'balance': globalBalance});
+                        setState(() {
+                          globalBalance -= price;
+                        });
 
-                      if (initGifts.containsKey(url)) {
-                        initGifts[url] += 1;
-                      } else {
-                        initGifts.addAll({url: 1});
-                      }
-                      coll.update({'gifts': initGifts});
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          behavior: SnackBarBehavior.floating,
-                          backgroundColor: const Color(0xA3124725),
-                          content: Text(
-                            context.tr(
-                              'Подарок {name} добавлен',
-                              args: {'name': context.tr(name)},
-                            ),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
+                        coll.update({'balance': globalBalance});
+
+                        if (initGifts.containsKey(url)) {
+                          initGifts[url] += 1;
+                        } else {
+                          initGifts.addAll({url: 1});
+                        }
+                        coll.update({'gifts': initGifts});
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            behavior: SnackBarBehavior.floating,
+                            backgroundColor: const Color(0xA3124725),
+                            content: Text(
+                              context.tr(
+                                'Подарок {name} добавлен',
+                                args: {'name': context.tr(name)},
+                              ),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
+                        );
+                      }
+                    },
+                    style: const ButtonStyle(
+                      shape: WidgetStatePropertyAll(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(10)),
                         ),
-                      );
-                    }
-                  },
-                  style: const ButtonStyle(
-                    shape: WidgetStatePropertyAll(
-                      RoundedRectangleBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(10)),
+                      ),
+                      padding: WidgetStatePropertyAll(EdgeInsets.all(7)),
+                      backgroundColor: WidgetStatePropertyAll(
+                        LrsTheme.peachDark,
                       ),
                     ),
-                    padding: WidgetStatePropertyAll(EdgeInsets.all(7)),
-                    backgroundColor: WidgetStatePropertyAll(LrsTheme.peachDark),
+                    child: sold
+                        ? const Text(
+                            'Подарить',
+                            style: TextStyle(color: Colors.white, fontSize: 14),
+                          )
+                        : const Text(
+                            'Забрать',
+                            style: TextStyle(color: Colors.white, fontSize: 14),
+                          ),
                   ),
-                  child: sold
-                      ? const Text(
-                          'Подарить',
-                          style: TextStyle(color: Colors.white, fontSize: 14),
-                        )
-                      : const Text(
-                          'Забрать',
-                          style: TextStyle(color: Colors.white, fontSize: 14),
-                        ),
-                )),
+                ),
               ],
             ),
           ],
@@ -531,10 +576,30 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
 
   final podarki = <Podarok>[
     Podarok(name: 'Фольксваген Туарег', price: 12, img: 'assets/gifts/1.png'),
-    Podarok(name: 'Кофе и круассан', price: 12, img: 'assets/gifts/2.png'),
-    Podarok(name: 'Большой красивый дом', price: 12, img: 'assets/gifts/3.png'),
-    Podarok(name: 'Тесла', price: 12, img: 'assets/gifts/4.png'),
-    Podarok(name: 'Гелендваген', price: 12, img: 'assets/gifts/5.png'),
+    Podarok(
+      name: 'Кофе и круассан',
+      price: 12,
+      img: 'assets/gifts/2.png',
+      description: 'Маленькое внимание для большого настроения.',
+    ),
+    Podarok(
+      name: 'Большой красивый дом',
+      price: 12,
+      img: 'assets/gifts/3.png',
+      description: 'Мечты становятся ближе вместе.',
+    ),
+    Podarok(
+      name: 'Тесла',
+      price: 12,
+      img: 'assets/gifts/4.png',
+      description: 'Для ярких эмоций и новых дорог.',
+    ),
+    Podarok(
+      name: 'Гелендваген',
+      price: 12,
+      img: 'assets/gifts/5.png',
+      description: 'Статус, который говорит сам за себя.',
+    ),
     Podarok(name: 'Вино, сыр, виноград', price: 12, img: 'assets/gifts/6.png'),
     Podarok(name: 'Модная киса в шляпе', price: 12, img: 'assets/gifts/7.png'),
     Podarok(name: 'Киса в банте', price: 12, img: 'assets/gifts/8.png'),
@@ -554,7 +619,12 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
       price: 12,
       img: 'assets/gifts/16.png',
     ),
-    Podarok(name: 'Букет розовые розы', price: 12, img: 'assets/gifts/17.png'),
+    Podarok(
+      name: 'Букет розовые розы',
+      price: 12,
+      img: 'assets/gifts/17.png',
+      description: 'Классика, которая всегда уместна.',
+    ),
     Podarok(
       name: 'Истосковался по такой как ты',
       price: 12,
@@ -608,7 +678,7 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     Podarok(name: 'Кофе и круасан', price: 12, img: 'assets/gifts/35.png'),
     Podarok(name: 'Линкольн', price: 12, img: 'assets/gifts/36.png'),
     Podarok(
-      name: 'Мадам, без вас убого',
+      name: 'Мадам, без вас убого убранство',
       price: 12,
       img: 'assets/gifts/37.png',
     ),
@@ -670,39 +740,39 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
   ];
 
   Widget _shopActions(BuildContext context) => LayoutBuilder(
-        builder: (context, constraints) {
-          final scale = MediaQuery.textScalerOf(context).scale(1);
-          final columns = constraints.maxWidth < 330 || scale > 1.3 ? 2 : 3;
-          final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
-          return Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _shopAction(
-                context,
-                width,
-                Icons.add,
-                context.tr('Пополнить баланс'),
-                () => _showTopUp(context),
-              ),
-              _shopAction(
-                context,
-                width,
-                Icons.block_outlined,
-                context.tr('Отключить рекламу'),
-                () {},
-              ),
-              _shopAction(
-                context,
-                width,
-                Icons.visibility_off_outlined,
-                context.tr('Режим невидимки'),
-                () => _showInvisibleMode(context),
-              ),
-            ],
-          );
-        },
+    builder: (context, constraints) {
+      final scale = MediaQuery.textScalerOf(context).scale(1);
+      final columns = constraints.maxWidth < 330 || scale > 1.3 ? 2 : 3;
+      final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _shopAction(
+            context,
+            width,
+            Icons.add,
+            context.tr('Пополнить баланс'),
+            () => _showTopUp(context),
+          ),
+          _shopAction(
+            context,
+            width,
+            Icons.block_outlined,
+            context.tr('Отключить рекламу'),
+            () {},
+          ),
+          _shopAction(
+            context,
+            width,
+            Icons.visibility_off_outlined,
+            context.tr('Режим невидимки'),
+            () => _showInvisibleMode(context),
+          ),
+        ],
       );
+    },
+  );
 
   Widget _shopAction(
     BuildContext context,
@@ -710,39 +780,37 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
     IconData icon,
     String label,
     VoidCallback onPressed,
-  ) =>
-      SizedBox(
-        width: width,
-        child: OutlinedButton(
-          onPressed: onPressed,
-          style: OutlinedButton.styleFrom(
-            backgroundColor: LrsTheme.actionGlass,
-            foregroundColor: LrsTheme.text,
-            side: const BorderSide(color: LrsTheme.actionBorder),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
-            minimumSize: const Size(0, 70),
+  ) => SizedBox(
+    width: width,
+    child: OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: LrsTheme.actionGlass,
+        foregroundColor: LrsTheme.text,
+        side: const BorderSide(color: LrsTheme.actionBorder),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+        minimumSize: const Size(0, 70),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 23, color: LrsTheme.peachLight),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            softWrap: true,
+            style: const TextStyle(
+              color: LrsTheme.text,
+              fontSize: 12,
+              height: 1.15,
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 23, color: LrsTheme.peachLight),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                softWrap: true,
-                style: const TextStyle(
-                  color: LrsTheme.text,
-                  fontSize: 12,
-                  height: 1.15,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   void _showTopUp(BuildContext context) {
     showModalBottomSheet(
@@ -856,8 +924,9 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
 
   first(context) {
     final scale = MediaQuery.textScalerOf(context).scale(1);
-    final columns =
-        MediaQuery.sizeOf(context).width < 340 || scale > 1.3 ? 2 : 3;
+    final columns = MediaQuery.sizeOf(context).width < 340 || scale > 1.3
+        ? 2
+        : 3;
     final giftExtent = 245.0 * scale.clamp(1, 2);
     final giftRows = (podarki.length + columns - 1) ~/ columns;
     return SingleChildScrollView(
@@ -1037,12 +1106,12 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
                 .collection('transaction')
                 .doc(count.toString())
                 .set({
-              'id': count.toString(),
-              'sum': sum,
-              'user_email': firebaseAuth.currentUser!.email,
-              'user_id': firebaseAuth.currentUser!.uid,
-              'time': DateTime.now().toString(),
-            });
+                  'id': count.toString(),
+                  'sum': sum,
+                  'user_email': firebaseAuth.currentUser!.email,
+                  'user_id': firebaseAuth.currentUser!.uid,
+                  'time': DateTime.now().toString(),
+                });
             if (context.mounted) {
               nextScreen(context, RobokassaWebview(sum: sum, count: count));
             }
@@ -1093,19 +1162,20 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
   }
 
   ButtonStyle _purchaseOptionStyle() => OutlinedButton.styleFrom(
-        backgroundColor: LrsTheme.actionGlass,
-        foregroundColor: LrsTheme.text,
-        side: const BorderSide(color: LrsTheme.actionBorder),
-        minimumSize: const Size(0, 56),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      );
+    backgroundColor: LrsTheme.actionGlass,
+    foregroundColor: LrsTheme.text,
+    side: const BorderSide(color: LrsTheme.actionBorder),
+    minimumSize: const Size(0, 56),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+  );
 
   second(data, context) {
     if (data != null) {
       final scale = MediaQuery.textScalerOf(context).scale(1);
-      final columns =
-          MediaQuery.sizeOf(context).width < 340 || scale > 1.3 ? 2 : 3;
+      final columns = MediaQuery.sizeOf(context).width < 340 || scale > 1.3
+          ? 2
+          : 3;
       final giftExtent = 245.0 * scale.clamp(1, 2);
       Map initGifts = data.data()!['gifts'] ?? {};
       List urls = initGifts.keys.toList();
@@ -1197,19 +1267,21 @@ Widget giftRecipientSheetForTesting({
   String? preferredRecipientUid,
   String? preferredChatId,
 }) => _GiftRecipientSheet(
-      db: db,
-      auth: auth,
-      ownerUid: ownerUid,
-      preferredRecipientUid: preferredRecipientUid,
-      preferredChatId: preferredChatId,
-      onSend: (_) async {},
-    );
+  db: db,
+  auth: auth,
+  ownerUid: ownerUid,
+  preferredRecipientUid: preferredRecipientUid,
+  preferredChatId: preferredChatId,
+  onSend: (_) async {},
+);
 
 class _GiftRecipientSheet extends StatefulWidget {
   const _GiftRecipientSheet({
     required this.db,
     required this.auth,
     required this.ownerUid,
+    this.giftName,
+    this.giftImagePath,
     this.preferredRecipientUid,
     this.preferredChatId,
     required this.onSend,
@@ -1217,6 +1289,8 @@ class _GiftRecipientSheet extends StatefulWidget {
   final FirebaseFirestore db;
   final FirebaseAuth auth;
   final String ownerUid;
+  final String? giftName;
+  final String? giftImagePath;
   final String? preferredRecipientUid;
   final String? preferredChatId;
   final Future<void> Function(_GiftRecipient recipient) onSend;
@@ -1228,6 +1302,7 @@ class _GiftRecipientSheet extends StatefulWidget {
 class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
   late Future<List<_GiftRecipient>> _recipients;
   _GiftRecipient? _selected;
+  String _searchTerm = '';
   bool _sending = false;
   bool _sendAttempted = false;
   bool _sendUnconfirmed = false;
@@ -1249,62 +1324,90 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
         )
         .get()
         .timeout(const Duration(seconds: 20));
-    final chats = [...snapshot.docs]..sort((a, b) {
-      final aStamp = a.data()['lastMessageSendTs'];
-      final bStamp = b.data()['lastMessageSendTs'];
-      return (bStamp is Timestamp ? bStamp.millisecondsSinceEpoch : 0)
-          .compareTo(aStamp is Timestamp ? aStamp.millisecondsSinceEpoch : 0);
-    });
+    final chats = [...snapshot.docs]
+      ..sort((a, b) {
+        final aStamp = a.data()['lastMessageSendTs'];
+        final bStamp = b.data()['lastMessageSendTs'];
+        return (bStamp is Timestamp ? bStamp.millisecondsSinceEpoch : 0)
+            .compareTo(aStamp is Timestamp ? aStamp.millisecondsSinceEpoch : 0);
+      });
     final profiles = <String, Future<DocumentSnapshot<Map<String, dynamic>>>>{};
     for (final chat in chats) {
       final uid = _GiftRecipient.otherUidFromChat(chat, widget.ownerUid);
       if (uid != null) {
-        profiles.putIfAbsent(uid, () => widget.db.collection('users').doc(uid)
-            .get().timeout(const Duration(seconds: 20)));
+        profiles.putIfAbsent(
+          uid,
+          () => widget.db
+              .collection('users')
+              .doc(uid)
+              .get()
+              .timeout(const Duration(seconds: 20)),
+        );
       }
     }
     final users = <String, DocumentSnapshot<Map<String, dynamic>>>{};
-    await Future.wait(profiles.entries.map((entry) async {
-      users[entry.key] = await entry.value;
-    }));
+    await Future.wait(
+      profiles.entries.map((entry) async {
+        users[entry.key] = await entry.value;
+      }),
+    );
     final recipients = <_GiftRecipient>[];
     for (final chat in chats) {
       final uid = _GiftRecipient.otherUidFromChat(chat, widget.ownerUid);
       if (uid == null) continue;
       final profileSnapshot = users[uid];
       final profile = profileSnapshot?.data();
-      if (profileSnapshot?.exists != true || profile == null ||
-          profile['deleted'] == true || profile['status'] == 'deleted' ||
+      if (profileSnapshot?.exists != true ||
+          profile == null ||
+          profile['deleted'] == true ||
+          profile['status'] == 'deleted' ||
           profile['registrationStatus'] == 'deleted') {
         continue;
       }
-      recipients.add(_GiftRecipient(
-        chatId: chat.id,
-        uid: uid,
-        name: profile['fullName']?.toString() ?? '',
-        imageUrl: (profile['profilePicThumb'] ?? profile['profilePic'])
-            ?.toString() ?? '',
-      ));
+      recipients.add(
+        _GiftRecipient(
+          chatId: chat.id,
+          uid: uid,
+          name: profile['fullName']?.toString() ?? '',
+          imageUrl:
+              (profile['profilePicThumb'] ?? profile['profilePic'])
+                  ?.toString() ??
+              '',
+        ),
+      );
     }
-    if (mounted && widget.auth.currentUser?.uid == widget.ownerUid &&
+    if (mounted &&
+        widget.auth.currentUser?.uid == widget.ownerUid &&
         widget.preferredRecipientUid != null) {
-      final exact = recipients.where((recipient) =>
-          recipient.uid == widget.preferredRecipientUid &&
-          recipient.chatId == widget.preferredChatId).toList();
-      final byUid = recipients.where((recipient) =>
-          recipient.uid == widget.preferredRecipientUid).toList();
+      final exact = recipients
+          .where(
+            (recipient) =>
+                recipient.uid == widget.preferredRecipientUid &&
+                recipient.chatId == widget.preferredChatId,
+          )
+          .toList();
+      final byUid = recipients
+          .where((recipient) => recipient.uid == widget.preferredRecipientUid)
+          .toList();
       if (exact.isNotEmpty || byUid.isNotEmpty) {
-        setState(() => _selected = exact.isNotEmpty ? exact.first : byUid.first);
+        final preferred = exact.isNotEmpty ? exact.first : byUid.first;
+        if (_matchesSearch(preferred)) {
+          setState(() => _selected = preferred);
+        }
       }
     }
     return recipients;
   }
+
+  bool _matchesSearch(_GiftRecipient recipient) =>
+      recipient.name.toLowerCase().contains(_searchTerm.trim().toLowerCase());
 
   Future<void> _send() async {
     final recipient = _selected;
     if (_sending ||
         _sendAttempted ||
         recipient == null ||
+        !_matchesSearch(recipient) ||
         widget.auth.currentUser?.uid != widget.ownerUid) {
       return;
     }
@@ -1329,122 +1432,205 @@ class _GiftRecipientSheetState extends State<_GiftRecipientSheet> {
 
   @override
   Widget build(BuildContext context) => PopScope(
-        canPop: !_sending,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Column(
+    canPop: !_sending,
+    child: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          children: [
+            Row(
               children: [
-                Text(
-                  context.tr('Отправить в чат'),
-                  style: const TextStyle(
-                    color: LrsTheme.text,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (_sendUnconfirmed)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      context.tr(
-                        'Предыдущая отправка ожидает подтверждения. Проверьте результат.',
-                      ),
-                      style: const TextStyle(color: LrsTheme.peachLight),
-                    ),
-                  ),
                 Expanded(
-                  child: widget.auth.currentUser?.uid != widget.ownerUid
-                      ? Center(
-                          child: Text(
-                              context.tr('Сеанс завершён. Войдите снова.')),
-                        )
-                      : FutureBuilder<List<_GiftRecipient>>(
-                          future: _recipients,
-                          builder: (context, snapshot) {
-                            if (snapshot.hasError) {
-                              return Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(context
-                                        .tr('Не удалось загрузить чаты.')),
-                                    TextButton(
-                                      onPressed: () => setState(() {
-                                        _selected = null;
-                                        _recipients = _loadRecipients();
-                                      }),
-                                      child: Text(context.tr('Повторить')),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            if (!snapshot.hasData) {
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
-                            }
-                            final recipients = snapshot.data!;
-                            if (recipients.isEmpty) {
-                              return Center(
-                                child: Text(
-                                  context.tr('Здесь появятся ваши диалоги'),
-                                ),
-                              );
-                            }
-                            return ListView.builder(
-                              itemCount: recipients.length,
-                              itemBuilder: (context, index) {
-                                final recipient = recipients[index];
-                                return ListTile(
-                                  selected:
-                                      _selected?.chatId == recipient.chatId,
-                                  leading: CircleAvatar(
-                                    backgroundImage: recipient.imageUrl.isEmpty
-                                        ? null
-                                        : NetworkImage(recipient.imageUrl),
-                                    child: recipient.imageUrl.isEmpty
-                                        ? const Icon(Icons.person)
-                                        : null,
-                                  ),
-                                  title: Text(
-                                    recipient.name.isEmpty
-                                        ? recipient.uid
-                                        : recipient.name,
-                                  ),
-                                  onTap: _sending || _sendAttempted
-                                      ? null
-                                      : () =>
-                                          setState(() => _selected = recipient),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                ),
-                if (_selected != null)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _sending || _sendAttempted ? null : _send,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: LrsTheme.peachDark,
-                        foregroundColor: LrsTheme.background,
-                      ),
-                      child: _sending
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(context.tr('Подарить')),
+                  child: Text(
+                    context.tr('Кому подарить?'),
+                    style: const TextStyle(
+                      color: LrsTheme.text,
+                      fontFamily: 'CormorantGaramond',
+                      fontSize: 27,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                ),
+                IconButton(
+                  tooltip: context.tr('Закрыть'),
+                  onPressed: _sending ? null : () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: LrsTheme.text),
+                ),
               ],
             ),
-          ),
+            if (widget.giftImagePath != null) ...[
+              Row(
+                children: [
+                  Image.asset(
+                    widget.giftImagePath!,
+                    width: 54,
+                    height: 54,
+                    fit: BoxFit.contain,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      context.tr(widget.giftName ?? ''),
+                      softWrap: true,
+                      style: const TextStyle(color: LrsTheme.text),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                context.tr('Выберите собеседника.'),
+                style: const TextStyle(color: LrsTheme.muted),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              onChanged: (value) => setState(() {
+                _searchTerm = value;
+                if (_selected != null && !_matchesSearch(_selected!)) {
+                  _selected = null;
+                }
+              }),
+              decoration: InputDecoration(
+                hintText: context.tr('Поиск по имени'),
+                prefixIcon: const Icon(Icons.search),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_sendUnconfirmed)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  context.tr(
+                    'Предыдущая отправка ожидает подтверждения. Проверьте результат.',
+                  ),
+                  style: const TextStyle(color: LrsTheme.peachLight),
+                ),
+              ),
+            Expanded(
+              child: widget.auth.currentUser?.uid != widget.ownerUid
+                  ? Center(
+                      child: Text(context.tr('Сеанс завершён. Войдите снова.')),
+                    )
+                  : FutureBuilder<List<_GiftRecipient>>(
+                      future: _recipients,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(context.tr('Не удалось загрузить чаты.')),
+                                TextButton(
+                                  onPressed: () => setState(() {
+                                    _selected = null;
+                                    _recipients = _loadRecipients();
+                                  }),
+                                  child: Text(context.tr('Повторить')),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        if (!snapshot.hasData) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        final recipients = snapshot.data!
+                            .where(
+                              (recipient) => recipient.name
+                                  .toLowerCase()
+                                  .contains(_searchTerm.trim().toLowerCase()),
+                            )
+                            .toList();
+                        if (recipients.isEmpty) {
+                          return Center(
+                            child: Text(
+                              context.tr(
+                                _searchTerm.trim().isEmpty
+                                    ? 'Здесь появятся ваши диалоги'
+                                    : 'Здесь нет подходящих чатов',
+                              ),
+                            ),
+                          );
+                        }
+                        return ListView.builder(
+                          itemCount: recipients.length,
+                          itemBuilder: (context, index) {
+                            final recipient = recipients[index];
+                            final selected =
+                                _selected?.chatId == recipient.chatId;
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? const Color(0x996A422E)
+                                    : LrsTheme.actionGlass,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: selected
+                                      ? LrsTheme.peach
+                                      : LrsTheme.actionBorder,
+                                ),
+                              ),
+                              child: ListTile(
+                                dense: true,
+                                selected: selected,
+                                leading: CircleAvatar(
+                                  backgroundImage: recipient.imageUrl.isEmpty
+                                      ? null
+                                      : NetworkImage(recipient.imageUrl),
+                                  child: recipient.imageUrl.isEmpty
+                                      ? const Icon(Icons.person)
+                                      : null,
+                                ),
+                                title: Text(
+                                  recipient.name.isEmpty
+                                      ? recipient.uid
+                                      : recipient.name,
+                                ),
+                                trailing: Icon(
+                                  selected
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: LrsTheme.peachLight,
+                                ),
+                                onTap: _sending || _sendAttempted
+                                    ? null
+                                    : () =>
+                                          setState(() => _selected = recipient),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+            ),
+            if (_selected != null)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _sending || _sendAttempted ? null : _send,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xCCDB936E),
+                    foregroundColor: LrsTheme.background,
+                  ),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(context.tr('Подарить')),
+                ),
+              ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }

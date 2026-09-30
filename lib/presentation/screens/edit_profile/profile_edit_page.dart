@@ -440,8 +440,8 @@ class _ProfilePageEditState extends State<ProfilePageEdit> {
                                     : null),
                             _field(_about, 'О себе', disabled,
                                 multiline: true,
-                                validator: (s) => (s ?? '').trim().length < 50
-                                    ? context.tr('Минимум 50 символов')
+                                validator: (s) => (s ?? '').trim().length < 20
+                                    ? context.tr('Минимум 20 символов')
                                     : null),
                           ]))),
                   if (_working) LinearProgressIndicator(value: _photoProgress),

@@ -12,11 +12,13 @@ class SocialService {
       {FirebaseFirestore? firestore,
       FirebaseStorage? storage,
       String? Function()? currentUid,
+      Future<bool> Function()? moderatorAccess,
       // Enable only after the server triggers and compatible rules are live.
       bool serverSocialNotices = serverSocialNoticesEnabled})
       : _db = firestore ?? firebaseFirestore,
         _storage = storage ?? FirebaseStorage.instance,
         _currentUid = currentUid ?? (() => firebaseAuth.currentUser?.uid),
+        _moderatorAccess = moderatorAccess ?? _claimAdmin,
         _serverSocialNotices = serverSocialNotices {
     _ownerUid = _currentUid();
   }
@@ -26,6 +28,23 @@ class SocialService {
   final bool _serverSocialNotices;
 
   final String? Function() _currentUid;
+  final Future<bool> Function() _moderatorAccess;
+  static Future<bool> _claimAdmin() async {
+    final user = firebaseAuth.currentUser;
+    if (user == null) return false;
+    try {
+      final token = await user.getIdTokenResult(true);
+      return firebaseAuth.currentUser?.uid == user.uid &&
+          token.claims?['admin'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> canModerateComments() async {
+    final uid = _uid;
+    return await _moderatorAccess() && _uid == uid;
+  }
   late final String? _ownerUid;
   bool get isCurrentSession => _ownerUid != null && _currentUid() == _ownerUid;
   String get _uid {
@@ -170,17 +189,91 @@ class SocialService {
     final uid = _uid;
     if (postId.isEmpty || postId.contains('/')) throw ArgumentError('postId');
     final ref = _db.collection('moderation_reports').doc('post-$postId-$uid');
-    await _db.runTransaction((tx) async {
-      final previous = await tx.get(ref);
-      _uid;
-      if (previous.exists) return;
-      tx.set(ref, {
-        'reporterUid': uid,
-        'entityType': 'post',
-        'entityId': postId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'status': 'new'
+    try {
+      await _db.runTransaction((tx) async {
+        _uid;
+        tx.set(ref, {
+          'reporterUid': uid,
+          'entityType': 'post',
+          'entityId': postId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'new'
+        });
       });
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied' || _uid != uid) rethrow;
+      final existing = await ref.get(const GetOptions(source: Source.server));
+      _uid;
+      final data = existing.data();
+      if (!existing.exists || data?['reporterUid'] != uid ||
+          data?['entityType'] != 'post' || data?['entityId'] != postId) {
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> reportComment(String postId, String commentId) async {
+    final uid = _uid;
+    if (postId.isEmpty || postId.contains('/') ||
+        commentId.isEmpty || commentId.contains('/')) {
+      throw ArgumentError('commentId');
+    }
+    final comment = posts.doc(postId).collection('comments').doc(commentId);
+    final report = _db.collection('moderation_reports')
+        .doc('comment-$postId-$commentId-$uid');
+    try {
+      await _db.runTransaction((tx) async {
+        final source = await tx.get(comment);
+        _uid;
+        if (!source.exists) throw StateError('Комментарий недоступен');
+        // Reading a missing report is denied by the strict rules. A first
+        // report is a create; a repeat is rejected as a client update.
+        tx.set(report, {
+          'reporterUid': uid,
+          'entityType': 'comment',
+          'entityId': '$postId/$commentId',
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'new',
+        });
+      });
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied' || _uid != uid) rethrow;
+      // Confirm only this user's existing report before treating a denied
+      // create as an idempotent retry. Other permission failures still fail.
+      final existing = await report.get(const GetOptions(source: Source.server));
+      _uid;
+      final data = existing.data();
+      if (!existing.exists || data?['reporterUid'] != uid ||
+          data?['entityType'] != 'comment' ||
+          data?['entityId'] != '$postId/$commentId') {
+        rethrow;
+      }
+    }
+  }
+
+  /// Administrator removal keeps the post counter consistent in one commit.
+  Future<void> deleteComment(String postId, String commentId) async {
+    final uid = _uid;
+    if (postId.isEmpty || postId.contains('/') ||
+        commentId.isEmpty || commentId.contains('/')) {
+      throw ArgumentError('commentId');
+    }
+    if (!await canModerateComments() || _uid != uid) {
+      throw StateError('Доступ запрещён');
+    }
+    final post = posts.doc(postId);
+    final comment = post.collection('comments').doc(commentId);
+    await _db.runTransaction((tx) async {
+      final postSnapshot = await tx.get(post);
+      final commentSnapshot = await tx.get(comment);
+      _uid;
+      if (!commentSnapshot.exists) return;
+      if (!postSnapshot.exists) throw StateError('Публикация недоступна');
+      final count = (postSnapshot.data()?['commentCount'] as num?)?.toInt();
+      tx.delete(comment);
+      if (count != null && count > 0) {
+        tx.update(post, {'commentCount': count - 1});
+      }
     });
   }
 

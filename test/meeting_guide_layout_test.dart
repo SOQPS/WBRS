@@ -94,7 +94,9 @@ void main() {
         (tester) async {
       await pumpGuide(tester, code);
       final scroll = guideScroll();
-      expect(find.byType(ClrsPanel), findsNWidgets(4));
+      // ListView builds cards as they enter the viewport; the loop below
+      // checks that all four complete instructions are reachable.
+      expect(find.byType(ClrsPanel), findsAtLeastNWidgets(1));
 
       for (final key in steps) {
         final text = find.text(catalogs[code]![key]);

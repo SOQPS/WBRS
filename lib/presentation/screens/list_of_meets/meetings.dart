@@ -8,6 +8,7 @@ import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 import 'package:wbrs/app/widgets/drawer.dart';
 import 'package:wbrs/presentation/screens/create_meet/create_meet.dart';
+import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/geo_catalog.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -81,19 +82,46 @@ class _MeetingPageState extends State<MeetingPage> {
   Widget build(BuildContext context) => ClrsScaffold(
       drawer: MyDrawer(),
       bottomNavigationBar: MyBottomNavigationBar(),
-      appBar: AppBar(title: Text(context.tr('Встречи')), actions: [
-        IconButton(
-            tooltip: context.tr('Создать встречу'),
-            icon: Icon(Icons.add),
-            onPressed: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => CreateMeetPage())))
-      ]),
+      appBar: AppBar(
+          automaticallyImplyLeading: false,
+          title: const ClrsLogo(size: 32)),
       body: CustomScrollView(slivers: [
         SliverToBoxAdapter(
             child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Column(children: [
-                  ClrsBrandHeader(),
+                  const Align(
+                      alignment: Alignment.centerRight,
+                      child: ClrsMotto(size: 18)),
+                  Row(children: [
+                    Builder(
+                        builder: (menuContext) => IconButton(
+                            tooltip: MaterialLocalizations.of(menuContext)
+                                .openAppDrawerTooltip,
+                            icon: const Icon(Icons.menu),
+                            onPressed: () =>
+                                Scaffold.of(menuContext).openDrawer())),
+                    Expanded(
+                        child: Text(context.tr('Встречи'),
+                            style: Theme.of(context).textTheme.headlineSmall)),
+                    SizedBox(
+                        width: 138,
+                        child: OutlinedButton.icon(
+                            key: const ValueKey('meeting-create-action'),
+                            style: OutlinedButton.styleFrom(
+                                foregroundColor: LrsTheme.text,
+                                backgroundColor: const Color(0x4031241D),
+                                side: const BorderSide(
+                                    color: LrsTheme.actionBorder),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12)),
+                            icon: const Icon(Icons.add),
+                            label: Text(context.tr('Создать встречу'),
+                                maxLines: 2, overflow: TextOverflow.ellipsis),
+                            onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => CreateMeetPage())))),
+                  ]),
                   Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton.icon(
@@ -108,8 +136,8 @@ class _MeetingPageState extends State<MeetingPage> {
                         if (!snapshot.hasData) return SizedBox.shrink();
                         return ClrsPanel(
                             padding: EdgeInsets.all(10),
-                            child: Column(children: [
-                              DropdownButtonFormField<String>(
+                            child: Row(children: [
+                              Expanded(child: DropdownButtonFormField<String>(
                                   value: _country?.code,
                                   isExpanded: true,
                                   itemHeight: null,
@@ -132,9 +160,9 @@ class _MeetingPageState extends State<MeetingPage> {
                                         _country = GeoCatalog.byCode(
                                             snapshot.data!, value);
                                         _region = null;
-                                      })),
-                              SizedBox(height: 8),
-                              DropdownButtonFormField<String>(
+                                      }))),
+                              const SizedBox(width: 8),
+                              Expanded(child: DropdownButtonFormField<String>(
                                   key: ValueKey(_country?.code),
                                   value: _region,
                                   isExpanded: true,
@@ -157,7 +185,7 @@ class _MeetingPageState extends State<MeetingPage> {
                                   onChanged: _country == null
                                       ? null
                                       : (value) =>
-                                          setState(() => _region = value)),
+                                          setState(() => _region = value))),
                             ]));
                       }),
                 ]))),
@@ -243,7 +271,7 @@ class _MeetingPageState extends State<MeetingPage> {
                     final index = indices[position];
                     final d = docs[index].data();
                     final imageUrl = _meetingImageUrl(d);
-                    final fallbackAsset = _meetingThumbnailAsset(docs[index].id,
+                    final fallbackAsset = _meetingThumbnailAsset(
                         '${d['name'] ?? ''}', '${d['description'] ?? ''}');
                     final users = d['users'] is List ? d['users'] as List : [];
                     final location = [
@@ -392,13 +420,17 @@ class _MeetingPageState extends State<MeetingPage> {
     return null;
   }
 
-  String _meetingThumbnailAsset(String id, String title, String description) {
+  String _meetingThumbnailAsset(String title, String description) {
     String? themedAsset(String text) {
       final normalized = text.toLowerCase();
       // Prefer the activity to a location: a picnic in a park is a picnic.
       if (RegExp(r'пикник|picnic|пікнік|шашлык|барбекю|barbecue|grill')
           .hasMatch(normalized)) {
         return 'assets/final_design/meeting_picnic.jpg';
+      }
+      if (RegExp(r'бар|паб|пив|pub|beer|крылышк|chicken wings')
+          .hasMatch(normalized)) {
+        return 'assets/final_design/meeting_bar.jpg';
       }
       if (RegExp(r'кофе|coffee|café|cafe|кафе|чаепит|завтрак')
           .hasMatch(normalized)) {
@@ -413,13 +445,7 @@ class _MeetingPageState extends State<MeetingPage> {
 
     final themed = themedAsset(title) ?? themedAsset(description);
     if (themed != null) return themed;
-    const assets = [
-      'assets/final_design/meeting_park.jpg',
-      'assets/final_design/meeting_picnic.jpg',
-      'assets/final_design/meeting_coffee.jpg',
-    ];
-    final hash = id.codeUnits.fold<int>(0, (value, unit) => value + unit);
-    return assets[hash % assets.length];
+    return 'assets/final_design/house.png';
   }
 
   Future<void> _open(QueryDocumentSnapshot<Map<String, dynamic>> doc) async {
@@ -474,6 +500,10 @@ class MeetingGuidePage extends StatelessWidget {
                 key: const ValueKey('meeting-guide-scroll'),
                 padding: const EdgeInsets.all(16),
                 children: [
+                  const ClrsBrandHeader(),
+                  Text(context.tr('Как создать встречу'),
+                      style: Theme.of(context).textTheme.headlineSmall),
+                  const SizedBox(height: 12),
                   for (int i = 0; i < _steps.length; i++)
                     Padding(
                         padding: const EdgeInsets.only(bottom: 8),
@@ -495,7 +525,12 @@ class MeetingGuidePage extends StatelessWidget {
                                           style: const TextStyle(
                                               fontSize: 16, height: 1.3))),
                                 ]))),
+                  const ClrsValuesFooter(),
                   ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: LrsTheme.peach,
+                          foregroundColor: LrsTheme.background,
+                          minimumSize: const Size.fromHeight(48)),
                       onPressed: () => Navigator.pop(context),
                       child: Text(context.tr('Понятно'))),
                 ])),

@@ -82,6 +82,12 @@ class _StartupState extends State<_Startup> {
           _initialLocalPayload = payload;
         }
       }).timeout(const Duration(seconds: 10));
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(const AndroidNotificationChannel(
+              'wbrs_silent', 'CLRS',
+              importance: Importance.high, playSound: false));
       final launch =
           await _localNotifications.getNotificationAppLaunchDetails();
       if (launch?.didNotificationLaunchApp == true)
@@ -237,8 +243,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _syncPushLanguage() {
-    unawaited(_pushLanguageSync.sync(
-        LocaleController.instance.locale.languageCode));
+    unawaited(
+        _pushLanguageSync.sync(LocaleController.instance.locale.languageCode));
   }
 
   Future<void> _saveToken(String uid, String token) async {
@@ -275,27 +281,30 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final notification = message.notification;
     final uid = firebaseAuth.currentUser?.uid;
     if (uid == null || !_profileReady || notification == null) return;
-    if (!await _pushTargetsCurrentAccount(message, uid) ||
+    if (!await _pushTargetsCurrentAccount(message, uid,
+            respectPreferences: true) ||
         firebaseAuth.currentUser?.uid != uid) return;
+    final soundEnabled = message.data['soundEnabled'] != 'false';
     await _localNotifications.show(
       message.messageId.hashCode & 0x7fffffff,
       notification.title,
       notification.body,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
-          'wbrs',
+          soundEnabled ? 'wbrs' : 'wbrs_silent',
           'CLRS',
           importance: Importance.max,
           priority: Priority.high,
+          playSound: soundEnabled,
         ),
-        iOS: DarwinNotificationDetails(),
+        iOS: DarwinNotificationDetails(presentSound: soundEnabled),
       ),
       payload: message.data['payload']?.toString(),
     );
   }
 
-  Future<bool> _pushTargetsCurrentAccount(
-      RemoteMessage message, String uid) async {
+  Future<bool> _pushTargetsCurrentAccount(RemoteMessage message, String uid,
+      {bool respectPreferences = false}) async {
     try {
       if (message.data['recipientUid'] != null &&
           message.data['recipientUid'] != uid) return false;
@@ -310,6 +319,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           accountDestination(profile.data()) != AccountDestination.search) {
         return false;
       }
+      final rawPreferences = profile.data()?['notificationPreferences'];
+      final preferences = rawPreferences is Map<String, dynamic>
+          ? rawPreferences
+          : <String, dynamic>{};
       if (body['kind'] == 'social') {
         final id = PushTarget.socialNotificationId(body, uid);
         if (id == null) return false;
@@ -320,8 +333,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             .doc(id)
             .get(const GetOptions(source: Source.server))
             .timeout(const Duration(seconds: 10));
-        return firebaseAuth.currentUser?.uid == uid && notice.exists;
+        return firebaseAuth.currentUser?.uid == uid &&
+            notice.exists &&
+            (!respectPreferences ||
+                notice.data()?['type'] != 'meeting' ||
+                preferences['meetings'] != false);
       }
+      if (respectPreferences && body['kind'] == 'new_meeting' &&
+          preferences['meetings'] == false) return false;
+      if (respectPreferences && body['kind'] != 'new_meeting' &&
+          preferences['messages'] == false) return false;
       if (body['isChat'] == true) {
         final id = body['chatId']?.toString() ?? '';
         if (id.isEmpty || id.contains('/')) return false;

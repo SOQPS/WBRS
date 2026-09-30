@@ -161,6 +161,30 @@ def run():
     comment = {'authorUid':b, 'authorName':'Bob','authorPhoto':'','authorGroup':'','text':'Comment',
                'imageUrl':'','parentId':None,'likeCount':0,'notificationRecipient':a}
     check('reader can create comment', commit(tb, write('posts/article/comments/one', comment, ['createdAt'])))
+    report_path = f'moderation_reports/comment-article-one-{b}'
+    report = {'reporterUid': b, 'entityType': 'comment',
+              'entityId': 'article/one', 'status': 'new'}
+    check('absent comment report cannot be pre-read', get(report_path, tb), 403)
+    check('reader creates first comment report', commit(tb, write(report_path, report, ['createdAt'])))
+    check('reader sees own existing report', get(report_path, tb))
+    check('peer cannot read comment report', get(report_path, ta), 403)
+    check('reader cannot update submitted report',
+          commit(tb, write(report_path, {'status': 'reviewed'}, patch=True)), 403)
+    check('administrator reviews comment report',
+          commit(tadmin, write(report_path, {'status': 'reviewed'}, patch=True)))
+    check('retry cannot reset reviewed report',
+          commit(tb, write(report_path, report, ['createdAt'])), 403)
+    post_report_path = f'moderation_reports/post-article-{b}'
+    post_report = {'reporterUid': b, 'entityType': 'post',
+                   'entityId': 'article', 'status': 'new'}
+    check('absent post report cannot be pre-read', get(post_report_path, tb), 403)
+    check('reader creates first post report',
+          commit(tb, write(post_report_path, post_report, ['createdAt'])))
+    check('peer cannot read post report', get(post_report_path, ta), 403)
+    check('administrator reviews post report',
+          commit(tadmin, write(post_report_path, {'status': 'reviewed'}, patch=True)))
+    check('retry cannot reset reviewed post report',
+          commit(tb, write(post_report_path, post_report, ['createdAt'])), 403)
     check('reader cannot forge comment author', commit(tc, write('posts/article/comments/spoof', comment, ['createdAt'])), 403)
     check('missing parent comment rejected', commit(tb, write('posts/article/comments/bad-parent', dict(comment,parentId='missing'), ['createdAt'])), 403)
     check('legacy counter transaction rejected atomically', commit(tb,

@@ -281,6 +281,7 @@ void main() {
   for (final entry in [
     ('Пикник в парке', 'Прогулка после обеда', 'meeting_picnic.jpg'),
     ('Кофе в парке', 'Встречаемся у кафе', 'meeting_coffee.jpg'),
+    ('Пойдёмте в бар', 'Пиво и крылышки', 'meeting_bar.jpg'),
     ('Субботняя встреча', 'Прогулка по набережной', 'meeting_park.jpg'),
   ]) {
     testWidgets('Meetings use thematic image for ${entry.$1}', (tester) async {
@@ -304,6 +305,32 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('Unknown meeting topic does not get a random park picture', (
+    tester,
+  ) async {
+    await pumpScreen(tester, const MeetingPage(), const Size(320, 568), 1.3);
+    db.emit('meets', [
+      {
+        'name': 'Встреча друзей',
+        'description': 'Обсудим планы',
+        'datetime': '21.09.2026',
+        'users': <String>[],
+      },
+    ]);
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is AssetImage &&
+            (widget.image as AssetImage).assetName ==
+                'assets/final_design/house.png',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('Chat load completing after dispose causes no state update',
       (tester) async {
@@ -645,6 +672,7 @@ void main() {
     expect(
         (list.childrenDelegate as SliverChildBuilderDelegate).childCount, 81);
     await tester.scrollUntilVisible(find.text('Загрузить ещё'), 400,
+        maxScrolls: 150,
         scrollable: find
             .descendant(
                 of: find.byType(ListView), matching: find.byType(Scrollable))

@@ -104,7 +104,7 @@ class ProfileRegistrationService {
         // A queued draft can resume without passing through the form again.
         // Keep its content rules at the write boundary as well as in the UI.
         if ((draft.fields['interests']?.toString().trim().length ?? 0) < 20 ||
-            (draft.fields['about']?.toString().trim().length ?? 0) < 50) {
+            (draft.fields['about']?.toString().trim().length ?? 0) < 20) {
           throw ArgumentError('Заполните интересы и «О себе» полностью');
         }
         var nextPhoto = 0;

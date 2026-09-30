@@ -19,11 +19,15 @@ import 'package:wbrs/presentation/screens/list_of_visiters/visiters.dart';
 import 'package:wbrs/service/auth_service.dart';
 import 'package:wbrs/service/pending_write.dart';
 import 'package:wbrs/service/profile_photo_upload.dart';
+import 'package:wbrs/service/session_service.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/group_badge.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 import 'package:wbrs/shared/profile_composition.dart';
+import 'package:wbrs/app/pages/policy/confidecialnost.dart';
+import 'package:wbrs/app/pages/policy/rules.dart';
+import 'package:wbrs/presentation/screens/about_app/about_app.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage(
@@ -226,6 +230,8 @@ class _ProfilePageState extends State<ProfilePage> {
             if (!snapshot.data!.exists) return _error();
             final d = snapshot.data!.data()!;
             final currentGroup = savedAccountGroup(d) ?? '';
+            final profileGender =
+                '${d['pol'] ?? widget.pol}'.trim().toLowerCase();
             return ListView(
                 padding: const EdgeInsets.only(bottom: 24),
                 children: [
@@ -285,6 +291,24 @@ class _ProfilePageState extends State<ProfilePage> {
                       child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 7),
                           child: Text(context.tr('Изменить статус')))),
+                  if (profileGender.startsWith('м') ||
+                      const {'male', 'man', 'm'}.contains(profileGender))
+                    Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                        child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.info_outline,
+                                  size: 16, color: LrsTheme.peachLight),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                  child: Text(
+                                      context.tr(
+                                          'Главное фото: костюм, форма или классическая рубашка.'),
+                                      style: const TextStyle(
+                                          color: LrsTheme.peachLight,
+                                          fontSize: 12)))
+                            ])),
                   // Keep one stable list child for transient upload states.
                   // Adding/removing siblings used to recreate the photos'
                   // broadcast StreamBuilder and lose its current snapshot.
@@ -510,8 +534,22 @@ class _ProfileSettingsState extends State<ProfileSettingsPage> {
   final _confirm = TextEditingController();
   bool _saving = false;
   late final String? _owner = firebaseAuth.currentUser?.uid;
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _settings;
   PendingWrite? _pending;
+  final Map<String, PendingWrite> _pendingPreferences = {};
+  final Map<String, bool> _requestedPreferences = {};
+  final Set<String> _savingPreferences = {};
+  bool _passwordExpanded = false;
+  String? _preferenceError;
   String? _error;
+  @override
+  void initState() {
+    super.initState();
+    _settings = _owner == null
+        ? Stream.error(StateError('Сеанс завершён'))
+        : firebaseFirestore.collection('users').doc(_owner).snapshots();
+  }
+
   @override
   void dispose() {
     _password.dispose();
@@ -558,19 +596,173 @@ class _ProfileSettingsState extends State<ProfileSettingsPage> {
     }
   }
 
+  Future<void> _setPreference(String key, bool value) async {
+    final uid = _owner;
+    if (uid == null || firebaseAuth.currentUser?.uid != uid ||
+        _savingPreferences.contains(key)) return;
+    setState(() {
+      _savingPreferences.add(key);
+      _preferenceError = null;
+    });
+    try {
+      final ref = firebaseFirestore.collection('users').doc(uid);
+      _requestedPreferences.putIfAbsent(key, () => value);
+      _pendingPreferences.putIfAbsent(
+          key,
+          () => PendingWrite(() => ref.update(
+              {'notificationPreferences.$key': _requestedPreferences[key]})));
+      final confirmed = await _pendingPreferences[key]!
+          .wait(timeout: const Duration(seconds: 12));
+      if (!mounted || firebaseAuth.currentUser?.uid != uid) return;
+      setState(() {
+        if (confirmed) {
+          _pendingPreferences.remove(key);
+          _requestedPreferences.remove(key);
+        } else {
+          _preferenceError =
+              'Подтверждение ещё не получено. Проверьте результат без повторной отправки.';
+        }
+      });
+    } catch (_) {
+      if (mounted && firebaseAuth.currentUser?.uid == uid) {
+        setState(() {
+          _pendingPreferences.remove(key);
+          _requestedPreferences.remove(key);
+          _preferenceError = 'Не удалось сохранить настройки';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _savingPreferences.remove(key));
+    }
+  }
+
+  Future<void> _openPersonalData() async {
+    final uid = _owner;
+    if (uid == null || firebaseAuth.currentUser?.uid != uid) return;
+    try {
+      final doc = await firebaseFirestore.collection('users').doc(uid).get();
+      if (!mounted || firebaseAuth.currentUser?.uid != uid || !doc.exists) return;
+      final data = doc.data() ?? <String, dynamic>{};
+      globalPol = '${data['pol'] ?? ''}';
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => ProfilePageEdit(
+              email: firebaseAuth.currentUser?.email ?? '',
+              userName: '${data['fullName'] ?? ''}',
+              about: '${data['about'] ?? ''}',
+              age: '${data['age'] ?? ''}',
+              deti: data['deti'] == true,
+              rost: '${data['rost'] ?? ''}',
+              city: '${data['region'] ?? data['city'] ?? ''}',
+              hobbi: '${data['hobbi'] ?? ''}')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(context.tr('Не удалось открыть раздел. Проверьте подключение.'))));
+    }
+  }
+
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              title: Text(context.tr('Выйти из аккаунта')),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: Text(context.tr('Отмена'))),
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: Text(context.tr('Выйти'))),
+              ],
+            ));
+    if (confirmed != true || !mounted) return;
+    await AuthService().signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+  }
+
+  Widget _settingsTile(IconData icon, String label, VoidCallback onTap) =>
+      ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: Icon(icon, color: LrsTheme.peachLight, size: 21),
+          title: Text(context.tr(label)),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: onTap);
+
+  Widget _settingsGroup(String title, List<Widget> rows) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+            child: Text(context.tr(title),
+                style: const TextStyle(
+                    color: LrsTheme.peachLight, fontWeight: FontWeight.w700))),
+        ClrsPanel(
+            padding: EdgeInsets.zero,
+            child: Column(children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0)
+                  const Divider(height: 1, indent: 14, endIndent: 14),
+                rows[i],
+              ]
+            ])),
+      ]);
+
+  Widget _preferenceTile(String key, String title,
+      Map<String, dynamic> preferences, {required bool available}) {
+    final value = preferences[key] != false;
+    final pending = _pendingPreferences.containsKey(key);
+    return Column(children: [
+      SwitchListTile.adaptive(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          title: Text(context.tr(title)),
+          value: value,
+          activeTrackColor: LrsTheme.peach,
+          onChanged: !available || pending || _savingPreferences.contains(key)
+              ? null
+              : (next) => _setPreference(key, next)),
+      if (pending && !_savingPreferences.contains(key))
+        Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+                onPressed: () => _setPreference(key,
+                    _requestedPreferences[key] ?? value),
+                child: Text(context.tr('Проверить результат')))),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) => ClrsScaffold(
       appBar: AppBar(title: Text(context.tr('Настройки'))),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        const ClrsBrandHeader(),
-        ProfileSection(
-            title: context.tr('Язык'),
-            child: const Align(
-                alignment: Alignment.centerLeft,
-                child: LanguagePickerButton())),
-        ProfileSection(
-            title: context.tr('Сменить пароль'),
-            child: Form(
+      bottomNavigationBar: const MyBottomNavigationBar(),
+      body: AnimatedBuilder(
+          animation: SessionService.readyUserId,
+          builder: (context, _) {
+            if (_owner == null || firebaseAuth.currentUser?.uid != _owner) {
+              return Center(child: Text(context.tr('Сеанс завершён. Войдите снова.')));
+            }
+            return LayoutBuilder(builder: (context, constraints) {
+        final available = (constraints.maxWidth - 32).clamp(0.0, double.infinity);
+        final panelWidth = available < 245
+            ? available
+            : (available * .72).clamp(245.0, available);
+        return ListView(padding: const EdgeInsets.all(16), children: [
+          const ClrsBrandHeader(),
+          Align(alignment: Alignment.centerLeft, child: SizedBox(width: panelWidth, child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+        _settingsGroup('Аккаунт', [
+          _settingsTile(Icons.person_outline, 'Личные данные', _openPersonalData),
+          _settingsTile(Icons.lock_outline, 'Сменить пароль',
+              () => setState(() => _passwordExpanded = !_passwordExpanded)),
+          _settingsTile(Icons.shield_outlined, 'Конфиденциальность',
+              () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => Politica()))),
+        ]),
+        if (_passwordExpanded)
+          ClrsPanel(child: Form(
                 key: _form,
                 child: Column(children: [
                   TextFormField(
@@ -606,6 +798,51 @@ class _ProfileSettingsState extends State<ProfileSettingsPage> {
                               ? 'Проверить результат'
                               : 'Сменить пароль'))),
                 ]))),
+        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: _settings,
+            builder: (context, snapshot) {
+              final preferences = snapshot.data?.data()?['notificationPreferences'];
+              final values = preferences is Map<String, dynamic>
+                  ? preferences
+                  : <String, dynamic>{};
+              return _settingsGroup('Уведомления', [
+                _preferenceTile('messages', 'Сообщения', values,
+                    available: snapshot.hasData && snapshot.data!.exists),
+                _preferenceTile('meetings', 'Встречи', values,
+                    available: snapshot.hasData && snapshot.data!.exists),
+                _preferenceTile('sound', 'Звук уведомлений', values,
+                    available: snapshot.hasData && snapshot.data!.exists),
+              ]);
+            }),
+        if (_preferenceError != null)
+          Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(context.tr(_preferenceError!),
+                  style: const TextStyle(color: LrsTheme.peachLight))),
+        _settingsGroup('Помощь', [
+          _settingsTile(Icons.info_outline, 'О приложении',
+              () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const About_App()))),
+          _settingsTile(Icons.description_outlined, 'Правила сообщества',
+              () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => Rule()))),
+          _settingsTile(Icons.support_agent_outlined, 'Связаться с поддержкой',
+              () => openSupportEmail(context)),
+        ]),
+        _settingsGroup('Язык', [
+          const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: LanguagePickerButton())),
+        ]),
+        const SizedBox(height: 16),
+        ClrsPanel(
+            padding: EdgeInsets.zero,
+            child: _settingsTile(Icons.logout, 'Выйти из аккаунта', _signOut)),
         const ClrsValuesFooter(),
-      ]));
+      ]))),
+        ]);
+      });
+          }));
 }

@@ -254,9 +254,15 @@ void main() {
     await tester.tap(find.text('Прочитать все'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 11));
-    await tester.ensureVisible(find.text('Проверить результат'));
-    await tester.tap(find.text('Проверить результат'));
+    final check = find.text('Проверить результат');
+    await tester.drag(find.byType(ListView).first, const Offset(0, -180));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(check);
+    await tester.pumpAndSettle();
+    expect(check.hitTestable(), findsOneWidget);
+    await tester.tap(check);
     await tester.pump();
+    expect(find.text('Сохранение…'), findsOneWidget);
     expect(db.batches.length, 1);
     await tester.pumpWidget(const SizedBox.shrink());
     db.gate!.complete();

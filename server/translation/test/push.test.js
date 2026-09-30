@@ -108,6 +108,41 @@ test('HTTP accepts only authenticated message references, never a client token o
   assert.equal(JSON.stringify(ok.body).includes('token'), false);
 });
 
+test('message preference suppresses push and silent preference selects silent channel', async () => {
+  const muted = setup();
+  muted.db.put('users/b', { ...muted.db.snap('users/b').data(),
+    notificationPreferences: { messages: false } });
+  await muted.backend.message(muted.input);
+  assert.equal(muted.sent.length, 0);
+
+  const silent = setup();
+  silent.db.put('users/b', { ...silent.db.snap('users/b').data(),
+    notificationPreferences: { sound: false } });
+  await silent.backend.message(silent.input);
+  assert.equal(silent.sent.length, 1);
+  assert.equal(silent.sent[0].android.notification.channelId, 'wbrs_silent');
+  assert.equal(silent.sent[0].data.soundEnabled, 'false');
+  assert.deepEqual(silent.sent[0].apns.payload.aps, {});
+});
+
+test('disabling messages while delivery is being reserved prevents FCM send', async () => {
+  const h = setup();
+  const commit = h.db.runTransaction.bind(h.db);
+  let changed = false;
+  h.db.runTransaction = async transaction => {
+    const result = await commit(transaction);
+    if (!changed && [...h.db.docs.keys()].some(path => path.startsWith('_push_deliveries/'))) {
+      changed = true;
+      h.db.put('users/b', { ...h.db.snap('users/b').data(),
+        notificationPreferences: { messages: false } });
+    }
+    return result;
+  };
+  await h.backend.message(h.input);
+  assert.equal(changed, true);
+  assert.equal(h.sent.length, 0);
+});
+
 test('endpoint is disabled by default and revoked/anonymous accounts are rejected', async () => {
   const h = setup(); const disabled = response();
   await createPushHandler(h)(request(), disabled); assert.equal(disabled.statusCode, 503);
@@ -444,6 +479,15 @@ test('public new meeting addresses exact country and region using the existing s
   await h.backend.newMeeting(input);
   assert.equal(h.db.snap('users/b/notifications/new-meeting-regional').data().read, true);
   assert.equal(h.sent.length, 1);
+});
+
+test('meeting preference keeps inbox entry but suppresses the meeting push', async () => {
+  const h = setup(), input = publicMeeting(h);
+  h.db.put('users/b', { ...h.db.snap('users/b').data(),
+    notificationPreferences: { meetings: false } });
+  await h.backend.newMeeting(input);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.db.snap('users/b/notifications/new-meeting-regional').exists, true);
 });
 
 test('private, moved, removed, stale and invalid meeting creation events cannot fan out', async () => {

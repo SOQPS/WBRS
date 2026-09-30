@@ -334,7 +334,7 @@ class _AboutUserWritingState extends State<AboutUserWriting> {
                       _textArea(
                           title: 'О себе',
                           controller: _about,
-                          minLength: 50,
+                          minLength: 20,
                           hint:
                               'Расскажите о себе, ценностях и целях знакомства',
                           maxLines: 4),
@@ -836,8 +836,8 @@ class _AboutUserWritingState extends State<AboutUserWriting> {
       error = 'Статус не указан';
     } else if (_interests.text.trim().length < 20) {
       error = 'Интересы и увлечения — минимум 20 символов.';
-    } else if (_about.text.trim().length < 50) {
-      error = 'О себе — минимум 50 символов.';
+    } else if (_about.text.trim().length < 20) {
+      error = '${context.tr('О себе')}: ${context.tr('Минимум 20 символов')}';
     } else if (!_is18) {
       error = 'Подтвердите, что вам есть 18 лет.';
     }

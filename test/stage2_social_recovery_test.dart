@@ -15,6 +15,10 @@ import 'support/layout_firebase_fakes.dart';
 class _Storage extends Fake implements FirebaseStorage {}
 
 class _Database extends LayoutFirestore {
+  int missingReportReads = 0;
+  int deniedReportUpdates = 0;
+  bool denyReportCreates = false;
+
   @override
   Future<T> runTransaction<T>(TransactionHandler<T> handler,
       {Duration timeout = const Duration(seconds: 30),
@@ -35,13 +39,32 @@ class _Transaction extends Fake implements Transaction {
   final operations = <void Function()>[];
   @override
   Future<DocumentSnapshot<T>> get<T extends Object?>(
-          DocumentReference<T> ref) async =>
-      LayoutSnapshot(db, ref.path, db.documents[ref.path])
-          as DocumentSnapshot<T>;
+          DocumentReference<T> ref) async {
+    if (ref.path.startsWith('moderation_reports/') &&
+        !db.documents.containsKey(ref.path)) {
+      db.missingReportReads++;
+      throw FirebaseException(
+          plugin: 'cloud_firestore', code: 'permission-denied');
+    }
+    return LayoutSnapshot(db, ref.path, db.documents[ref.path])
+        as DocumentSnapshot<T>;
+  }
   @override
   Transaction set<T>(DocumentReference<T> ref, T data, [SetOptions? options]) {
-    operations.add(
-        () => db.documents[ref.path] = Map<String, dynamic>.from(data as Map));
+    operations.add(() {
+      if (ref.path.startsWith('moderation_reports/')) {
+        if (db.documents.containsKey(ref.path)) {
+          db.deniedReportUpdates++;
+          throw FirebaseException(
+              plugin: 'cloud_firestore', code: 'permission-denied');
+        }
+        if (db.denyReportCreates) {
+          throw FirebaseException(
+              plugin: 'cloud_firestore', code: 'permission-denied');
+        }
+      }
+      db.documents[ref.path] = Map<String, dynamic>.from(data as Map);
+    });
     return this;
   }
 
@@ -131,14 +154,70 @@ void main() {
 
   test('A report retry preserves the original moderation status', () async {
     await social.reportPost('example');
+    expect(db.missingReportReads, 0);
     db.documents['moderation_reports/post-example-viewer']!['status'] =
         'reviewed';
     await social.reportPost('example');
+    expect(db.deniedReportUpdates, 1);
     expect(
         db.documents.keys.where((key) => key.startsWith('moderation_reports/')),
         hasLength(1));
     expect(db.documents['moderation_reports/post-example-viewer']!['status'],
         'reviewed');
+  });
+
+  test('A denied first post report is not mistaken for a retry', () async {
+    db.denyReportCreates = true;
+    await expectLater(social.reportPost('example'),
+        throwsA(isA<FirebaseException>()));
+    expect(db.missingReportReads, 0);
+    expect(db.documents.containsKey('moderation_reports/post-example-viewer'),
+        isFalse);
+  });
+
+  test('A comment report is queued once and keeps its review status', () async {
+    db.documents['posts/example/comments/reply'] = {
+      'authorUid': 'other', 'text': 'Comment to review',
+    };
+    await social.reportComment('example', 'reply');
+    expect(db.missingReportReads, 0);
+    final path = 'moderation_reports/comment-example-reply-viewer';
+    expect(db.documents[path]?['entityType'], 'comment');
+    expect(db.documents[path]?['entityId'], 'example/reply');
+    db.documents[path]!['status'] = 'reviewed';
+    await social.reportComment('example', 'reply');
+    expect(db.deniedReportUpdates, 1);
+    expect(db.documents[path]?['status'], 'reviewed');
+    expect(db.documents.keys.where((key) => key.startsWith('moderation_reports/')),
+        hasLength(1));
+  });
+
+  test('A denied first comment report is not mistaken for a retry', () async {
+    db.documents['posts/example/comments/reply'] = {
+      'authorUid': 'other', 'text': 'Comment to review',
+    };
+    db.denyReportCreates = true;
+    await expectLater(social.reportComment('example', 'reply'),
+        throwsA(isA<FirebaseException>()));
+    expect(db.missingReportReads, 0);
+    expect(db.documents.containsKey(
+        'moderation_reports/comment-example-reply-viewer'), isFalse);
+  });
+
+  test('Only an administrator deletes a comment and its count once', () async {
+    db.documents['posts/example']!['commentCount'] = 2;
+    db.documents['posts/example/comments/reply'] = {
+      'authorUid': 'other', 'text': 'Comment to remove',
+    };
+    await expectLater(social.deleteComment('example', 'reply'), throwsStateError);
+    expect(db.documents['posts/example']!['commentCount'], 2);
+    final admin = SocialService(
+        firestore: db, storage: _Storage(), currentUid: () => 'viewer',
+        moderatorAccess: () async => true);
+    await admin.deleteComment('example', 'reply');
+    await admin.deleteComment('example', 'reply');
+    expect(db.documents.containsKey('posts/example/comments/reply'), isFalse);
+    expect(db.documents['posts/example']!['commentCount'], 1);
   });
 
   test('Comment repost is idempotent and can be removed without deleting source',

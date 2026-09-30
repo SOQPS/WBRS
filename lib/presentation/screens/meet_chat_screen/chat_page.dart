@@ -741,7 +741,13 @@ class _ChatPageState extends State<ChatPage> {
                 : SafeArea(
                     top: false,
                     child: LayoutBuilder(
-                        builder: (context, constraints) => Column(children: [
+                        builder: (context, constraints) => Align(
+                            alignment: Alignment.topLeft,
+                            child: SizedBox(
+                                height: constraints.maxHeight,
+                                width: math.min(constraints.maxWidth,
+                                    math.max(constraints.maxWidth * .68, 248)),
+                                child: Column(children: [
                               if (_membershipNotice != null ||
                                   _membershipRequest != null)
                                 ConstrainedBox(
@@ -792,7 +798,7 @@ class _ChatPageState extends State<ChatPage> {
                                   child: SingleChildScrollView(
                                       child: SafeArea(
                                           top: false, child: _composer()))),
-                            ]))),
+                            ]))))),
       );
 
   Widget _loadError() => SingleChildScrollView(
@@ -810,14 +816,6 @@ class _ChatPageState extends State<ChatPage> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: _joined
             ? Column(mainAxisSize: MainAxisSize.min, children: [
-                if (_messageRestoreFailed)
-                  Text(context.tr(
-                      'Не удалось восстановить отправку. Попробуйте ещё раз.')),
-                if (_pendingMessage != null && !_sending)
-                  Text(
-                      context.tr(
-                          'Результат отправки пока неизвестен. Проверьте его перед повторной отправкой.'),
-                      style: const TextStyle(color: LrsTheme.peachLight)),
                 Row(children: [
                   Expanded(
                       child: TextFormField(
@@ -852,6 +850,14 @@ class _ChatPageState extends State<ChatPage> {
                                   : Icons.refresh,
                               color: Colors.white)),
                 ]),
+                if (_messageRestoreFailed)
+                  Text(context.tr(
+                      'Не удалось восстановить отправку. Попробуйте ещё раз.')),
+                if (_pendingMessage != null && !_sending)
+                  Text(
+                      context.tr(
+                          'Результат отправки пока неизвестен. Проверьте его перед повторной отправкой.'),
+                      style: const TextStyle(color: LrsTheme.peachLight)),
               ])
             : Column(mainAxisSize: MainAxisSize.min, children: [
                 Text(

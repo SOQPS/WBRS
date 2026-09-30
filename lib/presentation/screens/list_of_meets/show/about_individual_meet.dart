@@ -1,5 +1,6 @@
 import 'package:wbrs/shared/translatable_text.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:wbrs/app/helper/global.dart';
@@ -178,6 +179,101 @@ class _AboutIndividualMeetState extends State<AboutIndividualMeet> {
     }
   }
 
+  Future<void> _showParticipants(Map<String, dynamic> data) async {
+    if (!_active) return;
+    final ids = <String>{
+      if ('${data['admin'] ?? ''}'.isNotEmpty) '${data['admin']}',
+      ...(data['users'] is List
+          ? (data['users'] as List).whereType<String>()
+          : const <String>[]),
+    }.toList();
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (pageContext) => ClrsScaffold(
+          appBar: AppBar(title: Text(pageContext.tr('Участники встречи'))),
+          body: SafeArea(
+            top: false,
+            child: FutureBuilder(
+              future: Future.wait(
+                ids.map(
+                  (uid) => firebaseFirestore.collection('users').doc(uid).get(),
+                ),
+              ),
+              builder: (pageContext, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(
+                      pageContext.tr(
+                        'Не удалось загрузить участников. Проверьте подключение.',
+                      ),
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final profiles = snapshot.data!
+                    .where((doc) => doc.exists && doc.data() != null)
+                    .toList();
+                return ListView(
+                  key: const ValueKey('individual-meeting-participants'),
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const ClrsBrandHeader(),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.sizeOf(pageContext).width * .72,
+                        ),
+                        child: Column(
+                          children: [
+                            for (final doc in profiles)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: ClrsPanel(
+                                  child: Row(
+                                    children: [
+                                      GroupAvatar(
+                                        url:
+                                            '${doc.data()?['profilePicThumb'] ?? doc.data()?['profilePic'] ?? ''}',
+                                        group: '${doc.data()?['группа'] ?? ''}',
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '${doc.data()?['fullName'] ?? ''}',
+                                            ),
+                                            if (doc.id == data['admin'])
+                                              Text(
+                                                pageContext.tr('Организатор'),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => ClrsScaffold(
       appBar: AppBar(title: Text(context.tr('Индивидуальная встреча'))),
@@ -211,7 +307,13 @@ class _AboutIndividualMeetState extends State<AboutIndividualMeet> {
                 : date is DateTime
                     ? context.l10n.dateTime(date)
                     : '${date ?? ''}';
-            return ListView(padding: const EdgeInsets.all(16), children: [
+            return SafeArea(top: false, child: LayoutBuilder(
+                builder: (context, constraints) => Align(
+                    alignment: Alignment.topLeft,
+                    child: SizedBox(
+                        width: math.min(constraints.maxWidth,
+                            math.max(constraints.maxWidth * .68, 244)),
+                        child: ListView(padding: const EdgeInsets.all(10), children: [
               const ClrsBrandHeader(),
               TranslatableText('${data['name'] ?? ''}',
                   style: Theme.of(context).textTheme.headlineSmall),
@@ -269,6 +371,16 @@ class _AboutIndividualMeetState extends State<AboutIndividualMeet> {
                         const SizedBox(height: 8),
                         TranslatableText('${data['description'] ?? ''}'),
                       ])),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                      key: const ValueKey('individual-meeting-participants-action'),
+                      style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFFFD4B7),
+                          backgroundColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      onPressed: () => _showParticipants(data),
+                      child: Text(context.tr('Список участников')))),
               const SizedBox(height: 16),
               if (_notice != null)
                 Padding(
@@ -308,7 +420,7 @@ class _AboutIndividualMeetState extends State<AboutIndividualMeet> {
                 ElevatedButton(
                     onPressed: _busy || _restoring ? null : () => _change(true),
                     child: Text(context.tr('Принять приглашение на встречу'))),
-            ]);
+            ])))));
           }));
   Widget _error() => Center(
           child: ClrsPanel(

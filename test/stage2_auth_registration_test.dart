@@ -281,6 +281,30 @@ void main() {
     expect(await store.load(draft.uid), isNull);
   });
 
+  test('Registration accepts 20-character interests and about text', () async {
+    final source = await draftWithPhotos();
+    final draft = source.copyWith(fields: {
+      ...source.fields,
+      'interests': '12345678901234567890',
+      'about': '12345678901234567890',
+    });
+    var writes = 0;
+    final service = ProfileRegistrationService(
+        store: store,
+        auth: auth,
+        firestore: db,
+        uploader: (path, _) async => 'https://test.invalid/$path',
+        writer: (saved, _, name) async {
+          writes++;
+          db.documents['users/${saved.uid}'] = {
+            'profileDetailsSaved': true,
+            'fullName': name,
+          };
+        });
+    expect(await service.start(draft).write.wait(), isTrue);
+    expect(writes, 1);
+  });
+
   test(
       'Process recovery after server commit confirms existing profile without uploading or overwriting it',
       () async {

@@ -293,6 +293,47 @@ void main() {
     expect(await restored!.write.wait(), isTrue);
     service().acknowledge(restored);
   });
+  testWidgets('Individual meeting keeps its participants link and left panel', (
+    tester,
+  ) async {
+    final page = AboutIndividualMeet(
+      snapshot: AsyncSnapshot.withData(
+        ConnectionState.active,
+        LayoutQuerySnapshot([
+          LayoutSnapshot(db, 'meets/$id', db.documents['meets/$id']),
+        ]),
+      ),
+      index: 0,
+      doc: LayoutSnapshot(
+        db,
+        'users/organizer',
+        db.documents['users/organizer'],
+      ),
+      membershipService: service(),
+    );
+    await pump(tester, page);
+    await tester.pumpAndSettle();
+    final link = find.byKey(
+      const ValueKey('individual-meeting-participants-action'),
+    );
+    await tester.scrollUntilVisible(
+      link,
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(link);
+    await tester.pumpAndSettle();
+    expect(link.hitTestable(), findsOneWidget);
+    expect(tester.getRect(link).right, lessThan(250));
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('individual-meeting-participants')),
+      findsOneWidget,
+    );
+    expect(find.text('Организатор'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('Group join pending timeout checks original transaction',
       (tester) async {
     db.commitGate = Completer<void>();

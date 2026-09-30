@@ -31,7 +31,15 @@ service cloud.firestore {
     function ownProfileChanges() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(
         publicProfileKeys().concat(['profileDetailsSaved', 'isRegistrationEnd',
-          'registrationNoticePending', 'chatWithId', 'interests', 'testAnswers']));
+          'registrationNoticePending', 'chatWithId', 'interests', 'testAnswers',
+          'notificationPreferences'])) &&
+        (!request.resource.data.keys().hasAny(['notificationPreferences']) ||
+          (request.resource.data.notificationPreferences is map &&
+            request.resource.data.notificationPreferences.keys().hasOnly(
+              ['messages', 'meetings', 'sound']) &&
+            request.resource.data.notificationPreferences.get('messages', true) is bool &&
+            request.resource.data.notificationPreferences.get('meetings', true) is bool &&
+            request.resource.data.notificationPreferences.get('sound', true) is bool));
     }
 
     // Legacy users contain balance, roles, chat state and sometimes email.
@@ -196,8 +204,11 @@ service cloud.firestore {
         request.resource.data.text is string && request.resource.data.text.size() <= 20000 &&
         request.resource.data.likeCount == 0 && request.resource.data.commentCount == 0 &&
         request.resource.data.shareCount == 0;
-      allow update: if admin() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'imageUrl', 'status']);
+      allow update: if admin() && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'imageUrl', 'status']) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount']) &&
+          resource.data.commentCount is int && resource.data.commentCount > 0 &&
+          request.resource.data.commentCount == resource.data.commentCount - 1));
       allow delete: if admin();
       match /likes/{uid} {
         allow get: if own(uid);
@@ -220,7 +231,7 @@ service cloud.firestore {
           (request.resource.data.parentId == null ||
             exists(/databases/$(database)/documents/posts/$(postId)/comments/$(request.resource.data.parentId)));
         allow update: if false;
-        allow delete: if admin() || (signedIn() && resource.data.authorUid == request.auth.uid);
+        allow delete: if admin();
         match /likes/{uid} {
           allow get: if own(uid);
           allow list: if admin();
@@ -234,10 +245,15 @@ service cloud.firestore {
       }
     }
     match /moderation_reports/{reportId} {
+      // The first client report is create-only. A retry may read its own
+      // existing report, but no client can pre-read an absent or foreign one.
       allow get: if admin() || (signedIn() && resource.data.reporterUid == request.auth.uid);
       allow list, update: if admin();
       allow create: if signedIn() && request.resource.data.reporterUid == request.auth.uid &&
         request.resource.data.keys().hasOnly(['reporterUid', 'entityType', 'entityId', 'createdAt', 'status']) &&
+        request.resource.data.entityType in ['post', 'comment'] &&
+        request.resource.data.entityId is string &&
+        request.resource.data.entityId.size() > 0 &&
         request.resource.data.status == 'new' && request.resource.data.createdAt == request.time;
       allow delete: if false;
     }

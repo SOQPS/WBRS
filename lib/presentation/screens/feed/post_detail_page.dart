@@ -51,6 +51,56 @@ class _PostDetailPageState extends State<PostDetailPage> {
   final Map<String, PendingWrite> _likeWrites = {};
   final Set<String> _sharing = {};
   final Map<String, PendingWrite> _shareWrites = {};
+  late final Future<bool> _canModerate;
+  final Set<String> _moderating = {};
+  final Map<String, PendingWrite> _moderationWrites = {};
+
+  Future<void> _moderateComment(String commentId, {required bool delete}) async {
+    if (_moderating.contains(commentId)) return;
+    if (delete) {
+      final approved = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('${context.tr('Удалить')} ${context.tr('Комментарий')}?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(context.tr('Отмена'))),
+              TextButton(onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(context.tr('Удалить'))),
+            ],
+          ));
+      if (approved != true || !mounted) return;
+    }
+    if (!_moderating.add(commentId)) return;
+    setState(() {});
+    final key = '${delete ? 'delete' : 'report'}:$commentId';
+    try {
+      final operation = _moderationWrites.putIfAbsent(key,
+          () => PendingWrite(() => delete
+              ? _social.deleteComment(widget.postId, commentId)
+              : _social.reportComment(widget.postId, commentId)));
+      final confirmed = await operation.wait();
+      if (!mounted) return;
+      if (confirmed) {
+        _moderationWrites.remove(key);
+        if (!delete) {
+          showSnackbar(context, LrsTheme.surface,
+              context.tr('Жалоба попадёт в очередь модерации'));
+        }
+      } else {
+        showSnackbar(context, LrsTheme.surface,
+            context.tr('Подтверждение ещё не получено. Проверьте результат без повторной отправки.'));
+      }
+    } catch (_) {
+      _moderationWrites.remove(key);
+      if (mounted) {
+        showSnackbar(context, LrsTheme.danger,
+            context.tr('Не удалось сохранить изменения. Попробуйте ещё раз.'));
+      }
+    } finally {
+      if (mounted) setState(() => _moderating.remove(commentId));
+    }
+  }
 
   Future<void> _shareComment(String commentId) async {
     if (_sharing.contains(commentId)) return;
@@ -117,6 +167,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   void initState() {
     super.initState();
     _social = widget.social ?? SocialService();
+    _canModerate = _social.canModerateComments();
     _comments = _loadComments();
     _submissions =
         widget.submissions ?? CommentSubmissionService(social: _social);
@@ -209,11 +260,15 @@ class _PostDetailPageState extends State<PostDetailPage> {
                                                 Text(context.tr('Повторить'))),
                                       ]))));
                         final docs = snapshot.data?.docs ?? [];
+                        final ids = docs.map((doc) => doc.id).toSet();
                         final roots = docs.where((doc) {
                           final parent = doc.data()['parentId'];
                           return widget.threadRootId != null
-                              ? doc.id == widget.threadRootId
-                              : parent == null || parent.toString().isEmpty;
+                              ? doc.id == widget.threadRootId ||
+                                  (parent?.toString() == widget.threadRootId &&
+                                      !ids.contains(widget.threadRootId))
+                              : parent == null || parent.toString().isEmpty ||
+                                  !ids.contains(parent.toString());
                         }).toList();
                         return ListView(
                           padding: EdgeInsets.fromLTRB(12, 12, 12, 18),
@@ -413,6 +468,23 @@ class _PostDetailPageState extends State<PostDetailPage> {
                           : () => _shareComment(doc.id),
                       icon: const Icon(Icons.share_outlined, size: 16),
                       label: Text(context.tr('Поделиться')),
+                    ),
+                    FutureBuilder<bool>(
+                      future: _canModerate,
+                      builder: (context, access) => PopupMenuButton<String>(
+                        tooltip: context.tr('Пожаловаться'),
+                        icon: const Icon(Icons.more_horiz, size: 18),
+                        enabled: !_moderating.contains(doc.id),
+                        onSelected: (action) => _moderateComment(doc.id,
+                            delete: action == 'delete'),
+                        itemBuilder: (_) => [
+                          PopupMenuItem(value: 'report',
+                              child: Text(context.tr('Пожаловаться'))),
+                          if (access.data == true && _social.isCurrentSession)
+                            PopupMenuItem(value: 'delete',
+                                child: Text(context.tr('Удалить'))),
+                        ],
+                      ),
                     ),
                   ],
                 ),

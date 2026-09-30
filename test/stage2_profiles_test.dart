@@ -17,6 +17,7 @@ import 'package:wbrs/presentation/screens/list_of_users/show/somebody_profile.da
 import 'package:wbrs/presentation/screens/profile/profile_page.dart';
 import 'package:wbrs/service/profile_delete_service.dart';
 import 'package:wbrs/service/social_service.dart';
+import 'package:wbrs/service/session_service.dart';
 import 'package:wbrs/shared/geo_catalog.dart';
 import 'package:wbrs/shared/group_badge.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -60,6 +61,11 @@ class _ProfileUser extends LayoutUser {
 }
 
 class _Credential extends Fake implements UserCredential {}
+
+class _OtherProfileUser extends LayoutUser {
+  @override
+  String get uid => 'other';
+}
 
 class _NoStorage extends Fake implements FirebaseStorage {}
 
@@ -274,6 +280,26 @@ void main() {
     expect(user.deletes, 1);
   });
 
+  testWidgets('profile portrait reserves room for the main photo',
+      (tester) async {
+    await page(
+        tester,
+        Scaffold(
+            body: ListView(children: const [
+          ProfilePortrait(
+              photo: '',
+              name: 'Алексей',
+              group: '',
+              location: '',
+              online: true),
+        ])),
+        size: const Size(360, 640));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(ProfilePortrait)).height,
+        greaterThan(300));
+    expect(tester.takeException(), isNull);
+  });
+
   for (final size in [const Size(320, 640), const Size(640, 320)]) {
     testWidgets('live profile composition wraps long text at $size /2x',
         (tester) async {
@@ -388,9 +414,14 @@ void main() {
     await tester.pump();
     db.emit('users/viewer/images', []);
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.textContaining('Главное фото:'),
+        220, scrollable: find.byType(Scrollable).first);
+    expect(find.textContaining('Главное фото:'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Подарки'), 300,
         scrollable: find.byType(Scrollable).first);
     expect(find.text('7'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Интересы и увлечения'), 300,
+        scrollable: find.byType(Scrollable).first);
     expect(find.text('Интересы и увлечения'), findsOneWidget);
     await page(tester, const ProfileSettingsPage(),
         size: const Size(320, 640), scale: 2);
@@ -530,6 +561,10 @@ void main() {
       (tester) async {
     user.passwordGate = Completer<void>();
     await page(tester, const ProfileSettingsPage());
+    final passwordEntry = find.widgetWithText(ListTile, 'Сменить пароль');
+    await tester.ensureVisible(passwordEntry);
+    await tester.tap(passwordEntry);
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField).first, 'new-password');
     await tester.enterText(find.byType(TextFormField).last, 'new-password');
     final action = find.widgetWithText(ElevatedButton, 'Сменить пароль');
@@ -546,6 +581,19 @@ void main() {
     user.passwordGate!.complete();
     await tester.pump();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('settings hide the previous account after login changes',
+      (tester) async {
+    SessionService.readyUserId.value = 'viewer';
+    addTearDown(() => SessionService.readyUserId.value = null);
+    await page(tester, const ProfileSettingsPage());
+    expect(find.text('Сообщения'), findsOneWidget);
+    auth.user = _OtherProfileUser();
+    SessionService.readyUserId.value = 'other';
+    await tester.pump();
+    expect(find.text('Сообщения'), findsNothing);
+    expect(find.text('Сеанс завершён. Войдите снова.'), findsOneWidget);
   });
 
   testWidgets(

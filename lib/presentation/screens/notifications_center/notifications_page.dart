@@ -9,6 +9,7 @@ import 'package:wbrs/service/pending_write.dart';
 import 'package:wbrs/service/session_service.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/app/widgets/bottom_nav_bar.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -105,7 +106,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   Widget build(BuildContext context) => ClrsScaffold(
         appBar: AppBar(title: Text(context.tr('Уведомления'))),
-        body: AnimatedBuilder(
+        bottomNavigationBar: const MyBottomNavigationBar(),
+        body: LayoutBuilder(builder: (context, constraints) {
+          final available = constraints.maxWidth;
+          final panelWidth = available < 260
+              ? available
+              : (available * .75).clamp(260.0, available);
+          return Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                  width: panelWidth,
+                  height: constraints.maxHeight,
+                  child: AnimatedBuilder(
             animation: SessionService.readyUserId,
             builder: (context, _) {
               if (!_social.isCurrentSession) {
@@ -244,7 +256,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       ClrsValuesFooter(),
                     ]);
                   });
-            }),
+            })));
+        }),
       );
   static const _localizedTypes = {
     'post_comment',

@@ -111,7 +111,7 @@ export function createPushBackend({ db, auth, messaging, now = () => Date.now(),
     });
   }
 
-  async function deliver(uid, eventKey, payload, recipientProfile, signal, validate, fanout) {
+  async function deliver(uid, eventKey, payload, recipientProfile, signal, validate, fanout, category) {
     check(signal);
     if (!sendEnabled()) return 'disabled';
     const token = await tokenFor(uid);
@@ -140,7 +140,11 @@ export function createPushBackend({ db, auth, messaging, now = () => Date.now(),
     try {
       check(signal);
       // Re-read token ownership and account eligibility immediately before FCM.
-      if (await tokenFor(uid) !== token || !await profile(uid) || validate && !await validate()) {
+      const currentToken = await tokenFor(uid);
+      const latestProfile = await profile(uid);
+      if (currentToken !== token || !latestProfile ||
+          category && latestProfile.notificationPreferences?.[category] === false ||
+          validate && !await validate()) {
         await updateDelivery({ status: 'skipped' });
         return 'skipped';
       }
@@ -161,14 +165,17 @@ export function createPushBackend({ db, auth, messaging, now = () => Date.now(),
         if (!allowed) return 'skipped';
       }
       check(signal);
-      const language = String(recipientProfile.language || recipientProfile.locale || 'ru').split(/[-_]/)[0];
+      const soundEnabled = latestProfile.notificationPreferences?.sound !== false;
+      const language = String(latestProfile.language || latestProfile.locale || 'ru').split(/[-_]/)[0];
       sendStarted = true;
       await messaging.send({ token,
         notification: { title: 'CLRS', body: generic[language] || generic.en },
-        data: { recipientUid: uid, payload: JSON.stringify({ ...payload, recipientUid: uid }) },
+        data: { recipientUid: uid, soundEnabled: String(soundEnabled),
+          payload: JSON.stringify({ ...payload, recipientUid: uid }) },
         android: { priority: 'high', ttl: DAY,
-          notification: { channelId: 'wbrs', tag: delivery.id } },
-        apns: { headers: { 'apns-collapse-id': delivery.id }, payload: { aps: { sound: 'default' } } },
+          notification: { channelId: soundEnabled ? 'wbrs' : 'wbrs_silent', tag: delivery.id } },
+        apns: { headers: { 'apns-collapse-id': delivery.id },
+          payload: { aps: soundEnabled ? { sound: 'default' } : {} } },
       });
       await updateDelivery({ status: 'sent', sentAt: timestamp() });
       return 'sent';
@@ -228,10 +235,11 @@ export function createPushBackend({ db, auth, messaging, now = () => Date.now(),
     for (const uid of recipients) {
       check(signal);
       const recipient = await profile(uid);
-      if (!recipient || (kind === 'chat' && recipient.chatWithId === actor && recipient.online === true)) continue;
+      if (!recipient || recipient.notificationPreferences?.messages === false ||
+          (kind === 'chat' && recipient.chatWithId === actor && recipient.online === true)) continue;
       await deliver(uid, `message:${kind}:${entityId}:${messageId}`,
         kind === 'chat' ? { isChat: true, chatId: entityId } : { isChat: false, groupId: entityId },
-        recipient, signal);
+        recipient, signal, undefined, undefined, 'messages');
     }
     // Do not disclose recipient/token counts to the sender.
     return { accepted: true };
@@ -259,12 +267,14 @@ export function createPushBackend({ db, auth, messaging, now = () => Date.now(),
       return true;
     });
     if (!written) return;
+    if (data.type === 'meeting' && recipient.notificationPreferences?.meetings === false) return;
     const validate = event.validate ? async () => {
       if (event.actorUid && !await profile(event.actorUid)) return false;
       return db.runTransaction(event.validate);
     } : undefined;
     await deliver(uid, event.key || `notice:${noticeId}`,
-      event.payload || { kind: 'social', notificationId: noticeId }, recipient, signal, validate, event.fanout);
+      event.payload || { kind: 'social', notificationId: noticeId }, recipient, signal,
+      validate, event.fanout, data.type === 'meeting' ? 'meetings' : undefined);
   }
 
   async function friendRequest({ recipientUid, actorUid, sourceCreateTime, signal }) {

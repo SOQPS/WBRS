@@ -101,6 +101,18 @@ void main() {
       expect((tiles[0].title as Text).data, 'Анастасия');
       expect((tiles[1].title as Text).data, 'Ранний собеседник');
       expect(tiles[0].selected, isTrue);
+      await tester.enterText(find.byType(TextField), 'Ана');
+      await tester.pumpAndSettle();
+      expect(find.text('Анастасия'), findsOneWidget);
+      expect(find.text('Ранний собеседник'), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'Подарить'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'Ранний');
+      await tester.pumpAndSettle();
+      expect(find.text('Анастасия'), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'Подарить'), findsNothing);
+      await tester.tap(find.text('Ранний собеседник'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ElevatedButton, 'Подарить'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
