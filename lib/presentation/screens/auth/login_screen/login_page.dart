@@ -71,11 +71,11 @@ class _LoginPageState extends State<LoginPage> {
               decoration: InputDecoration(
                   isDense: true,
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                   prefixIconConstraints:
-                      const BoxConstraints(minWidth: 44, minHeight: 40),
+                      const BoxConstraints(minWidth: 36, minHeight: 34),
                   labelText: context.tr('Email'),
-                  prefixIcon: const Icon(Icons.mail_outline, size: 21)),
+                  prefixIcon: const Icon(Icons.mail_outline, size: 18)),
               validator: (value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
                       .hasMatch((value ?? '').trim())
                   ? null
@@ -92,16 +92,16 @@ class _LoginPageState extends State<LoginPage> {
               decoration: InputDecoration(
                   isDense: true,
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                   prefixIconConstraints:
-                      const BoxConstraints(minWidth: 44, minHeight: 40),
+                      const BoxConstraints(minWidth: 36, minHeight: 34),
                   suffixIconConstraints:
-                      const BoxConstraints(minWidth: 40, minHeight: 40),
+                      const BoxConstraints(minWidth: 34, minHeight: 34),
                   labelText: context.tr('Пароль'),
-                  prefixIcon: const Icon(Icons.lock_outline, size: 21),
+                  prefixIcon: const Icon(Icons.lock_outline, size: 18),
                   suffixIcon: IconButton(
                       constraints:
-                          const BoxConstraints(minWidth: 40, minHeight: 40),
+                          const BoxConstraints(minWidth: 34, minHeight: 34),
                       padding: EdgeInsets.zero,
                       style: IconButton.styleFrom(
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -113,13 +113,13 @@ class _LoginPageState extends State<LoginPage> {
                           _isVisible
                               ? Icons.visibility_outlined
                               : Icons.visibility_off_outlined,
-                          size: 21))),
+                          size: 18))),
               validator: (value) => (value ?? '').length < 6
                   ? context.tr('Пароль должен содержать 6 символов')
                   : null,
             ),
             const SizedBox(height: 2),
-            Row(children: [
+            SizedBox(height: 34, child: Row(children: [
               Checkbox(
                   visualDensity: VisualDensity.compact,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -138,17 +138,19 @@ class _LoginPageState extends State<LoginPage> {
               Expanded(
                   child: Text(context.tr('Запомнить меня'),
                       style: const TextStyle(fontSize: 13))),
-            ]),
+            ])),
             const SizedBox(height: 0),
             FractionallySizedBox(
-                widthFactor: _authPending ? .77 : .55,
+                widthFactor: _authPending ? .77 : .48,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: LrsTheme.actionGlass,
+                      backgroundColor: const Color(0x3931241D),
                       foregroundColor: LrsTheme.text,
                       disabledBackgroundColor: LrsTheme.actionDisabled,
                       disabledForegroundColor: LrsTheme.muted,
-                      minimumSize: const Size(0, 40),
+                      minimumSize: const Size(0, 32),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       elevation: 0,
                       shadowColor: Colors.transparent,
@@ -169,8 +171,8 @@ class _LoginPageState extends State<LoginPage> {
                                             : 'Вход'),
                                         maxLines: 1,
                                         textAlign: TextAlign.center))),
-                            const SizedBox(width: 8),
-                            const Icon(Icons.arrow_forward, size: 18),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.arrow_forward, size: 16),
                           ])),
                 )),
             const SizedBox(height: 4),
@@ -182,9 +184,9 @@ class _LoginPageState extends State<LoginPage> {
                       style: const TextStyle(fontSize: 13)),
                   TextButton(
                       style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 32),
+                          minimumSize: const Size(0, 26),
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          padding: const EdgeInsets.symmetric(horizontal: 5)),
+                          padding: const EdgeInsets.symmetric(horizontal: 4)),
                       onPressed: _authPending || _isLoading
                           ? null
                           : () => nextScreen(
@@ -193,9 +195,9 @@ class _LoginPageState extends State<LoginPage> {
                 ]),
             TextButton(
               style: TextButton.styleFrom(
-                  minimumSize: const Size(0, 32),
+                  minimumSize: const Size(0, 26),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.symmetric(horizontal: 5)),
+                  padding: const EdgeInsets.symmetric(horizontal: 4)),
               onPressed: _authPending || _isLoading
                   ? null
                   : () => showModalBottomSheet<void>(
