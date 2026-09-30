@@ -300,14 +300,14 @@ void main() {
     final meetings = find.widgetWithText(ChoiceChip, 'Встречи');
     final before = tester.widget<ChoiceChip>(all);
     expect(before.selected, isTrue);
-    expect(before.labelStyle!.color, LrsTheme.text);
+    expect(before.labelStyle!.color, LrsTheme.peachLight);
     expect(before.side!.color, LrsTheme.peachLight);
     expect(before.selectedColor!.alpha, lessThan(255));
     await tester.tap(meetings);
     await tester.pumpAndSettle();
     final selected = tester.widget<ChoiceChip>(meetings);
     expect(selected.selected, isTrue);
-    expect(selected.labelStyle!.color, LrsTheme.text);
+    expect(selected.labelStyle!.color, LrsTheme.peachLight);
     expect(selected.side!.color, LrsTheme.peachLight);
     expect(tester.widget<ChoiceChip>(all).selected, isFalse);
     expect(tester.getBottomRight(meetings).dx, lessThanOrEqualTo(304));

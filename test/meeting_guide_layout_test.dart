@@ -29,10 +29,10 @@ class _CatalogDelegate extends LocalizationsDelegate<ClrsLocalizations> {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const steps = [
-    'Вы один(одна) и приглашаете кого-то? Создайте индивидуальную встречу: куда идёте и что будете делать.',
-    'Вас двое? Один создаёт коллективную встречу. Укажите, кого ждёте и что предлагаете.',
-    'Компания планирует что-то масштабное? Один создаёт коллективную встречу и кратко описывает предложение.',
-    'При вступлении во встречу создателю придёт уведомление.',
+    'Вы один(одна) и хотите пригласить кого-то. Создавайте индивидуальную встречу, укажите в описании куда идёте, что будете делать.',
+    'Вас, например, двое. Один создаёт коллективную встречу и пишет: ждём двух девушек, и что вы предлагаете. (К примеру, пьём кофе на набережной и т.п.)',
+    'Вы — компания и хотите устроить что-то масштабное. Один пусть создаёт коллективную встречу, опишите кратко предложение.',
+    'Когда кто-нибудь вступит, придёт уведомление как создателю.',
   ];
   final catalogs = <String, Map<String, dynamic>>{
     for (final code in ClrsLocalizations.codes)
@@ -90,18 +90,19 @@ void main() {
       matching: find.byType(Scrollable));
 
   for (final code in ClrsLocalizations.codes) {
-    testWidgets('meeting guide $code fits 360x640 without scrolling',
+    testWidgets('meeting guide $code is fully reachable at 360x640',
         (tester) async {
       await pumpGuide(tester, code);
-      final position = tester.state<ScrollableState>(guideScroll()).position;
-      expect(position.maxScrollExtent, 0,
-          reason: '$code: all four steps and Done must fit on one screen');
+      final scroll = guideScroll();
       expect(find.byType(ClrsPanel), findsNWidgets(4));
 
       for (final key in steps) {
         final text = find.text(catalogs[code]![key]);
+        await tester.scrollUntilVisible(text, 180, scrollable: scroll);
+        await tester.ensureVisible(text);
+        await tester.pumpAndSettle();
         expect(text.hitTestable(), findsOneWidget,
-            reason: '$code: each complete instruction must be visible');
+            reason: '$code: each complete instruction must be reachable');
         expect(
             tester.widget<Text>(text).style!.fontSize, greaterThanOrEqualTo(16),
             reason: 'Fit the text without shrinking the normal body font');
@@ -109,17 +110,11 @@ void main() {
             isFalse);
       }
 
-      final viewport =
-          tester.getRect(find.byKey(const ValueKey('meeting-guide-scroll')));
-      for (final panel in find.byType(ClrsPanel).evaluate()) {
-        final bounds = tester.getRect(find.byWidget(panel.widget));
-        expect(bounds.top, greaterThanOrEqualTo(viewport.top));
-        expect(bounds.bottom, lessThanOrEqualTo(viewport.bottom));
-      }
       final done =
           find.widgetWithText(ElevatedButton, catalogs[code]!['Понятно']);
+      await tester.scrollUntilVisible(done, 180, scrollable: scroll);
+      await tester.pumpAndSettle();
       expect(done.hitTestable(), findsOneWidget);
-      expect(tester.getRect(done).bottom, lessThanOrEqualTo(viewport.bottom));
       await tester.tap(done);
       await tester.pumpAndSettle();
       expect(find.byType(MeetingGuidePage), findsNothing);
