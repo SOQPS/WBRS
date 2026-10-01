@@ -1,13 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 part 'timeweb_own_profile.dart';
+part 'timeweb_private_media.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
-  TimewebAuthConfiguration({required this.endpoint, this.enabled = false}) {
+  TimewebAuthConfiguration({
+    required this.endpoint,
+    this.enabled = false,
+    this.privateMediaEnabled = false,
+  }) {
     final host = endpoint.host.toLowerCase();
     final dnsName = RegExp(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$');
     if (endpoint.scheme != 'https' ||
@@ -37,6 +43,7 @@ class TimewebAuthConfiguration {
 
   final Uri endpoint;
   final bool enabled;
+  final bool privateMediaEnabled;
 }
 
 /// The implementation must use an OS protected token store, never plaintext
@@ -93,6 +100,7 @@ enum TimewebAuthOperation {
   logout,
   profile,
   conversation,
+  media,
 }
 
 enum TimewebAuthError {
@@ -390,13 +398,16 @@ class TimewebAuthClient {
     DateTime Function()? clock,
     this.requestDeadline = const Duration(seconds: 10),
     this.accessExpirySkew = const Duration(seconds: 30),
+    this.mediaRequestDeadline = const Duration(seconds: 60),
   }) : _store = secureStore,
        _http = transport ?? http.Client(),
        _ownsTransport = transport == null,
        _clock = clock ?? DateTime.now {
     if (requestDeadline <= Duration.zero ||
         requestDeadline > const Duration(seconds: 30) ||
-        accessExpirySkew < Duration.zero) {
+        accessExpirySkew < Duration.zero ||
+        mediaRequestDeadline <= Duration.zero ||
+        mediaRequestDeadline > const Duration(seconds: 60)) {
       throw ArgumentError('Invalid client deadlines.');
     }
   }
@@ -404,6 +415,7 @@ class TimewebAuthClient {
   final TimewebAuthConfiguration configuration;
   final Duration requestDeadline;
   final Duration accessExpirySkew;
+  final Duration mediaRequestDeadline;
   final TimewebSecureTokenStore _store;
   final http.Client _http;
   final bool _ownsTransport;
@@ -417,6 +429,8 @@ class TimewebAuthClient {
   bool _secureStoreUnsafe = false;
   bool _closed = false;
   int _inflightRequests = 0;
+  final Map<String, _PrivateMediaFlight> _mediaFlights = {};
+  bool _mediaPumping = false;
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _session?.uid;
@@ -439,6 +453,7 @@ class TimewebAuthClient {
 
   int _newEpoch() {
     _epoch++;
+    _cancelPrivateMedia(this);
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -633,6 +648,11 @@ class TimewebAuthClient {
       rethrow;
     }
   }
+
+  /// No media cache. Binary reads are bound to the current logical session.
+  Future<TimewebPrivateMediaBytes> readPrivateMedia(
+    TimewebPrivateMediaRequest request,
+  ) => _readPrivateMedia(this, request);
 
   /// No profile value cache. Every read is authorized by its own opaque bearer.
   Future<Map<String, dynamic>> readOwnProfile() async {
