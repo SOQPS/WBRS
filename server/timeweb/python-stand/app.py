@@ -283,9 +283,14 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
 
     def close():
         with init_lock:
-            close_media = getattr(media_http, "close", None)
-            if callable(close_media):
-                close_media()
+            for service in (media_http, native_service):
+                cleanup = getattr(service, "close", None)
+                if callable(cleanup):
+                    try:
+                        cleanup()
+                    except Exception:
+                        # Finish independent cleanup even if one port fails.
+                        pass
     application.close = close
     return application
 

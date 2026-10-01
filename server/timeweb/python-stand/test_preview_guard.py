@@ -14,7 +14,8 @@ class PreviewGuardTest(unittest.TestCase):
         def factory(name):
             def construct(env):
                 calls.append(name)
-                return SimpleNamespace(dispatch=lambda *a, **k: None)
+                return SimpleNamespace(dispatch=lambda *a, **k: None,
+                                       close=lambda: calls.append(name + "-closed"))
             return construct
         def verify(*a, **k):
             calls.append("auth")
@@ -67,6 +68,8 @@ class PreviewGuardTest(unittest.TestCase):
         self.assertEqual(calls, ["legacy", "media", "native", "auth", "sql"])
         self.assertEqual(request(preview, "/v1/me/profile", proof.rstrip("=")), "200 OK")
         self.assertEqual(calls.count("native"), 1)
+        preview.close()
+        self.assertEqual(calls[-2:], ["media-closed", "native-closed"])
         calls.clear()
         app({k: v for k, v in env.items() if not k.startswith("CLRS_PREVIEW_")})
         self.assertEqual(calls, ["legacy", "media", "native"])
