@@ -1,0 +1,206 @@
+import 'dart:math';
+
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'app_session.dart';
+import 'timeweb_auth_client.dart';
+import 'timeweb_auth_lifecycle.dart';
+
+/// One native runtime owner. No Firebase identity, profile hydration or token
+/// fallback. Replacing this owner requires awaiting stop, which keeps protected
+/// remembered credentials; close on the underlying client remains destructive.
+final class TimewebAppRuntime {
+  TimewebAppRuntime({
+    required TimewebAuthConfiguration configuration,
+    required TimewebSecureTokenStore secureStore,
+    required this.deviceId,
+    required this.expectedSourceSnapshot,
+    required Future<void> Function() clearLocal,
+    http.Client? transport,
+    DateTime Function()? clock,
+    this.emailLifecycleEnabled = false,
+    this.registrationEnabled = false,
+    Duration waitTimeout = const Duration(seconds: 20),
+  }) {
+    if (!configuration.enabled ||
+        !RegExp(r'^[A-Za-z0-9._:-]{1,191}$').hasMatch(deviceId) ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedSourceSnapshot)) {
+      throw ArgumentError('Native runtime configuration is unavailable.');
+    }
+    _rememberStore = _RememberingTokenStore(secureStore);
+    client = TimewebAuthClient(
+      configuration: configuration,
+      secureStore: _rememberStore,
+      transport: transport,
+      clock: clock,
+    );
+    session = AppSession.timeweb(
+      client: client,
+      clearLocal: clearLocal,
+      waitTimeout: waitTimeout,
+    );
+  }
+
+  late final TimewebAuthClient client;
+  late final _RememberingTokenStore _rememberStore;
+  final String deviceId, expectedSourceSnapshot;
+  final bool emailLifecycleEnabled, registrationEnabled;
+  late final AppSession session;
+  Future<AppSessionResult>? _start;
+  bool _policyUnsafe = false;
+
+  /// The install ID is routing metadata, never a password/token/account ID.
+  static Future<String> loadDeviceId(SharedPreferences preferences) async {
+    const key = 'timeweb_device_id';
+    final old = preferences.getString(key);
+    if (old != null) {
+      if (!RegExp(r'^clrs-android-[a-f0-9]{32}$').hasMatch(old)) {
+        throw StateError('Native device configuration is unavailable.');
+      }
+      return old;
+    }
+    final random = Random.secure();
+    final id =
+        'clrs-android-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+    if (!await preferences.setString(key, id)) {
+      throw StateError('Native device configuration is unavailable.');
+    }
+    return id;
+  }
+
+  /// Read OS-protected tokens once. Explicit remember=false clears locally at
+  /// cold start, before any restore/read, without claiming remote logout.
+  Future<AppSessionResult> start({required bool remember}) =>
+      _start ??= (() async {
+        await setRemember(remember);
+        return session.restore();
+      })();
+
+  Future<void> setRemember(bool remember) async {
+    if (_policyUnsafe) {
+      throw StateError('Protected session storage is unavailable.');
+    }
+    try {
+      await _rememberStore.setRemember(remember);
+    } catch (_) {
+      // An unconfirmed clear revokes the runtime too. This owner cannot be
+      // reused for B or claim a safe remembered restart after that failure.
+      _policyUnsafe = true;
+      await stop();
+      throw StateError('Protected session storage is unavailable.');
+    }
+  }
+
+  Future<AppSessionResult> login({
+    required String email,
+    required String password,
+  }) => session.login(email: email, password: password, deviceId: deviceId);
+
+  Future<TimewebSessionProfile> readGateProfile() =>
+      session.runAuthenticated((lease) async {
+        final profile = await client.readFullOwnProfile(
+          expectedSourceSnapshot: expectedSourceSnapshot,
+        );
+        lease.requireCurrent();
+        profile.requireCurrent();
+        return TimewebSessionProfile._(lease, profile);
+      });
+
+  TimewebAuthLifecycleClient createEmailLifecycleClient(
+    TimewebLifecyclePurpose purpose,
+  ) {
+    // A route builder may run after stop. Keep it an explicitly native,
+    // disabled form instead of throwing in the builder or falling to Firebase.
+    final live =
+        session.state.phase != AppSessionPhase.stopped &&
+        session.state.phase != AppSessionPhase.closed;
+    return TimewebAuthLifecycleClient(
+      configuration: client.configuration,
+      enabled:
+          live &&
+          emailLifecycleEnabled &&
+          (purpose != TimewebLifecyclePurpose.registerEmail ||
+              registrationEnabled),
+      session: session,
+    );
+  }
+
+  Future<bool> stop() async {
+    var result = await session.stop();
+    while (result.outcome == AppSessionOutcome.pending &&
+        result.settled != null) {
+      result = await result.settled!;
+    }
+    return result.confirmed && !_policyUnsafe;
+  }
+
+  @override
+  String toString() => 'TimewebAppRuntime(<redacted>)';
+}
+
+/// Policy only: tokens remain in the actual client or protected store. There is
+/// no second RAM token cache/plaintext persistence. Serialize against actual
+/// platform IO, including a prior remembered write that is still settling.
+final class _RememberingTokenStore implements TimewebSecureTokenStore {
+  _RememberingTokenStore(this._protected);
+  final TimewebSecureTokenStore _protected;
+  bool _remember = true;
+  Future<void> _tail = Future<void>.value();
+  Future<T> _serial<T>(Future<T> Function() action) {
+    final operation = _tail.then((_) => action());
+    _tail = operation.then<void>((_) {}, onError: (Object _) {});
+    return operation;
+  }
+
+  Future<void> setRemember(bool value) {
+    _remember = value;
+    return _serial(() async {
+      if (!value) await _protected.clear();
+    });
+  }
+
+  @override
+  Future<TimewebSession?> read() => _serial(() async {
+    if (!_remember) {
+      await _protected.clear();
+      return null;
+    }
+    return _protected.read();
+  });
+  @override
+  Future<void> write(TimewebSession session) => _serial(() async {
+    if (_remember) {
+      await _protected.write(session);
+    } else {
+      await _protected.clear();
+    }
+  });
+  @override
+  Future<void> clear() => _serial(_protected.clear);
+}
+
+/// The source DTO is an immutable reviewed snapshot, not current production
+/// profile authority. Both facade and native-client leases must still be live.
+final class TimewebSessionProfile {
+  TimewebSessionProfile._(this._lease, this._source);
+  final AppSessionLease _lease;
+  final TimewebFullOwnProfile _source;
+  void requireCurrent() {
+    _lease.requireCurrent();
+    _source.requireCurrent();
+  }
+
+  TimewebOnboarding get onboarding {
+    requireCurrent();
+    return _source.onboarding;
+  }
+
+  TimewebFullOwnProfile get source {
+    requireCurrent();
+    return _source;
+  }
+
+  @override
+  String toString() => 'TimewebSessionProfile(<redacted>)';
+}

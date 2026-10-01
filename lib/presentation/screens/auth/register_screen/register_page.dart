@@ -1,3 +1,4 @@
+import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/shared/clrs_auth_shell.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/app/pages/policy/soglashenie.dart';
@@ -23,10 +24,12 @@ class RegisterPage extends StatefulWidget {
     this.authService,
     this.consentConfirmed = false,
     this.timewebLifecycle,
+    this.nativeRuntime,
   });
   final AuthService? authService;
   final bool consentConfirmed;
   final TimewebAuthLifecycleClient? timewebLifecycle;
+  final TimewebAppRuntime? nativeRuntime;
 
   @override
   State<RegisterPage> createState() => _RegisterPageState();
@@ -48,12 +51,17 @@ class _RegisterPageState extends State<RegisterPage> {
   void initState() {
     super.initState();
     _native =
-        widget.timewebLifecycle != null || AppBackend.usesTimewebEmailLifecycle;
+        widget.timewebLifecycle != null ||
+        widget.nativeRuntime != null ||
+        AppBackend.usesTimewebEmailLifecycle;
     if (widget.consentConfirmed) {
       if (_native) {
         try {
           _lifecycle =
               widget.timewebLifecycle ??
+              widget.nativeRuntime?.createEmailLifecycleClient(
+                TimewebLifecyclePurpose.registerEmail,
+              ) ??
               AppBackend.createEmailLifecycleClient(
                 TimewebLifecyclePurpose.registerEmail,
               );
@@ -78,7 +86,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) => !widget.consentConfirmed
-      ? const RegistrationConsentPage()
+      ? RegistrationConsentPage(nativeRuntime: widget.nativeRuntime)
       : _native
       ? ClrsAuthShell(
           child: Column(
@@ -236,7 +244,10 @@ class _RegisterPageState extends State<RegisterPage> {
                             ? null
                             : () => nextScreenReplace(
                                 context,
-                                LoginPage(initialEmail: _emailController.text),
+                                LoginPage(
+                                  initialEmail: _emailController.text,
+                                  nativeRuntime: widget.nativeRuntime,
+                                ),
                               ),
                         child: Text(context.tr('Войти')),
                       ),
