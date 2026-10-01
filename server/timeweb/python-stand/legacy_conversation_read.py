@@ -17,7 +17,7 @@ import time
 from auth_bridge import AuthenticatedIdentity
 from native_sessions import NativeIdentity
 from native_auth import BoundedRateLimiter, NativeRateLimited
-from profile_store import _database_config
+from profile_store import _database_config, BUNDLED_CA_FILE
 from legacy_conversation_payload import (LegacyInvalid, MAX_DOCUMENT_BYTES,
     OpaqueReferences, document, field, identifier, message_time, message_view,
     media_reference, payload_digest, profile_view, string_field, uid_list)
@@ -122,7 +122,7 @@ class LegacyConversationReadService:
         if not all(isinstance(part, str) and 1 <= len(part) <= 191 for part in source):
             raise LegacyReadUnavailable()
         config = _database_config({"CLRS_DB_URL": self._env.get("CLRS_LEGACY_READ_DB_URL", ""),
-            "CLRS_DB_CA_FILE": self._env.get("CLRS_LEGACY_READ_DB_CA_FILE", "")})
+            "CLRS_DB_CA_FILE": self._env.get("CLRS_LEGACY_READ_DB_CA_FILE", BUNDLED_CA_FILE)})
         config.update(autocommit=False, charset="utf8mb4", connect_timeout=2, read_timeout=2, write_timeout=2)
         return config, source, pin
 

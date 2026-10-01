@@ -18,7 +18,7 @@ import base64
 
 from native_credentials import (CredentialCodec, CredentialMaterial, CredentialUnavailable,
                                 compact_json, credential_row_identity)
-from profile_store import _database_config, DatabaseUnavailable
+from profile_store import _database_config, DatabaseUnavailable, BUNDLED_CA_FILE
 
 
 class SessionRejected(Exception):
@@ -258,7 +258,7 @@ class NativeSessionStore:
         try:
             configuration = _database_config({"CLRS_DB_URL": self._env.get("CLRS_NATIVE_AUTH_DB_URL", ""),
                 "CLRS_DB_CA_FILE": self._env.get("CLRS_NATIVE_AUTH_DB_CA_FILE",
-                                                self._env.get("CLRS_DB_CA_FILE", ""))})
+                                                self._env.get("CLRS_DB_CA_FILE", BUNDLED_CA_FILE))})
             configuration.update(connect_timeout=2, read_timeout=2, write_timeout=2,
                                  autocommit=False, charset="utf8mb4")
             connect = self._connect

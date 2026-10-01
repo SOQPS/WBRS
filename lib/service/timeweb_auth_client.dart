@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+part 'timeweb_own_profile.dart';
+
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
   TimewebAuthConfiguration({required this.endpoint, this.enabled = false}) {
@@ -643,6 +645,39 @@ class TimewebAuthClient {
     }
     _checkEpoch(granted.epoch, op);
     return Map<String, dynamic>.unmodifiable(profile);
+  }
+
+  /// Fixed read-only route, bound to the reviewed public snapshot and current
+  /// logical session. This DTO cannot be used as a financial hydration map.
+  Future<TimewebFullOwnProfile> readFullOwnProfile({
+    required String expectedSourceSnapshot,
+  }) async {
+    const op = TimewebAuthOperation.profile;
+    _checkEnabled(op);
+    if (!_ownProfileDigest(expectedSourceSnapshot)) {
+      throw const TimewebAuthException(op, TimewebAuthError.invalidRequest);
+    }
+    final granted = await _authorizedGet(
+      op,
+      '/v1/me/full-profile',
+      maxBytes: 262144,
+    );
+    void check() {
+      _checkEpoch(granted.epoch, op);
+      if (_secureStoreUnsafe || _session?.uid != granted.uid) {
+        throw const TimewebAuthException(op, TimewebAuthError.staleSession);
+      }
+    }
+
+    check();
+    final result = _decodeFullOwnProfile(
+      granted.body,
+      uid: granted.uid,
+      expectedSourceSnapshot: expectedSourceSnapshot,
+      check: check,
+    );
+    check();
+    return result;
   }
 
   Future<TimewebAuthorizedRead> readConversation(
