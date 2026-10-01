@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.policy import SMTP
+import math
 import re
 import smtplib
 import ssl
@@ -120,17 +121,23 @@ class NativeMailTransport:
         if active is not None:
             active.abort()
 
-    def deliver(self, intent):
+    def deliver(self, intent, *, deadline=None):
         if type(intent) is not NativeMailIntent:
             raise MailInvalid()
         raw = intent.message()
+        now = self._clock()
+        if deadline is not None and (type(deadline) not in (int, float)
+                or not math.isfinite(deadline) or deadline <= now):
+            raise MailInvalid()
+        # Absolute verified outbox budget is never reset by waiting/dispatch.
+        # The existing shared transport slot and its global cap stay intact.
+        deadline = min(now + self._seconds, deadline) if deadline is not None else now + self._seconds
         with self._lock:
             if self._closed or self._active is not None:
                 raise MailUnavailable()
             work = _Delivery()
             self._active = work
             password = self._password
-        deadline = self._clock() + self._seconds
 
         def check():
             if work.cancel.is_set() or self._clock() >= deadline:
@@ -140,8 +147,10 @@ class NativeMailTransport:
             smtp = None
             try:
                 check()
+                context = ssl.create_default_context()
+                check()
                 smtp = self._factory("smtp.yandex.ru", 465,
-                    context=ssl.create_default_context(), timeout=min(2, self._seconds))
+                    context=context, timeout=min(2, deadline - self._clock()))
                 with work.lock:
                     work.smtp = smtp
                 check()

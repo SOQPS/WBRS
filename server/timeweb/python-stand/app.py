@@ -19,6 +19,7 @@ from native_credentials import unique_json, CredentialUnavailable
 from legacy_conversation_http import LegacyConversationHttp
 from legacy_private_media_http import LegacyPrivateMediaHttp, MediaHttpReply
 from runtime_http import RuntimeMutationHttp
+from native_auth_lifecycle_http import NativeAuthLifecycleHttp
 
 
 def _reply(start_response, status, payload, *, head=False, authenticate=False, retry=False):
@@ -95,11 +96,12 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                native_service_factory=NativeAuthService.from_env,
                legacy_http_factory=LegacyConversationHttp,
                media_http_factory=LegacyPrivateMediaHttp,
-               runtime_http_factory=RuntimeMutationHttp):
+               runtime_http_factory=RuntimeMutationHttp,
+               lifecycle_http_factory=NativeAuthLifecycleHttp):
     """Construct WSGI app with injectable dependencies for offline tests."""
     if env is None:
         env = os.environ
-    native_service = legacy_http = media_http = runtime_http = None
+    native_service = legacy_http = media_http = runtime_http = lifecycle_http = None
     initialized = False
     init_lock = threading.Lock()
     preview_flag = env.get("CLRS_PREVIEW_GUARD_ENABLED")
@@ -120,7 +122,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
     native_configured = (env.get("CLRS_NATIVE_AUTH_ENABLED") == "1"
                          and env.get("CLRS_NATIVE_AUTH_WRITES_ENABLED") == "1")
     def initialize():
-        nonlocal native_service, legacy_http, media_http, runtime_http, initialized
+        nonlocal native_service, legacy_http, media_http, runtime_http, lifecycle_http, initialized
         with init_lock:
             if initialized:
                 return
@@ -133,6 +135,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                 except Exception:
                     # Invalid secret/configuration closes routes without exposing it.
                     native_service = None
+            lifecycle_http = lifecycle_http_factory(env, native_service)
             initialized = True
     if not preview:
         initialize()
@@ -222,6 +225,10 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
             return _reply(start_response, "200 OK", payload)
 
         if api:
+            lifecycle_reply = lifecycle_http.dispatch(environ)
+            if lifecycle_reply is not None:
+                return _reply(start_response, lifecycle_reply.status, lifecycle_reply.payload,
+                              retry=lifecycle_reply.retry)
             runtime_reply = runtime_http.dispatch(environ, native_service=native_service,
                                                  native_configured=native_configured)
             if runtime_reply is not None:
@@ -291,7 +298,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
 
     def close():
         with init_lock:
-            for service in (media_http, native_service, runtime_http):
+            for service in (lifecycle_http, media_http, native_service, runtime_http):
                 cleanup = getattr(service, "close", None)
                 if callable(cleanup):
                     try:

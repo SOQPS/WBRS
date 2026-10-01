@@ -1,9 +1,10 @@
 # Prepared native password and email challenge lifecycle
 
-Status: codecs, default-off composite login, trusted reset/pending-registration
-SQL leaves, durable challenge and digest-only receipt leaves, encrypted mail
-envelope and proposed schema. No lifecycle HTTP handler, live SQL application, SMTP
-delivery, account change or password reset is enabled by this change.
+Status: codecs, default-off composite login, two-phase completion and atomic
+request assemblies, durable challenges/receipts, encrypted outbox, strictly gated
+HTTP mount and proposed schema. Local generated-data SQL/API checks passed.
+Live schema application, SMTP delivery, source write barrier, app activation and
+production account/password changes remain unproved and disabled.
 The existing Firebase password path remains the default. The composite store
 is selected only with `CLRS_NATIVE_PASSWORD_ENABLED=1`; with the flag absent or
 `0`, it does not reference the proposed native credential table. Unknown flag
@@ -51,9 +52,9 @@ unchanged Firebase codec/verifier and official published test password apply.
 KDF workers. Timeout, close or unknown outcome do not release a running slot
 early or adopt its late result. No queued overflow is accepted. Password bytes
 are preserved without trimming or Unicode normalization; UTF-8 bound is 4096.
-Creation rejects an empty password. A reviewed registration/password-change
-minimum policy is still required at the future API boundary; the codec does not
-retroactively impose it on old Firebase passwords. Python cannot promise
+Creation rejects an empty password. The new API requires at least six characters
+and at most 4096 UTF-8 bytes for a new password, preserving its exact bytes; it
+does not retroactively impose that rule on old Firebase passwords. Python cannot promise
 zeroization of immutable password objects; their lifetime is bounded by real
 worker completion and they are never logged or put into generic receipts.
 
@@ -116,20 +117,24 @@ local measurements, not Timeweb runtime capacity/performance proof.
 
 ## Proposed challenge and delivery transactions
 
-Suggested API, not implemented:
+Implemented API mount, default-off and behind the existing preview guard:
 
 | Action | Request body | Response |
 | --- | --- | --- |
-| POST `/v1/auth/registration/request` | `operationId,email` | generic 202 + opaque challengeId |
-| POST `/v1/auth/registration/complete` | `operationId,challengeId,code,password` | success without automatic session, or generic refusal |
+| POST `/v1/auth/register-email/request` | `operationId,email` | generic 202 + opaque challengeId |
+| POST `/v1/auth/register-email/complete` | `operationId,challengeId,code,password` | success without automatic session, or generic refusal |
 | POST `/v1/auth/password-reset/request` | `operationId,email` | generic 202 + opaque challengeId |
 | POST `/v1/auth/password-reset/complete` | `operationId,challengeId,code,password` | success requiring fresh login, or generic refusal |
+| POST `/v1/auth/operations/lookup` | `operationToken` OR `purpose,stage,original` | read-only original receipt, never retry authority |
 
 Every unavailable/existing email request uses the same outward 202 shape and
 synthetic opaque ID without sending mail or exposing account existence. No
-credentials, codes or email go in query strings/logs. Future unknown-outcome
-lookup must use a bounded protected POST and a keyed sensitive-payload digest;
-do not publish an unkeyed password digest to the client or URL.
+credentials, codes or email go in query strings/logs. Unknown-outcome lookup
+uses a bounded protected POST and a sealed digest-only operation token. If the
+whole response was lost, the client explicitly looks up its exact original body
+retained only in memory. Neither branch checks a code or repeats a write.
+Immutable encrypted outbox context preserves original UID/email after challenge
+replacement, expiry or later email/version changes; it grants no delivery authority.
 
 `AuthChallengeCodec(session_key: bytes32)` derives separate code and normalized
 email HMAC keys. `digest(uid,email,purpose,challenge_id,account_token_version,
@@ -148,8 +153,10 @@ challengeID never creates a new throttle row, resets counters or deletes old
 history. History is a bounded array of integer UTC seconds, at most five.
 Lock order is account -> challenge -> receipt -> credential/session/outbox.
 Account row locking also serializes registration vs reset issuance. Existing
-per-peer process rate limit is supplemental; a durable global/per-IP abuse
-budget is not supplied by these two tables and remains a future API gate.
+per-peer process rate limit is supplemental. The API adds a durable global
+issuance budget over SERIALIZABLE outbox ranges: at most 20 emails/minute and
+100/hour; the trusted socket-peer limit is ten lifecycle calls/minute, with five
+per canonical email/minute. Client X-Forwarded-For identity is not trusted.
 
 For signup, only a successful **new INSERT** into accounts under unique
 normalized email can establish pending authority. Account initially has
@@ -205,8 +212,8 @@ Strict table-only role validators must explicitly add only needed tables if
 that alternative permission model is used. A distinct default-off lifecycle
 flag must avoid selecting absent tables before migration. Closed preview guard,
 fixed TLS CA/hostname verification and existing current account/session checks
-remain required. SMTP actual credentials/delivery, outer lifecycle transaction
-and HTTP integration, post-KDF revalidation, migration backup/version receipt
+remain required. SMTP actual credentials/delivery, runtime schema application,
+migration backup/version receipt, final source synchronization/write barrier
 and controlled login/reset/register
 proofs must pass before saying native registration/reset or Firebase-free
 production authentication works. This change supplies none of those live proofs.
@@ -273,3 +280,55 @@ bounded SQL statements produced no unexpected driver error. The local server
 was stopped; earlier password scenarios, restored real data, cloud schema,
 SMTP and live permissions were not touched. No lifecycle API or delivery was
 enabled by these checks.
+
+## Mounted assembly and activation conditions
+
+`native_auth_request` atomically reserves a genuinely new pending account,
+issues one challenge, encrypts one outbox intent and finishes its safe receipt.
+`native_auth_completion` releases the first SQL transaction before the shared
+KDF, then re-locks current account/challenge and atomically consumes the original
+code, changes credentials/activation, revokes reset sessions and finishes the
+receipt. Valid-code preparation never commits a started receipt before KDF.
+Unknown COMMIT returns original keyed fingerprint; no automatic replay occurs.
+
+`native_auth_lifecycle_http` is mounted after the preview guard in `app.py`.
+It requires `CLRS_NATIVE_AUTH_LIFECYCLE_ENABLED=1`, the existing auth/write,
+password/challenge flags, provider-database role, verified working mail and
+`CLRS_NATIVE_AUTH_MAIL_WORKER_ENABLED=1`.
+These flags remain off on the closed live stand. Signup additionally requires
+`CLRS_NATIVE_REGISTRATION_ENABLED=1` and
+`CLRS_NATIVE_REGISTRATION_SOURCE_AUTHORITY=final-auth-import-and-write-barrier-v1`.
+That assertion is permitted ONLY after the actual final canonical Auth import
+and old-source write barrier are verified. The first inconsistent snapshot
+does not qualify. Table-only alternative grants are not silently expanded.
+
+Seven completion and seven request synthetic tests passed. Four new completion
+groups through actual local MySQL/store transactions confirmed two-phase KDF,
+replay without writes, a version race and COMMIT with lost acknowledgement.
+One new WSGI/local SQL flow confirmed preview denial, signup including a wrong
+attempt, protected receipt lookup, reset of the same account and generic unknown
+email response. Further original-body lookups recovered lost request/completion
+responses without KDF or writes, including after current email/challenge changes.
+These used generated accounts, not real users; mail verification and final-source
+gates were synthetic assertions. They do not prove SMTP, live TLS/grants, source
+consistency or app cutover.
+
+`native_auth_mail_worker` claims one encrypted intent, requires acknowledged
+claim COMMIT and a different connection's fresh verification COMMIT, releases
+all SQL locks, then passes the remaining absolute budget to the shared SMTP
+transport. Unknown SQL/SMTP outcome is never automatically sent again.
+`native_auth_mail_dispatcher` owns one background daemon, checks an eligible
+current row every five seconds and coalesces nonblocking HTTP wake events.
+The 32-second maximum spans background SQL/delivery phases, never HTTP waiting.
+Stale-email intents are retired with an acknowledged exact-row write and no
+SMTP/code-attempt charge; they cannot hot-loop or block later current rows.
+Uncertain claim/verification/finish halts dispatch until explicit operator
+read-only reconciliation/restart; automatic recovery is not claimed.
+Shutdown closes the SMTP transport before cancel/join, preventing late delivery.
+
+The separate Flutter `TimewebAuthLifecycleClient` is typed and default-off. It
+retains exact original input only within a bounded in-memory screen/account
+scope, deduplicates taps, aborts real HTTP/stream ownership, blocks late A-B-A
+responses and performs explicit read-only reconciliation without resending a
+mutation. Two targeted Flutter scenarios and scoped analysis passed. It is not
+installed in the auth screens or the application's backend selector yet.

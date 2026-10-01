@@ -12,7 +12,8 @@ The host, port and sender cannot be changed to a client-provided destination.
 
 Only two fixed Russian templates exist: email verification and password reset,
 with a six-digit code and a ten-minute lifetime. This file implements the
-transport, **not a working reset/registration API**. Before installing a route,
+transport, **not live verified reset/registration delivery**. The separately
+gated lifecycle API now exists; before enabling its routes,
 the server must persist an account/purpose-bound single-use challenge, an
 expiry, a bounded attempt counter, rate limits and the durable delivery intent.
 It must revoke applicable sessions when a password changes. Arbitrary users
@@ -30,3 +31,13 @@ On 2026-10-01 one real TLS SMTP authentication probe reached Yandex and was
 rejected with status 535. No email was sent. A working application password,
 deployed lifecycle routes and controlled recipient delivery remain unproved.
 Do not enable mail or declare password recovery migrated on this evidence.
+
+The gated lifecycle factory additionally requires `CLRS_MAIL_AUTH_VERIFIED=1`
+after a new successful real authentication/delivery proof, and
+`CLRS_NATIVE_AUTH_MAIL_WORKER_ENABLED=1`. It shares one bounded SMTP transport
+with its background dispatcher; HTTP only wakes the queue. Auth-mail payloads
+are encrypted and bound to the original UID/purpose/code. Acknowledged SQL claim
+and fresh different-connection verification precede one SMTP attempt. Unknown
+delivery/COMMIT is never retried automatically; dispatch stops for explicit
+read-only reconciliation. Shutdown aborts transport before stopping dispatch.
+These source paths are default-off and do not constitute actual delivery proof.
