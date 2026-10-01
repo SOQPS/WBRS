@@ -18,6 +18,7 @@ from native_auth import (MAX_BODY_BYTES, NativeAuthService, NativeRateLimited,
 from native_credentials import unique_json, CredentialUnavailable
 from legacy_conversation_http import LegacyConversationHttp
 from legacy_private_media_http import LegacyPrivateMediaHttp, MediaHttpReply
+from runtime_http import RuntimeMutationHttp
 
 
 def _reply(start_response, status, payload, *, head=False, authenticate=False, retry=False):
@@ -93,11 +94,12 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                profile_reader=read_own_profile, database_probe=probe_database,
                native_service_factory=NativeAuthService.from_env,
                legacy_http_factory=LegacyConversationHttp,
-               media_http_factory=LegacyPrivateMediaHttp):
+               media_http_factory=LegacyPrivateMediaHttp,
+               runtime_http_factory=RuntimeMutationHttp):
     """Construct WSGI app with injectable dependencies for offline tests."""
     if env is None:
         env = os.environ
-    native_service = legacy_http = media_http = None
+    native_service = legacy_http = media_http = runtime_http = None
     initialized = False
     init_lock = threading.Lock()
     preview_flag = env.get("CLRS_PREVIEW_GUARD_ENABLED")
@@ -118,12 +120,13 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
     native_configured = (env.get("CLRS_NATIVE_AUTH_ENABLED") == "1"
                          and env.get("CLRS_NATIVE_AUTH_WRITES_ENABLED") == "1")
     def initialize():
-        nonlocal native_service, legacy_http, media_http, initialized
+        nonlocal native_service, legacy_http, media_http, runtime_http, initialized
         with init_lock:
             if initialized:
                 return
             legacy_http = legacy_http_factory(env)
             media_http = media_http_factory(env)
+            runtime_http = runtime_http_factory(env)
             if native_configured:
                 try:
                     native_service = native_service_factory(env)
@@ -219,6 +222,11 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
             return _reply(start_response, "200 OK", payload)
 
         if api:
+            runtime_reply = runtime_http.dispatch(environ, native_service=native_service,
+                                                 native_configured=native_configured)
+            if runtime_reply is not None:
+                return _reply(start_response, runtime_reply.status, runtime_reply.payload,
+                              authenticate=runtime_reply.authenticate, retry=runtime_reply.retry)
             media_reply = media_http.dispatch(environ, native_service=native_service,
                                              native_configured=native_configured)
             if isinstance(media_reply, MediaHttpReply):
@@ -283,7 +291,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
 
     def close():
         with init_lock:
-            for service in (media_http, native_service):
+            for service in (media_http, native_service, runtime_http):
                 cleanup = getattr(service, "close", None)
                 if callable(cleanup):
                     try:
