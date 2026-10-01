@@ -79,6 +79,29 @@ class RuntimeHttpTests(unittest.TestCase):
             self.assertEqual(reply.status, "404 Not Found")
         self.assertEqual(self.native.calls, [])
 
+    def test_current_get_and_send_share_pool_without_route_collision(self):
+        reader = SimpleNamespace(messages=lambda identity, resource, **options:
+            {"kind": "canonical-current", "chatId": resource, "items": [],
+             "uid": identity.uid, "limit": options["limit"]})
+        captured = []
+        def create_reader(store, _):
+            captured.append(store)
+            return reader
+        http = RuntimeMutationHttp(ENV, service_factory=lambda _: (self.services,) * 3,
+                                   read_factory=create_reader)
+        reply = http.dispatch(env("/v1/runtime/chats/chat/messages", REQUEST_METHOD="GET",
+                                  QUERY_STRING="limit=2"),
+                              native_service=self.native, native_configured=True)
+        self.assertEqual(reply.status, "200 OK")
+        self.assertEqual(reply.payload["chatId"], "chat")
+        self.assertEqual(reply.payload["uid"], "self-uid")
+        self.assertEqual(captured, [self.services])
+        sent = http.dispatch(env("/v1/runtime/chats/chat/messages", {
+            "operationId": OP, "text": "text", "quoteMessageId": None}),
+            native_service=self.native, native_configured=True)
+        self.assertEqual(sent.status, "201 Created")
+        self.assertEqual(self.services.calls[-1][0], "send")
+
     def test_send_read_profile_forward_exact_self_identity_and_original_payload(self):
         request = env("/v1/runtime/chats/chat/messages", {
             "operationId": OP, "text": " original text ", "quoteMessageId": None},

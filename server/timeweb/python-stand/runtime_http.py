@@ -15,6 +15,7 @@ from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest,
     RuntimeRejected, RuntimeConflict, RuntimeUnavailable, RuntimeCommitUnknown)
 from runtime_chat import RuntimeChatService
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
+from runtime_read_http import RuntimeReadHttp
 
 
 _OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1"})
@@ -73,7 +74,7 @@ def _create(env):
 
 
 class RuntimeMutationHttp:
-    def __init__(self, env, *, service_factory=_create):
+    def __init__(self, env, *, service_factory=_create, read_factory=None):
         self._enabled = (env.get("CLRS_RUNTIME_WRITES_ENABLED") == "1"
             and env.get("CLRS_RUNTIME_MEMBERSHIP_AUTHORITY") == "canonical-current-v1")
         self._services = None
@@ -82,8 +83,11 @@ class RuntimeMutationHttp:
                 self._services = service_factory(env)
             except Exception:
                 pass
+        self._reads = RuntimeReadHttp(env, self._services[0] if self._services else None,
+                                      read_factory=read_factory)
 
     def close(self):
+        self._reads.close()
         if self._services is not None:
             cleanup = getattr(self._services[0], "close", None)
             if callable(cleanup):
@@ -91,6 +95,10 @@ class RuntimeMutationHttp:
             self._services = None
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
+        read_reply = self._reads.dispatch(environ, native_service=native_service,
+                                          native_configured=native_configured)
+        if read_reply is not None:
+            return read_reply
         route = _route(environ.get("PATH_INFO", ""))
         if route is None:
             return None
