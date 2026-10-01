@@ -113,6 +113,7 @@ class LegacyConversationReadService:
                 or self._env.get("CLRS_LEGACY_READ_SNAPSHOT_REVIEWED") != "1"
                 or self._env.get("CLRS_LEGACY_READ_MEMBERSHIP_MODE") != "immutable-reviewed-snapshot"):
             raise LegacyReadUnavailable()
+        self.permission_model
         pin = self._env.get("CLRS_LEGACY_READ_SOURCE_SHA256", "")
         if not re.fullmatch(r"[a-f0-9]{64}", pin):
             raise LegacyReadUnavailable()
@@ -138,8 +139,16 @@ class LegacyConversationReadService:
             raise LegacyReadRejected()
         return uid
 
-    @staticmethod
-    def _grants(rows):
+    @property
+    def permission_model(self):
+        model = self._env.get("CLRS_LEGACY_READ_PERMISSION_MODEL", "strict-tables-v1")
+        if not isinstance(model, str) or model not in {"strict-tables-v1", "provider-database-v1"}:
+            raise LegacyReadUnavailable()
+        return model
+
+    def _grants(self, rows):
+        if self.permission_model == "provider-database-v1":
+            return self._database_grants(rows)
         found = set(); usage = False
         for row in rows:
             if len(row) != 1 or not isinstance(row[0], str):
@@ -158,6 +167,28 @@ class LegacyConversationReadService:
                     raise LegacyReadUnavailable()
                 found.add(match[3])
         if not usage or found != TABLES:
+            raise LegacyReadUnavailable()
+
+    @staticmethod
+    def _database_grants(rows):
+        usage = False; database = False
+        pattern = (r"GRANT (USAGE|SELECT) ON (\*\.\*|`clrs_staging`\.\*) TO "
+            r"(?:`[^`]+`|'[^']+')@(?:`[^`]+`|'[^']+')( REQUIRE SSL)?")
+        for row in rows:
+            if not isinstance(row, (tuple, list)) or len(row) != 1 or not isinstance(row[0], str):
+                raise LegacyReadUnavailable()
+            match = re.fullmatch(pattern, row[0])
+            if match is None:
+                raise LegacyReadUnavailable()
+            if match[2] == "*.*":
+                if match[1] != "USAGE" or usage:
+                    raise LegacyReadUnavailable()
+                usage = True
+            else:
+                if match[1] != "SELECT" or database or match[3]:
+                    raise LegacyReadUnavailable()
+                database = True
+        if not usage or not database:
             raise LegacyReadUnavailable()
 
     def _read(self, identity, action):

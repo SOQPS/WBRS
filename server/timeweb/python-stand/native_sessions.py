@@ -182,6 +182,14 @@ class NativeSessionStore:
         if (self._env.get("CLRS_NATIVE_AUTH_ENABLED") != "1"
                 or self._env.get("CLRS_NATIVE_AUTH_WRITES_ENABLED") != "1"):
             raise SessionUnavailable()
+        self.permission_model
+
+    @property
+    def permission_model(self):
+        model = self._env.get("CLRS_NATIVE_AUTH_PERMISSION_MODEL", "strict-tables-v1")
+        if not isinstance(model, str) or model not in {"strict-tables-v1", "provider-database-v1"}:
+            raise SessionUnavailable()
+        return model
 
     def _execute(self, cursor, sql, params=(), *, deadline):
         if self._monotonic() >= deadline:
@@ -191,6 +199,8 @@ class NativeSessionStore:
             raise SessionUnavailable()
 
     def _grants(self, rows):
+        if self.permission_model == "provider-database-v1":
+            return self._database_grants(rows)
         expected = {"accounts": {"SELECT"}, "auth_credentials": {"SELECT"},
                     "device_sessions": {"SELECT", "INSERT", "UPDATE"}}
         found = {table: set() for table in expected}; usage = False
@@ -213,6 +223,34 @@ class NativeSessionStore:
                     raise SessionUnavailable()
                 found[table].update(privileges)
         if not usage or found != expected:
+            raise SessionUnavailable()
+
+    @staticmethod
+    def _database_grants(rows):
+        # Explicit provider mode: exactly one USAGE and one database grant.
+        # Never combine this broader role with the strict table-grant model.
+        usage = False; database = False
+        pattern = (r"GRANT ([A-Z ,]+) ON (\*\.\*|`clrs_staging`\.\*) TO "
+            r"(?:`[^`]+`|'[^']+')@(?:`[^`]+`|'[^']+')( REQUIRE SSL)?")
+        for row in rows:
+            if not isinstance(row, (tuple, list)) or len(row) != 1 or not isinstance(row[0], str):
+                raise SessionUnavailable()
+            match = re.fullmatch(pattern, row[0])
+            if match is None:
+                raise SessionUnavailable()
+            items = [item.strip() for item in match[1].split(",")]
+            privileges = set(items)
+            if len(items) != len(privileges):
+                raise SessionUnavailable()
+            if match[2] == "*.*":
+                if privileges != {"USAGE"} or usage:
+                    raise SessionUnavailable()
+                usage = True
+            else:
+                if privileges != {"SELECT", "INSERT", "UPDATE"} or database or match[3]:
+                    raise SessionUnavailable()
+                database = True
+        if not usage or not database:
             raise SessionUnavailable()
 
     def _transaction(self, action, *, deadline):
