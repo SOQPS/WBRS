@@ -3,10 +3,75 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:wbrs/firebase_options.dart';
+import 'timeweb_auth_client.dart';
+import 'timeweb_auth_lifecycle.dart';
+import 'app_session.dart';
 
 /// The sandbox flavor uses a demo project with no live Firebase resources.
 /// A mismatched flavor/define stops startup before any account data is read.
 class AppBackend {
+  // Prepared auth email routes only; this does not switch SessionGate, login,
+  // profile hydration or onboarding. Both native gates remain release-off.
+  static const emailLifecycleBackend = String.fromEnvironment(
+    'CLRS_AUTH_LIFECYCLE_BACKEND',
+    defaultValue: 'firebase',
+  );
+  static const timewebEmailLifecycleEnabled = bool.fromEnvironment(
+    'CLRS_TIMEWEB_AUTH_LIFECYCLE_ENABLED',
+  );
+  static const timewebRegistrationEnabled = bool.fromEnvironment(
+    'CLRS_TIMEWEB_REGISTRATION_ENABLED',
+  );
+  static const timewebApiOrigin = String.fromEnvironment(
+    'CLRS_TIMEWEB_API_ORIGIN',
+  );
+  static bool get usesTimewebEmailLifecycle =>
+      emailLifecycleBackend == 'timeweb';
+  static AppSession? _emailLifecycleSession;
+
+  /// Native startup must bind its real facade here after provider selection.
+  /// Stop the old facade before replacing it. This creates no session, changes
+  /// no backend default and provides no Firebase credential fallback.
+  static void bindEmailLifecycleSession(AppSession session) {
+    final old = _emailLifecycleSession;
+    if (session.backend != AppSessionBackend.timeweb ||
+        session.state.phase == AppSessionPhase.closed ||
+        session.state.phase == AppSessionPhase.stopped ||
+        (old != null &&
+            !identical(old, session) &&
+            old.state.phase != AppSessionPhase.closed &&
+            old.state.phase != AppSessionPhase.stopped)) {
+      throw StateError('A current native session owner is required.');
+    }
+    _emailLifecycleSession = session;
+  }
+
+  static TimewebAuthLifecycleClient createEmailLifecycleClient(
+    TimewebLifecyclePurpose purpose,
+  ) {
+    if (!usesTimewebEmailLifecycle) {
+      throw StateError('Native email lifecycle is not selected.');
+    }
+    final session = _emailLifecycleSession;
+    if (session == null ||
+        session.state.phase == AppSessionPhase.closed ||
+        session.state.phase == AppSessionPhase.stopped) {
+      throw StateError('Native email lifecycle session is unavailable.');
+    }
+    final enabled =
+        timewebEmailLifecycleEnabled &&
+        (purpose != TimewebLifecyclePurpose.registerEmail ||
+            timewebRegistrationEnabled);
+    return TimewebAuthLifecycleClient(
+      configuration: TimewebAuthConfiguration(
+        endpoint: Uri.parse(timewebApiOrigin),
+        enabled: enabled,
+      ),
+      enabled: enabled,
+      session: session,
+    );
+  }
+
   static const useEmulators = bool.fromEnvironment('CLRS_USE_EMULATORS');
   static const emulatorHost = String.fromEnvironment(
     'CLRS_EMULATOR_HOST',
@@ -32,7 +97,8 @@ class AppBackend {
   }) {
     if (emulatorMode != projectId.startsWith('demo-')) {
       throw StateError(
-          'Firebase build configuration does not match its backend.');
+        'Firebase build configuration does not match its backend.',
+      );
     }
     if (emulatorMode &&
         (projectId != demoProjectId ||
