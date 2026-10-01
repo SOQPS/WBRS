@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 
 part 'timeweb_own_profile.dart';
 part 'timeweb_private_media.dart';
+part 'timeweb_mutations.dart';
+part 'timeweb_current_reads.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -13,6 +16,8 @@ class TimewebAuthConfiguration {
     required this.endpoint,
     this.enabled = false,
     this.privateMediaEnabled = false,
+    this.runtimeWritesEnabled = false,
+    this.currentReadsEnabled = false,
   }) {
     final host = endpoint.host.toLowerCase();
     final dnsName = RegExp(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$');
@@ -44,6 +49,8 @@ class TimewebAuthConfiguration {
   final Uri endpoint;
   final bool enabled;
   final bool privateMediaEnabled;
+  final bool runtimeWritesEnabled;
+  final bool currentReadsEnabled;
 }
 
 /// The implementation must use an OS protected token store, never plaintext
@@ -101,6 +108,8 @@ enum TimewebAuthOperation {
   profile,
   conversation,
   media,
+  mutation,
+  currentRead,
 }
 
 enum TimewebAuthError {
@@ -431,6 +440,8 @@ class TimewebAuthClient {
   int _inflightRequests = 0;
   final Map<String, _PrivateMediaFlight> _mediaFlights = {};
   bool _mediaPumping = false;
+  final Map<String, TimewebMutationReference> _mutationReferences = {};
+  final Map<String, _CurrentReadFlight> _currentReadFlights = {};
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _session?.uid;
@@ -454,6 +465,8 @@ class TimewebAuthClient {
   int _newEpoch() {
     _epoch++;
     _cancelPrivateMedia(this);
+    _mutationReferences.clear();
+    _cancelCurrentReads(this);
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -653,6 +666,26 @@ class TimewebAuthClient {
   Future<TimewebPrivateMediaBytes> readPrivateMedia(
     TimewebPrivateMediaRequest request,
   ) => _readPrivateMedia(this, request);
+
+  TimewebMutationReference bindMutation(
+    TimewebMutationRequest request, {
+    required String expectedOwnerUid,
+  }) => _bindMutation(this, request, expectedOwnerUid);
+
+  Future<TimewebMutationResult> mutate(TimewebMutationReference reference) =>
+      _mutate(this, reference);
+
+  Future<TimewebMutationResult> reconcileMutation(
+    TimewebMutationReference reference,
+  ) => _reconcileMutation(this, reference);
+
+  /// After a receipt or definite original POST failure was durably acknowledged.
+  void acknowledgeMutation(TimewebMutationReference reference) =>
+      _acknowledgeMutation(this, reference);
+
+  Future<TimewebCurrentReadPage> readCurrent(
+    TimewebCurrentReadRequest request,
+  ) => _readCurrent(this, request);
 
   /// No profile value cache. Every read is authorized by its own opaque bearer.
   Future<Map<String, dynamic>> readOwnProfile() async {
