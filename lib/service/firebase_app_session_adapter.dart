@@ -19,10 +19,10 @@ final class FirebaseAppSessionAdapter implements AppSessionAdapter {
         final uid = user?.uid;
         if (uid != _previousUid) _revision++;
         _previousUid = uid;
-        if (!_changes.isClosed) _changes.add(_identity(user));
+        if (!_closed && !_changes.isClosed) _changes.add(_identity(user));
       },
       onError: (Object _) {
-        if (!_changes.isClosed) {
+        if (!_closed && !_changes.isClosed) {
           _changes.addError(
             const AppSessionException(AppSessionError.unavailable),
           );
@@ -39,6 +39,10 @@ final class FirebaseAppSessionAdapter implements AppSessionAdapter {
   int _revision = 0;
   bool _closed = false;
   Future<bool>? _closeFlight;
+  Future<AppSessionStop>? _stopFlight;
+  final Set<Future<void>> _activeCalls = {};
+  bool _stopAuthUnknown = false;
+  bool _storeFailure = false;
   @override
   AppSessionBackend get backend => AppSessionBackend.firebase;
   @override
@@ -64,8 +68,32 @@ final class FirebaseAppSessionAdapter implements AppSessionAdapter {
   Future<T> _call<T>(
     Future<T> Function() action, {
     bool identityMutation = false,
-  }) async {
+  }) {
     _checkOpen();
+    final operation = _perform(action, identityMutation: identityMutation);
+    late final Future<void> drain;
+    drain = operation.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        if (error is AppSessionException) {
+          if (_closed && error.remoteOutcomeUnknown) _stopAuthUnknown = true;
+          if (error.error == AppSessionError.secureStore) _storeFailure = true;
+        }
+      },
+    );
+    _activeCalls.add(drain);
+    unawaited(
+      drain.then<void>((_) {
+        _activeCalls.remove(drain);
+      }),
+    );
+    return operation;
+  }
+
+  Future<T> _perform<T>(
+    Future<T> Function() action, {
+    required bool identityMutation,
+  }) async {
     try {
       return await action();
     } on AppSessionException {
@@ -118,6 +146,7 @@ final class FirebaseAppSessionAdapter implements AppSessionAdapter {
         throw const AppSessionException(AppSessionError.secureStore);
       }
     }
+    _checkOpen();
     // Await the original SDK Future. A bounded facade wait does not cancel it.
     final credential = await _auth.signInWithEmailAndPassword(
       email: email.trim(),
@@ -182,6 +211,29 @@ final class FirebaseAppSessionAdapter implements AppSessionAdapter {
       await _subscription.cancel();
       await _changes.close();
       return cleared;
+    })();
+  }
+
+  @override
+  Future<AppSessionStop> stop() {
+    if (_closeFlight != null) {
+      return Future.value(const AppSessionStop(protectedStateSafe: false));
+    }
+    final existing = _stopFlight;
+    if (existing != null) return existing;
+    if (_closed) {
+      return Future.value(const AppSessionStop(protectedStateSafe: false));
+    }
+    _closed = true;
+    final cancel = _subscription.cancel();
+    return _stopFlight = (() async {
+      await Future.wait(_activeCalls.toList());
+      await cancel;
+      await _changes.close();
+      return AppSessionStop(
+        protectedStateSafe: !_storeFailure,
+        remoteOutcomeUnknown: _stopAuthUnknown,
+      );
     })();
   }
 }

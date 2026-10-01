@@ -25,11 +25,25 @@ screen work or `runAuthenticated((lease) async { ... })` for provider reads;
 the latter also detects native token invalidation that has no SDK event stream.
 Keep one application-scoped facade. `close()` intentionally clears credentials;
 normal widget/application disposal, process/engine shutdown, restart, navigation,
-or backgrounding must not call it. A future lifecycle-stop API that preserves
-protected credentials is required before wiring normal remembered-session
-shutdown. That lifecycle and restart/remember-me behavior are not tested here.
+or backgrounding must not call it. `stop()` is the separate remembered-session
+teardown: it immediately invalidates this owner and its leases, blocks new work,
+cancels actual native read/media requests and detaches Firebase subscriptions.
+It does not initiate protected-store clearing, Firebase signOut or remote logout.
+Backgrounding alone need not stop an application-scoped owner; a stopped owner
+cannot resume and must be replaced only after its actual `settled` drain.
 
-`restore`, `login`, `refresh`, `logout`, and `close` return `AppSessionResult`.
+Already started login/refresh and actual protected-store writes drain before
+handoff. A successful rotating refresh is saved even after runtime teardown,
+while its old identity cannot be adopted. Existing auth failure invalidation
+is preserved: an unknown refresh may clear unsafe tokens and require a new
+login, without retrying the old refresh. `stop` returning `remoteUnknown` must
+not be described as confirmed remote authentication or logout. A failed stop
+with `secureStore` is not safe handoff; do not construct a replacement owner or
+silently read old credentials until the protected-store problem is resolved.
+The store interface has no durable unknown-state marker, so an unsuccessful
+handoff must not be bypassed. `close()` remains explicitly destructive.
+
+`restore`, `login`, `refresh`, `logout`, `stop`, and `close` return `AppSessionResult`.
 A UI deadline returns `pending` with `settled` pointing to the original
 operation. The operation remains serialized; late A cannot become B's data.
 Duplicate taps for the same email/device share the original login. Unknown
@@ -50,3 +64,24 @@ the already-declared `flutter_test` dependency, the actual main-project Flutter
 runner passed all 36 session, mutation and current-read cases with `--no-pub`.
 This confirms these tests run in the checkout; it does not install the seam
 in the UI or prove a live Timeweb user session.
+
+Five additional focused scenarios exercise lifecycle stop with the real native
+client and injected in-memory protected-store/HTTP fakes: replacement restore
+without a login POST, retained DTO invalidation and actual GET cancellation,
+stop during a started login and blocked store write, successful/unknown refresh
+drain without replay, unreadable-store handoff refusal, and `stop -> close ->
+stop` rejecting a cached safe result after destructive clearing begins. These checks do not
+prove OS protected-store persistence across a real killed Android process or
+Firebase SDK restart behavior; UI lifecycle wiring and device proof remain
+separate steps.
+
+The prepared `readProfileForEdit(TimewebProfileEditorRequest.own())` client
+reads only `/v1/runtime/me/profile` under the existing default-off runtime flag.
+Its typed snapshot preserves the 11 nullable historical fields and exact UTC
+microsecond CAS stamp; every retained field getter checks the current account
+and epoch. It accepts no UID, URL, query or full profile/admin/financial map.
+Eight focused tests passed in the main Flutter runner, including deduplication,
+stream cancellation, malformed/foreign DTOs, ABA, and stop during pre-read
+refresh. Runtime reads become stale immediately while successful already-started
+token rotation drains to protected storage. UI installation and real device
+protected-store persistence are still separate work.

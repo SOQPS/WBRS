@@ -14,6 +14,7 @@ enum AppSessionPhase {
   signedOut,
   unresolved,
   failed,
+  stopped,
   closed,
 }
 
@@ -120,6 +121,16 @@ final class AppSessionLogout {
   bool get remoteConfirmed => remote == AppSessionRemoteLogout.confirmed;
 }
 
+/// A lifecycle stop is neither logout nor proof of remote auth confirmation.
+final class AppSessionStop {
+  const AppSessionStop({
+    required this.protectedStateSafe,
+    this.remoteOutcomeUnknown = false,
+  });
+  final bool protectedStateSafe;
+  final bool remoteOutcomeUnknown;
+}
+
 final class AppSessionException implements Exception {
   const AppSessionException(this.error, {this.remoteOutcomeUnknown = false});
   final AppSessionError error;
@@ -143,6 +154,10 @@ abstract interface class AppSessionAdapter {
   });
   Future<AppSessionIdentity> refresh();
   Future<AppSessionLogout> logout({required bool allSessions});
+
+  /// Revoke runtime ownership now; await real auth/store work without starting
+  /// credential clearing, signOut, logout or another authentication POST.
+  Future<AppSessionStop> stop();
 
   /// Complete only after in-flight mutations cannot resurrect local identity.
   Future<bool> close();
@@ -229,6 +244,7 @@ final class AppSession {
   bool? _logoutAll;
   Future<AppSessionResult>? _refreshFlight;
   Future<AppSessionResult>? _closeFlight;
+  Future<AppSessionResult>? _stopFlight;
 
   /// Read this immediately on subscription; the stream broadcasts changes.
   AppSessionState get state {
@@ -768,6 +784,59 @@ final class AppSession {
     _closeFlight = operation;
     return _bounded(operation);
   }
+
+  /// Normal remembered-session teardown. The owner is immediately inert; the
+  /// adapter drains already started auth so successful rotation is persisted.
+  /// No extra local clear or remote logout is initiated by this lifecycle path.
+  Future<AppSessionResult> stop() {
+    if (_closeFlight != null || _state.phase == AppSessionPhase.closed) {
+      return Future.value(
+        const AppSessionResult._(
+          AppSessionOutcome.failed,
+          error: AppSessionError.closed,
+        ),
+      );
+    }
+    final pending = _stopFlight;
+    if (pending != null) return _bounded(pending);
+    if (_closed) {
+      return Future.value(
+        const AppSessionResult._(
+          AppSessionOutcome.failed,
+          error: AppSessionError.closed,
+        ),
+      );
+    }
+    final refresh = _refreshFlight;
+    _newEpoch(AppSessionPhase.stopped);
+    _closed = true;
+    final providerStop = Future<AppSessionStop>.sync(_adapter.stop);
+    // Attach error observation immediately, even while another tail drains.
+    final stopResult = providerStop.then<AppSessionStop>(
+      (value) => value,
+      onError: (Object _) => const AppSessionStop(protectedStateSafe: false),
+    );
+    final operation = (() async {
+      await _mutationTail;
+      if (refresh != null) await refresh;
+      await _clearTail;
+      final result = await stopResult;
+      await _subscription.cancel();
+      await _states.close();
+      return AppSessionResult._(
+        result.remoteOutcomeUnknown
+            ? AppSessionOutcome.remoteUnknown
+            : result.protectedStateSafe
+            ? AppSessionOutcome.confirmed
+            : AppSessionOutcome.failed,
+        error: result.protectedStateSafe ? null : AppSessionError.secureStore,
+      );
+    })();
+    _stopFlight = operation;
+    // Explicit subsequent close remains destructive but waits this stop drain.
+    _mutationTail = operation.then<void>((_) {}, onError: (Object _) {});
+    return _bounded(operation);
+  }
 }
 
 /// Uses the existing native transport/store, including its shared refresh,
@@ -877,5 +946,18 @@ final class TimewebAppSessionAdapter implements AppSessionAdapter {
     _identity = null;
     await _changes.close();
     return cleared;
+  }
+
+  @override
+  Future<AppSessionStop> stop() async {
+    final stopping = _client
+        .stop(); // Runtime invalidation occurs before await.
+    _identity = null;
+    final result = await stopping;
+    await _changes.close();
+    return AppSessionStop(
+      protectedStateSafe: result.protectedStateSafe,
+      remoteOutcomeUnknown: result.remoteOutcomeUnknown,
+    );
   }
 }

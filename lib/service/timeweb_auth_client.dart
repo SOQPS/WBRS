@@ -9,6 +9,7 @@ part 'timeweb_own_profile.dart';
 part 'timeweb_private_media.dart';
 part 'timeweb_mutations.dart';
 part 'timeweb_current_reads.dart';
+part 'timeweb_profile_editor.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -170,6 +171,17 @@ class TimewebLogoutResult {
 
   /// Only a loggedOut:true response confirms server logout (including all).
   bool get remoteConfirmed => outcome == TimewebLogoutOutcome.confirmed;
+}
+
+/// Lifecycle only, never a server logout confirmation. An unknown auth POST
+/// may require a new login even though its existing invalidation cleared disk.
+class TimewebStopResult {
+  const TimewebStopResult({
+    required this.protectedStateSafe,
+    required this.remoteOutcomeUnknown,
+  });
+  final bool protectedStateSafe;
+  final bool remoteOutcomeUnknown;
 }
 
 class _Reply {
@@ -433,6 +445,11 @@ class TimewebAuthClient {
   Future<TimewebSession>? _refreshFlight;
   Future<TimewebSession?>? _restoreFlight;
   Future<bool>? _closeFlight;
+  Future<TimewebStopResult>? _stopFlight;
+  final Set<Future<void>> _authDrains = {};
+  bool _stopping = false;
+  bool _stopAuthUnknown = false;
+  bool _authStoreFailure = false;
   int _epoch = 0;
   TimewebSession? _session;
   bool _secureStoreUnsafe = false;
@@ -442,13 +459,15 @@ class TimewebAuthClient {
   bool _mediaPumping = false;
   final Map<String, TimewebMutationReference> _mutationReferences = {};
   final Map<String, _CurrentReadFlight> _currentReadFlights = {};
+  final Map<int, _ProfileEditorFlight> _profileEditorFlights = {};
 
   /// Exposes identity only; credentials remain between transport/store.
-  String? get currentUid => _session?.uid;
-  bool get hasSession => _session != null && !_secureStoreUnsafe && !_closed;
+  String? get currentUid => _stopping || _closed ? null : _session?.uid;
+  bool get hasSession =>
+      _session != null && !_secureStoreUnsafe && !_closed && !_stopping;
 
   void _checkEnabled(TimewebAuthOperation operation) {
-    if (_closed) {
+    if (_closed || _stopping) {
       throw TimewebAuthException(operation, TimewebAuthError.closed);
     }
     if (!configuration.enabled) {
@@ -457,9 +476,49 @@ class TimewebAuthClient {
   }
 
   void _checkEpoch(int epoch, TimewebAuthOperation operation) {
-    if (_closed || _epoch != epoch) {
+    // Already started auth may finish durable rotation while runtime reads are
+    // stopped. Its final identity adoption uses the stricter runtime guard.
+    if (_closed ||
+        _epoch != epoch ||
+        (_stopping &&
+            !const {
+              TimewebAuthOperation.restore,
+              TimewebAuthOperation.login,
+              TimewebAuthOperation.refresh,
+              TimewebAuthOperation.logout,
+            }.contains(operation))) {
       throw TimewebAuthException(operation, TimewebAuthError.staleSession);
     }
+  }
+
+  void _checkRuntimeEpoch(int epoch, TimewebAuthOperation operation) {
+    _checkEpoch(epoch, operation);
+    if (_stopping) {
+      throw TimewebAuthException(operation, TimewebAuthError.staleSession);
+    }
+  }
+
+  Future<T> _trackAuth<T>(Future<T> operation) {
+    late final Future<void> drain;
+    drain = operation.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        if (_stopping && error is TimewebUnknownOutcome) {
+          _stopAuthUnknown = true;
+        }
+        if (error is TimewebAuthException &&
+            error.error == TimewebAuthError.secureStore) {
+          _authStoreFailure = true;
+        }
+      },
+    );
+    _authDrains.add(drain);
+    unawaited(
+      drain.then<void>((_) {
+        _authDrains.remove(drain);
+      }),
+    );
+    return operation;
   }
 
   int _newEpoch() {
@@ -467,6 +526,7 @@ class TimewebAuthClient {
     _cancelPrivateMedia(this);
     _mutationReferences.clear();
     _cancelCurrentReads(this);
+    unawaited(_cancelProfileEditorRead(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -522,7 +582,7 @@ class TimewebAuthClient {
     if (_epoch != 0 && !_secureStoreUnsafe) return Future.value(_session);
     final epoch = _newEpoch();
     late Future<TimewebSession?> flight;
-    flight = _restore(epoch).whenComplete(() {
+    flight = _trackAuth(_restore(epoch)).whenComplete(() {
       if (identical(_restoreFlight, flight)) _restoreFlight = null;
     });
     _restoreFlight = flight;
@@ -546,7 +606,7 @@ class TimewebAuthClient {
     } catch (_) {
       throw const TimewebAuthException(op, TimewebAuthError.secureStore);
     }
-    _checkEpoch(epoch, op);
+    _checkRuntimeEpoch(epoch, op);
     if (stored != null && !_clock().isBefore(stored.refreshExpiresAt)) {
       if (!await _clearStore(epoch)) {
         throw const TimewebAuthException(op, TimewebAuthError.secureStore);
@@ -558,6 +618,13 @@ class TimewebAuthClient {
   }
 
   Future<TimewebSession> login({
+    required String email,
+    required String password,
+    required String deviceId,
+  }) =>
+      _trackAuth(_login(email: email, password: password, deviceId: deviceId));
+
+  Future<TimewebSession> _login({
     required String email,
     required String password,
     required String deviceId,
@@ -581,7 +648,7 @@ class TimewebAuthClient {
     if (!await _clearStore(epoch)) {
       throw const TimewebAuthException(op, TimewebAuthError.secureStore);
     }
-    _checkEpoch(epoch, op);
+    _checkRuntimeEpoch(epoch, op);
     final started = _clock();
     final reply = await _forEpoch(
       epoch,
@@ -591,6 +658,7 @@ class TimewebAuthClient {
     _checkEpoch(epoch, op);
     final session = _tokens(reply, started, op);
     await _persist(epoch, op, session);
+    _checkRuntimeEpoch(epoch, op);
     _session = session;
     return session;
   }
@@ -623,7 +691,7 @@ class TimewebAuthClient {
     if (pending != null) return pending;
     final epoch = _epoch;
     late Future<TimewebSession> flight;
-    flight = _refresh(epoch, current).whenComplete(() {
+    flight = _trackAuth(_refresh(epoch, current)).whenComplete(() {
       if (identical(_refreshFlight, flight)) _refreshFlight = null;
     });
     _refreshFlight = flight;
@@ -648,6 +716,7 @@ class TimewebAuthClient {
         throw const TimewebUnknownOutcome(op, TimewebAuthError.invalidResponse);
       }
       await _persist(epoch, op, next);
+      _checkRuntimeEpoch(epoch, op);
       _session = next;
       return next;
     } on TimewebAuthException catch (error) {
@@ -686,6 +755,10 @@ class TimewebAuthClient {
   Future<TimewebCurrentReadPage> readCurrent(
     TimewebCurrentReadRequest request,
   ) => _readCurrent(this, request);
+
+  Future<TimewebProfileEditorSnapshot> readProfileForEdit(
+    TimewebProfileEditorRequest request,
+  ) => _readProfileForEdit(this, request);
 
   /// No profile value cache. Every read is authorized by its own opaque bearer.
   Future<Map<String, dynamic>> readOwnProfile() async {
@@ -830,7 +903,10 @@ class TimewebAuthClient {
 
   /// Local identity is dropped immediately; persistent clearing is attempted
   /// in finally even for deadline, network, malformed reply or logout-all.
-  Future<TimewebLogoutResult> logout({bool allSessions = false}) async {
+  Future<TimewebLogoutResult> logout({bool allSessions = false}) =>
+      _trackAuth(_logout(allSessions: allSessions));
+
+  Future<TimewebLogoutResult> _logout({bool allSessions = false}) async {
     const op = TimewebAuthOperation.logout;
     _checkEnabled(op);
     final old = _session;
@@ -864,7 +940,7 @@ class TimewebAuthClient {
       outcome: outcome,
       allSessions: allSessions,
       secureTokensCleared: cleared,
-      superseded: _epoch != epoch || _closed,
+      superseded: _epoch != epoch || _closed || _stopping,
     );
   }
 
@@ -1078,6 +1154,48 @@ class TimewebAuthClient {
     final clear = _storeTail.then((_) => _store.clear());
     _storeTail = clear.then<void>((_) {}, onError: (Object _) {});
     return _closeFlight = _finishClose(clear);
+  }
+
+  /// Stop runtime ownership without initiating token clearing or remote logout.
+  /// Await the real drain before a replacement client shares this store. A
+  /// started auth operation retains its own fail-closed invalidation semantics.
+  Future<TimewebStopResult> stop() {
+    if (_closeFlight != null) {
+      return Future.value(
+        const TimewebStopResult(
+          protectedStateSafe: false,
+          remoteOutcomeUnknown: false,
+        ),
+      );
+    }
+    final existing = _stopFlight;
+    if (existing != null) return existing;
+    if (_closed) {
+      return Future.value(
+        const TimewebStopResult(
+          protectedStateSafe: false,
+          remoteOutcomeUnknown: false,
+        ),
+      );
+    }
+    _stopping = true;
+    _session = null;
+    _cancelPrivateMedia(this);
+    _cancelCurrentReads(this);
+    final editorDrain = _cancelProfileEditorRead(this);
+    _mutationReferences.clear();
+    return _stopFlight = (() async {
+      await Future.wait(_authDrains.toList());
+      await _storeTail;
+      await editorDrain;
+      _newEpoch();
+      _closed = true;
+      if (_ownsTransport) _http.close();
+      return TimewebStopResult(
+        protectedStateSafe: !_secureStoreUnsafe && !_authStoreFailure,
+        remoteOutcomeUnknown: _stopAuthUnknown,
+      );
+    })();
   }
 
   Future<bool> _finishClose(Future<void> clear) async {

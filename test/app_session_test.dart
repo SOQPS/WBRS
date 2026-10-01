@@ -85,6 +85,13 @@ final class FakeAdapter implements AppSessionAdapter {
     await changes.close();
     return true;
   }
+
+  @override
+  Future<AppSessionStop> stop() async {
+    calls.add('stop');
+    await changes.close();
+    return const AppSessionStop(protectedStateSafe: true);
+  }
 }
 
 Future<void> tick() => Future<void>.delayed(Duration.zero);
@@ -98,16 +105,31 @@ Future<AppSessionResult> login(AppSession facade, String uid) => facade.login(
 final class Store implements TimewebSecureTokenStore {
   TimewebSession? value;
   bool failClear = false;
+  bool failWrite = false;
+  bool failRead = false;
+  int clears = 0;
+  Completer<void>? writing;
+  Completer<void>? writeEntered;
   @override
   Future<void> clear() async {
+    clears++;
     if (failClear) throw StateError('secure store unavailable');
     value = null;
   }
 
   @override
-  Future<TimewebSession?> read() async => value;
+  Future<TimewebSession?> read() async {
+    if (failRead) throw StateError('protected store unreadable');
+    return value;
+  }
+
   @override
   Future<void> write(TimewebSession session) async {
+    if (writeEntered != null && !writeEntered!.isCompleted) {
+      writeEntered!.complete();
+    }
+    if (writing != null) await writing!.future;
+    if (failWrite) throw StateError('protected store write unavailable');
     value = session;
   }
 }
@@ -130,7 +152,287 @@ http.StreamedResponse reply(Object data, [int status = 200]) =>
       },
     );
 
+Map<String, Object> tokens([String suffix = 'old']) => {
+  'uid': 'A',
+  'emailVerified': true,
+  'accessToken': 'na1.A.$suffix',
+  'refreshToken': 'nr1.A.$suffix',
+  'expiresIn': 900,
+  'refreshExpiresIn': 1209600,
+};
+
+TimewebAuthClient native(Store store, Wire wire, {bool reads = false}) =>
+    TimewebAuthClient(
+      configuration: TimewebAuthConfiguration(
+        endpoint: Uri.parse('https://clrs-api.example.invalid'),
+        enabled: true,
+        currentReadsEnabled: reads,
+      ),
+      secureStore: store,
+      transport: wire,
+    );
+
+Future<AppSessionResult> settled(AppSessionResult value) async =>
+    value.settled == null ? value : await value.settled!;
+
 void main() {
+  test(
+    'destructive close invalidates cached stop retention before and after clear',
+    () async {
+      final store = Store();
+      final wire = Wire((_) async => reply(tokens()));
+      final client = native(store, wire);
+      await client.login(
+        email: 'A@example.invalid',
+        password: 'synthetic',
+        deviceId: 'test',
+      );
+      expect((await client.stop()).protectedStateSafe, true);
+      expect(store.value, isNotNull);
+      final closing = client.close();
+      expect((await client.stop()).protectedStateSafe, false);
+      expect(await closing, true);
+      expect(store.value, isNull);
+      expect((await client.stop()).protectedStateSafe, false);
+
+      final facadeStore = Store();
+      final facade = AppSession.timeweb(
+        client: native(facadeStore, wire),
+        clearLocal: () async {},
+      );
+      expect((await login(facade, 'A')).confirmed, true);
+      expect((await facade.stop()).confirmed, true);
+      expect(facadeStore.value, isNotNull);
+      final facadeClosing = facade.close();
+      expect((await facade.stop()).error, AppSessionError.closed);
+      expect(facade.state.phase, AppSessionPhase.closed);
+      expect((await facadeClosing).confirmed, true);
+      expect(facadeStore.value, isNull);
+      expect((await facade.stop()).error, AppSessionError.closed);
+      expect(facade.currentUid, isNull);
+    },
+  );
+
+  test(
+    'stop preserves remembered tokens, invalidates DTO and cancels actual GET before replacement restore',
+    () async {
+      final store = Store();
+      final paths = <String>[];
+      final listening = Completer<void>();
+      final cancelled = Completer<void>();
+      final stream = StreamController<List<int>>(
+        onListen: listening.complete,
+        onCancel: cancelled.complete,
+      );
+      var reads = 0;
+      final wire = Wire((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/v1/auth/login') return reply(tokens());
+        if (++reads == 1) {
+          return reply({
+            'kind': 'canonical-current',
+            'ordering': 'updated_at_desc_chat_id_asc_null_last',
+            'items': [],
+            'nextCursor': null,
+          });
+        }
+        return http.StreamedResponse(
+          stream.stream,
+          200,
+          headers: {
+            'content-type': 'application/json',
+            'cache-control': 'no-store',
+          },
+        );
+      });
+      final client = native(store, wire, reads: true);
+      final facade = AppSession.timeweb(
+        client: client,
+        clearLocal: () async {},
+      );
+      await login(facade, 'A');
+      final protected = store.value;
+      final lease = facade.captureLease();
+      final page = await client.readCurrent(TimewebCurrentReadRequest.chats());
+      final hanging = client.readCurrent(TimewebCurrentReadRequest.chats());
+      final rejected = expectLater(
+        hanging,
+        throwsA(isA<TimewebAuthException>()),
+      );
+      await listening.future;
+      final stopping = facade.stop();
+      expect(facade.state.phase, AppSessionPhase.stopped);
+      expect(facade.currentUid, isNull);
+      expect(client.currentUid, isNull);
+      expect(lease.isCurrent, false);
+      expect(() => page.chats, throwsA(isA<TimewebAuthException>()));
+      await cancelled.future;
+      await rejected;
+      final result = await stopping;
+      expect(result.confirmed, true);
+      expect(result.logout, isNull);
+      expect(store.value, same(protected));
+      expect(store.clears, 1);
+      expect((await facade.restore()).error, AppSessionError.closed);
+      expect((await facade.stop()).confirmed, true);
+      expect(facade.state.phase, AppSessionPhase.stopped);
+      final replacement = native(store, wire);
+      expect((await replacement.restore())!.uid, 'A');
+      expect(paths.where((path) => path.startsWith('/v1/auth/')), [
+        '/v1/auth/login',
+      ]);
+      expect((await replacement.stop()).protectedStateSafe, true);
+      await stream.close();
+    },
+  );
+
+  test(
+    'stop during a started login waits actual protected write without adopting late identity',
+    () async {
+      final store = Store()
+        ..writing = Completer<void>()
+        ..writeEntered = Completer<void>();
+      var posts = 0;
+      final wire = Wire((_) async {
+        posts++;
+        return reply(tokens());
+      });
+      final client = native(store, wire);
+      final facade = AppSession.timeweb(
+        client: client,
+        clearLocal: () async {},
+        waitTimeout: const Duration(milliseconds: 8),
+      );
+      final signingIn = login(facade, 'A');
+      await store.writeEntered!.future;
+      final stopping = await facade.stop();
+      expect(stopping.outcome, AppSessionOutcome.pending);
+      expect(client.hasSession, false);
+      expect(facade.currentUid, isNull);
+      expect(store.value, isNull);
+      expect(store.clears, 1);
+      store.writing!.complete();
+      expect(
+        (await settled(await signingIn)).outcome,
+        AppSessionOutcome.superseded,
+      );
+      expect((await settled(stopping)).confirmed, true);
+      expect(facade.currentUid, isNull);
+      expect(store.value!.uid, 'A');
+      final replacement = native(store, wire);
+      expect((await replacement.restore())!.uid, 'A');
+      expect(posts, 1);
+      await replacement.stop();
+    },
+  );
+
+  test(
+    'stop drains successful refresh rotation and keeps unknown refresh fail-closed without replay',
+    () async {
+      for (final unknown in [false, true]) {
+        final store = Store();
+        final started = Completer<void>();
+        final response = Completer<http.StreamedResponse>();
+        var refreshes = 0;
+        final wire = Wire((request) async {
+          if (request.url.path == '/v1/auth/refresh') {
+            refreshes++;
+            started.complete();
+            return response.future;
+          }
+          return reply(tokens());
+        });
+        final client = native(store, wire);
+        final facade = AppSession.timeweb(
+          client: client,
+          clearLocal: () async {},
+          waitTimeout: const Duration(milliseconds: 8),
+        );
+        await login(facade, 'A');
+        final refreshing = facade.refresh();
+        await started.future;
+        final stopping = await facade.stop();
+        expect(stopping.outcome, AppSessionOutcome.pending);
+        expect(facade.currentUid, isNull);
+        expect(client.currentUid, isNull);
+        response.complete(
+          unknown
+              ? reply({'error': 'unavailable'}, 503)
+              : reply(tokens('rotated')),
+        );
+        expect(
+          (await settled(await refreshing)).outcome,
+          AppSessionOutcome.superseded,
+        );
+        final result = await settled(stopping);
+        expect(
+          result.outcome,
+          unknown
+              ? AppSessionOutcome.remoteUnknown
+              : AppSessionOutcome.confirmed,
+        );
+        expect(result.logout, isNull);
+        expect(refreshes, 1);
+        final replacement = native(store, wire);
+        final restored = await replacement.restore();
+        if (unknown) {
+          expect(store.value, isNull);
+          expect(restored, isNull);
+          expect(
+            store.clears,
+            2,
+          ); // Existing auth invalidation, not lifecycle stop.
+        } else {
+          expect(restored!.refreshToken, 'nr1.A.rotated');
+          expect(store.clears, 1);
+        }
+        expect(refreshes, 1);
+        await replacement.stop();
+      }
+    },
+  );
+
+  test(
+    'unreadable protected store cannot produce successful stop or replacement identity',
+    () async {
+      final store = Store()..failRead = true;
+      final now = DateTime.now();
+      store.value = TimewebSession(
+        uid: 'A',
+        emailVerified: true,
+        accessToken: 'na1.A.synthetic',
+        refreshToken: 'nr1.A.synthetic',
+        accessExpiresAt: now.add(const Duration(minutes: 15)),
+        refreshExpiresAt: now.add(const Duration(days: 14)),
+      );
+      var posts = 0;
+      final wire = Wire((_) async {
+        posts++;
+        return reply(tokens());
+      });
+      final client = native(store, wire);
+      final facade = AppSession.timeweb(
+        client: client,
+        clearLocal: () async {},
+      );
+      expect((await facade.restore()).error, AppSessionError.secureStore);
+      final result = await facade.stop();
+      expect(result.outcome, AppSessionOutcome.failed);
+      expect(result.error, AppSessionError.secureStore);
+      expect(facade.currentUid, isNull);
+      expect(store.clears, 0);
+      expect(store.value, isNotNull);
+      final replacement = native(store, wire);
+      await expectLater(
+        replacement.restore(),
+        throwsA(isA<TimewebAuthException>()),
+      );
+      expect(replacement.hasSession, false);
+      expect(posts, 0);
+      expect((await replacement.stop()).protectedStateSafe, false);
+    },
+  );
+
   test(
     'logout cancels a hanging screen read now and consumes its later error',
     () async {
@@ -155,9 +457,9 @@ void main() {
     () async {
       final store = Store();
       final wire = Wire((request) async {
-      if (request.url.path.endsWith('/refresh')) {
-        return reply({'error': 'unavailable'}, 503);
-      }
+        if (request.url.path.endsWith('/refresh')) {
+          return reply({'error': 'unavailable'}, 503);
+        }
         return reply({
           'uid': 'A',
           'emailVerified': true,
@@ -561,6 +863,8 @@ void main() {
       expect(adapter.calls.last, 'close');
       expect(adapter.currentIdentity, isNull);
       expect((await facade.restore()).error, AppSessionError.closed);
+      expect((await facade.stop()).error, AppSessionError.closed);
+      expect(facade.state.phase, AppSessionPhase.closed);
     },
   );
 
