@@ -1,6 +1,8 @@
 # Prepared native password and email challenge lifecycle
 
-Status: codec, default-off composite login, trusted reset SQL step and proposed schema. No lifecycle HTTP handler, live SQL application, SMTP
+Status: codecs, default-off composite login, trusted reset/pending-registration
+SQL leaves, durable challenge and digest-only receipt leaves, encrypted mail
+envelope and proposed schema. No lifecycle HTTP handler, live SQL application, SMTP
 delivery, account change or password reset is enabled by this change.
 The existing Firebase password path remains the default. The composite store
 is selected only with `CLRS_NATIVE_PASSWORD_ENABLED=1`; with the flag absent or
@@ -165,8 +167,10 @@ not auto-replaced by a fresh UID to bypass email throttling.
 Issue transaction creates/updates challenge, preserved history, idempotent
 receipt and one outbox email intent together. The existing email outbox payload
 must contain an AEAD envelope of code/recipient with exact challenge/UID/purpose
-AAD, never plain code/email. The prepared codec does not implement that outbox
-envelope. `source_event_id` is unique per issued challenge. Receipt request hash
+AAD, never plain code/email. `native_mail_envelope.NativeMailEnvelope` supplies
+this prepared envelope with exact 600-second lifetime and a separate wrapping
+domain. Decryption is not delivery authority: fresh SQL account/challenge state
+and both email/code HMACs must also match. `source_event_id` is unique per issued challenge. Receipt request hash
 must be domain-separated keyed HMAC and receipt result limited to non-secret
 proof/status; do **not** reuse RuntimeMutationStore's original-request wrapper
 for password/code bodies. Exact same operation replay does not charge another
@@ -201,9 +205,9 @@ Strict table-only role validators must explicitly add only needed tables if
 that alternative permission model is used. A distinct default-off lifecycle
 flag must avoid selecting absent tables before migration. Closed preview guard,
 fixed TLS CA/hostname verification and existing current account/session checks
-remain required. SMTP actual credentials/delivery, sensitive idempotency seam,
-pending-account transaction proof, post-KDF revalidation, durable failed-attempt
-tests, migration backup/version receipt and controlled login/reset/register
+remain required. SMTP actual credentials/delivery, outer lifecycle transaction
+and HTTP integration, post-KDF revalidation, migration backup/version receipt
+and controlled login/reset/register
 proofs must pass before saying native registration/reset or Firebase-free
 production authentication works. This change supplies none of those live proofs.
 
@@ -246,3 +250,26 @@ cold-start harness expected only 401, while the closed service safely returned
 the remaining checks. There were no SQL driver errors. This proves only the
 trusted local SQL step, not challenge eligibility, a public reset API, mail
 delivery or live Timeweb password reset.
+
+The separate durable leaves now exist: `native_auth_challenges` binds a current
+account to one expiring challenge, preserves hourly issuance history, and commits
+declared failed attempts through its trusted caller. `native_pending_account`
+reserves only a brand-new account at request time and activates it only with a
+registered same-transaction consumed-signup proof. `native_auth_receipts` stores
+only server-keyed request/context/actor HMACs and fixed safe responses; request
+scope is always pre-account email identity, completion scope is the original
+challenge's UID. Unknown COMMIT lookup is read only and never authorizes retry.
+Their ordinary runtime transaction, schema/TLS/role and HTTP authority are
+explicit caller requirements, not supplied by those leaves.
+
+Seven challenge, six pending-account and eight sensitive-receipt synthetic
+scenarios passed. Seven envelope scenarios also passed; none sent mail. Six
+additional grouped checks on the same generated-only local MySQL8.4.4 applied
+005 (44->45 tables, FKs unchanged at 68), exercised reservation/first issue,
+failed-attempt receipt and replay without a second charge, current email/version/
+block refusal, activation of exactly the reserved account, atomic reset and
+post-effect full rollback, plus SELECT-only unknown-outcome lookup. The 163
+bounded SQL statements produced no unexpected driver error. The local server
+was stopped; earlier password scenarios, restored real data, cloud schema,
+SMTP and live permissions were not touched. No lifecycle API or delivery was
+enabled by these checks.
