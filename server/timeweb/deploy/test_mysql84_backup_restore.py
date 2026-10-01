@@ -57,7 +57,17 @@ set -euo pipefail
 [[ " $* " == *'--no-login-paths'* ]]
 [[ " $* " == *'--set-gtid-purged=OFF'* ]]
 [[ " $* " == *'--skip-add-drop-table'* ]]
-printf '%s\\n' '-- MySQL dump 10.13' 'CREATE TABLE `sample` (`id` int PRIMARY KEY);' 'INSERT INTO `sample` VALUES (1);'
+[[ " $* " != *' --disable-keys '* ]]
+printf '%s\\n' '-- MySQL dump 10.13' 'CREATE TABLE `sample` (`id` int PRIMARY KEY);'
+# Model mysqldump's default --opt: a limited restore user must not receive
+# DISABLE/ENABLE KEYS ALTER statements. No real database is contacted.
+if [[ " $* " != *' --skip-disable-keys '* ]]; then
+  printf '%s\\n' '/*!40000 ALTER TABLE `sample` DISABLE KEYS */;'
+fi
+printf '%s\\n' 'INSERT INTO `sample` VALUES (1);'
+if [[ " $* " != *' --skip-disable-keys '* ]]; then
+  printf '%s\\n' '/*!40000 ALTER TABLE `sample` ENABLE KEYS */;'
+fi
 """, 0o755)
         write(self.bin / "mysql", """#!/usr/bin/env bash
 set -euo pipefail
@@ -71,6 +81,10 @@ if [[ " $* " == *'--execute=SELECT COUNT(*)'* ]]; then
   printf '%s\\n' "${FAKE_COUNT:-0}"
 else
   cat > "$FAKE_RESTORE_OUTPUT"
+  # Same compatibility boundary as the five-grant staging role: no ALTER.
+  while IFS= read -r line; do
+    [[ $line != *'ALTER TABLE'* ]] || exit 19
+  done < "$FAKE_RESTORE_OUTPUT"
 fi
 """, 0o755)
         self.env = os.environ.copy()
@@ -134,6 +148,8 @@ fi
         restored = (self.root / "restored.sql").read_text()
         self.assertTrue(restored.startswith("-- CLRS_MYSQL84_STAGING_BACKUP_V1 clrs_staging\n"))
         self.assertIn("CREATE TABLE `sample`", restored)
+        self.assertIn("INSERT INTO `sample` VALUES (1);", restored)
+        self.assertNotIn("ALTER TABLE", restored)
         self.assertNotIn("synthetic-only", confirmed.stdout + confirmed.stderr)
 
     def test_rejects_corrupted_and_wrong_archive(self) -> None:
@@ -153,6 +169,24 @@ fi
         self.assertNotEqual(wrong.returncode, 0)
         self.assertIn("not a complete clrs_staging dump", wrong.stderr)
         self.assertFalse((self.root / "restored.sql").exists())
+
+    def test_original_default_index_alter_cannot_restore_with_limited_grants(self) -> None:
+        # Regression proof of the original trigger: without --skip-disable-keys,
+        # the modeled dump contains ALTER and the five-grant restore rejects it.
+        original_behavior = self.root / "backup-with-default-index-alter.sh"
+        write(original_behavior, (HERE / "backup-mysql84.sh").read_text().replace(
+            " --skip-disable-keys", ""))
+        backup = subprocess.run(["bash", str(original_behavior), "--execute"],
+                                env=self.env, capture_output=True, text=True,
+                                timeout=10, check=False)
+        self.assertEqual(backup.returncode, 0, backup.stderr)
+        archive = next(self.backups.glob("*.sql.age"))
+        self.assertIn("ALTER TABLE", archive.read_text())  # synthetic age only
+        restore = self.run_script("restore-mysql84.sh", "--archive", str(archive),
+                                  "--target-db", "clrs_staging", "--execute",
+                                  "--confirm-target", "clrs_staging")
+        self.assertNotEqual(restore.returncode, 0)
+        self.assertIn("restore failed", restore.stderr)
 
 
 if __name__ == "__main__":

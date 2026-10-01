@@ -2,7 +2,7 @@
 
 `--max-firestore-concurrency 8` разрешает до восьми параллельных задач чтения коллекций; допустимы целые значения от 1 до 8, по умолчанию остаётся 1. Все ограничения числа запросов, документов и коллекций общие для этих задач. Шифрованные кадры записываются последовательно с ожиданием завершения каждого кадра. При первой ошибке новые задачи и запросы не запускаются, активные чтения и запись дожидаются завершения до удаления неполного архива. Отсутствующие родительские документы по-прежнему обходятся ради их подколлекций. Параллельное чтение сокращает длительность выгрузки, но не добавляет согласованности снимку при продолжающихся пользовательских изменениях.
 
-Статус: **локально проверенный инструмент; на реальном Firebase завершён только частичный экспорт `--scope metadata`, без импорта в Timeweb**. Защищённый архив Auth+Firestore проверен на целостность: 8 202 пользователя и 70 412 типизированных документов. Байты Storage в него не входят; полный режим пока не запускался. Инструмент не делает записей в Firebase или Timeweb. По умолчанию `export-firebase-encrypted.mjs` читает Auth metadata, типизированные Firestore документы со всеми подколлекциями (включая под отсутствующими родительскими документами) и байты/метаданные объектов Storage. Исходные UID, ID документов, пути и имена объектов сохраняются внутри зашифрованного архива. Парольные хеши и salt намеренно не включены: эта выгрузка сама по себе не переносит возможность входа по старому паролю.
+Статус: **локально проверенный инструмент; на реальном Firebase ранее подтверждён частичный экспорт `--scope metadata`, без импорта в Timeweb**. Его защищённый архив Auth+Firestore проверен на целостность: 8 202 пользователя и 70 412 типизированных документов. Байты Storage в него не входят. Последующая полная попытка прочитала 8 208 пользователей, 70 486 документов и 4 447 файлов, но завершилась ошибкой до публикации архива; полный результат этой попытки не подтверждён. Для следующей попытки подготовлен устойчивый segmented режим ниже. Инструмент не делает записей в Firebase или Timeweb. По умолчанию `export-firebase-encrypted.mjs` читает Auth metadata, типизированные Firestore документы со всеми подколлекциями (включая под отсутствующими родительскими документами) и байты/метаданные объектов Storage. Исходные UID, ID документов, пути и имена объектов сохраняются внутри зашифрованного архива. Парольные хеши и salt намеренно не включены: эта выгрузка сама по себе не переносит возможность входа по старому паролю.
 
 Нужны Node 22, зависимости каталога `server/timeweb`, Application Default Credentials вне git и отдельные read-only права на **явно выбранные** источники: для полного режима — Firebase Auth, Firestore и Storage; для `metadata` — Auth и Firestore; для `storage` — Storage. Auth читается через официальный REST `projects.accounts:batchGet` с Google OAuth bearer token в памяти: пользовательский ADC не требует сервисного ключа, но фактические IAM-права и OAuth scope надо подтвердить живым чтением. Ответ Auth нормализуется к полям Firebase Admin `UserRecord`; хеши/соли не копируются. Для Firestore используется официальный REST `documents.list` с `showMissing=true`: он возвращает исходные `integerValue`, `doubleValue`, `timestampValue`, `referenceValue`, `bytesValue`, `geoPointValue`, вложенные map/array без преобразования в JavaScript числа или даты. Запросы страниц ограничены 25 документами. Реальное чтение может стоить денег; лимиты для выбранного режима обязательны. Прежде чем запускать инструмент на рабочем проекте, надо отдельно подтвердить объём и стоимость.
 
@@ -93,3 +93,54 @@ node --check export-firebase-encrypted.mjs
 ```
 
 Первоисточники: [Auth projects.accounts:batchGet](https://docs.cloud.google.com/identity-platform/docs/reference/rest/v1/projects.accounts/batchGet), [Firestore documents.list](https://docs.cloud.google.com/firestore/docs/reference/rest/v1/projects.databases.documents/list), [Firestore listCollectionIds](https://docs.cloud.google.com/firestore/docs/reference/rest/v1/projects.databases.documents/listCollectionIds), [Cloud Storage object generation](https://docs.cloud.google.com/storage/docs/metadata), [Firebase Admin ADC](https://firebase.google.com/docs/admin/setup).
+
+## Durable segmented export after an interrupted large download
+
+`export-firebase-segmented.mjs` consumes an already sealed metadata export and
+downloads Storage with bounded prefetch (default/max 4). Every object is a private
+0600 encrypted CLRSX2 shard, with a fresh random GCM header and its own authenticated
+completion marker, exact generation/metadata identity, byte count and SHA-256.
+Its name contains only a keyed fingerprint. Decrypted bytes never touch disk.
+Interrupted ciphertext is retained as `.incomplete-*`; it is never imported or
+reused. Completed shards are re-read and verified before reuse. Changed generation,
+size, checksum, metageneration or other metadata selects a new shard. Corrupt cache
+files are retained with `.rejected-*`, never accepted as complete.
+
+First seal a fresh `--scope metadata` export with the existing explicit read caps
+and `--max-firestore-concurrency 8`. Then run the segmented exporter with the same
+source confirmations, bounded caps and private key, adding:
+
+```text
+--metadata-archive /private/fresh-metadata.clrsenc
+--out /private/bundle/full.clrsenc
+--max-storage-prefetch 4
+```
+
+The existing parent directory must be outside Git. The shard directory is 0700.
+The disk preflight retains the 2 GiB reserve and reserves the unread part of the
+same total Storage byte cap after fully verified reuse. Concurrent jobs additionally
+reserve their combined expected bytes before downloading. Do not fill that reserve
+with unrelated builds. A failure stops new jobs and drains the active jobs; already
+sealed shards remain reusable without another Auth/Firestore pass.
+
+The final `full.clrsenc` is an encrypted, authenticated index of all shards. A second
+Storage inventory must exactly match the generation/metadata identities captured
+before downloading, or publication is refused. Retry against a fresh inventory;
+unchanged sealed shards are reused. Keep the index **and its entire shard directory**
+together. No second multi-gigabyte copy is created. Old standalone CLRSX2 archives
+and their reader contract remain supported.
+
+`readEncryptedArchive` and `scanImportArchive` expand a sealed index as one logical
+source stream. They authenticate the index's end before exposing data, reject missing,
+unsafe, duplicate, corrupt, mismatched or trailing shards, and expose the final logical
+end only after every shard's GCM frames, pinned ciphertext hash and aggregate counts
+match. `scanImportArchive` also checks each object's plaintext SHA and size as before.
+`archiveSha256` for a bundle is the composite SHA-256 of the index ciphertext followed
+by listed shard ciphertext in index order. This same value binds manifest creation,
+verification, dry-run and stage proofs; it is not the hash of the small index file alone.
+
+The metadata source remains live during the capture. The final logical source states
+`snapshotConsistent:false` and `finalSyncRequired:true`. A verified full backup proves
+coverage/integrity of captured data; it does not prove a consistent cutover snapshot,
+successful server migration or existing-user login. A final delta/sync and real
+application scenarios remain required before switching production.

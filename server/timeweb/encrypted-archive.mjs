@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { link, open, unlink } from 'node:fs/promises';
+import { readArchiveBundle } from './sealed-archive-reader.mjs';
 
 const MAGIC = Buffer.from('CLRSX2\0\0');
 const HEADER_SIZE = MAGIC.length + 8;
@@ -130,7 +131,7 @@ async function readExact(file, length, position, allowEof = false) {
 
 // The reader authenticates ordering, each frame and the final marker. The
 // caller may process arbitrarily large Storage objects one frame at a time.
-export async function* readEncryptedArchive(path, key, { onCiphertext } = {}) {
+export async function* readPhysicalEncryptedArchive(path, key, { onCiphertext } = {}) {
   assertKey(key);
   const file = await open(path, 'r');
   try {
@@ -180,5 +181,25 @@ export async function* readEncryptedArchive(path, key, { onCiphertext } = {}) {
     if (!ended) throw new Error('Archive has no completion marker');
   } finally {
     await file.close();
+  }
+}
+
+// CLRSX2 single files remain unchanged. A sealed bundle is itself an encrypted
+// CLRSX2 index; its authenticated descriptor pins every separately sealed shard.
+// The composite hash is index ciphertext followed by shard ciphertext in order.
+export async function* readEncryptedArchive(path, key, options = {}) {
+  const iterator = readPhysicalEncryptedArchive(path, key, options);
+  try {
+    const first = await iterator.next();
+    if (first.done) throw new Error('Empty archive');
+    if (first.value.type === 'json' && first.value.record?.kind === 'archive-bundle') {
+      yield* readArchiveBundle({ path, key, descriptor: first.value.record,
+        indexIterator: iterator, readPhysical: readPhysicalEncryptedArchive, options });
+    } else {
+      yield first.value;
+      for await (const frame of iterator) yield frame;
+    }
+  } finally {
+    await iterator.return();
   }
 }

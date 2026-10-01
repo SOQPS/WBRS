@@ -6,6 +6,7 @@ import { loadImportInputs, privateInput } from './import-cli-common.mjs';
 import { mysql84Config } from './import-mysql84-cli-config.mjs';
 import { prepareProfileProjection, profileProjectionSummary } from './project-profiles-core.mjs';
 import { rollbackProfileProjection, stageProfileProjection, verifyProfileProjection } from './project-profiles-mysql84.mjs';
+import { createBoundedMysql84Client } from './bounded-mysql84-client.mjs';
 
 const repository = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const options = new Set(['--archive', '--key-file', '--project', '--database', '--bucket',
@@ -127,13 +128,13 @@ export async function mainProfileProjection(args = process.argv.slice(2)) {
       receipt = await readProfileProjectionReceipt(values.get('--receipt-file'), inputs.key);
     }
     const mysql = await import('mysql2/promise');
-    client = await mysql.createConnection(await mysql84Config(values));
+    client = createBoundedMysql84Client(await mysql.createConnection(await mysql84Config(values)));
     if (mode === 'stage') return await stageProfileProjection(client, plan, confirmations,
       (record) => writeReceipt(output, inputs.key, record));
     if (mode === 'verify') return await verifyProfileProjection(client, plan, confirmations.targetDatabase, receipt);
     return await rollbackProfileProjection(client, plan, confirmations, receipt);
   } finally {
-    await client?.end();
+    await client?.end().catch(() => {});
     inputs.key.fill(0);
   }
 }

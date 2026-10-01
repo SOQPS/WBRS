@@ -182,36 +182,152 @@ function missingObject(error) {
     || error?.$metadata?.httpStatusCode === 404;
 }
 
-async function verifyObject(client, bucket, record) {
-  await assertPrivateObjectAcl(client, bucket, record.targetKey);
-  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: record.targetKey }));
-  if (!result.Body || result.ContentType !== (record.metadata.contentType ?? 'application/octet-stream')) {
-    throw new Error('Private media object metadata mismatch');
+export const S3_IMPORT_TIMEOUTS = Object.freeze({ operationTimeoutMs: 35_000,
+  uploadTimeoutMs: 120_000, streamTimeoutMs: 120_000, streamIdleTimeoutMs: 15_000 });
+
+function timeouts(options) {
+  const result = { ...S3_IMPORT_TIMEOUTS };
+  for (const [name, cap] of Object.entries(result)) {
+    const value = options[name] ?? cap;
+    if (!Number.isSafeInteger(value) || value < 1 || value > cap) {
+      throw new Error('Invalid private media timeout');
+    }
+    result[name] = value;
   }
-  const hash = createHash('sha256');
-  let size = 0;
-  for await (const chunk of result.Body) {
-    size += chunk.length;
-    if (size > record.size) throw new Error('Private media object size mismatch');
-    hash.update(chunk);
+  if (result.operationTimeoutMs > result.streamTimeoutMs
+      || result.streamIdleTimeoutMs > result.streamTimeoutMs) {
+    throw new Error('Invalid private media timeout ordering');
   }
-  if (size !== record.size || hash.digest('hex') !== record.sha256) {
-    throw new Error('Private media object checksum mismatch');
+  return result;
+}
+
+function timeoutError() {
+  const error = new Error('Private media deadline exceeded');
+  error.name = 'TimeoutError'; error.code = 'CLRS_MEDIA_TIMEOUT';
+  return error;
+}
+
+function destroyBody(body) {
+  // Cleanup must not replace the original checksum/network/deadline error.
+  try { body?.destroy?.(); } catch { /* no private diagnostics */ }
+}
+
+async function boundedSend(client, command, budget, sdkBudget, options = {}) {
+  const controller = new AbortController();
+  let timer; let abort; let expired = false;
+  const deadline = new Promise((_, reject) => {
+    const fail = (error) => { expired = true; reject(error); controller.abort(error); };
+    timer = setTimeout(() => fail(timeoutError()), budget);
+    if (options.abortSignal) {
+      abort = () => {
+        const error = new Error('Private media operation aborted'); error.name = 'AbortError';
+        fail(error);
+      };
+      if (options.abortSignal.aborted) abort();
+      else options.abortSignal.addEventListener('abort', abort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([deadline, Promise.resolve().then(async () => {
+      if (client.config?.maxAttempts !== undefined) {
+        const attempts = typeof client.config.maxAttempts === 'function'
+          ? await client.config.maxAttempts() : client.config.maxAttempts;
+        if (attempts !== 1) throw new Error('Private media automatic retries must be disabled');
+      }
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return Promise.resolve(client.send(command, { ...options, abortSignal: controller.signal,
+        requestTimeout: sdkBudget })).then((result) => {
+        // A custom transport or response race may complete after abort. Never
+        // leave that discarded HTTP body/socket open.
+        if (expired) destroyBody(result?.Body);
+        return result;
+      });
+    })]);
+  } catch (error) {
+    controller.abort();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (abort) options.abortSignal.removeEventListener('abort', abort);
   }
 }
 
-export function createPrivateS3MediaAdapter(client, bucket) {
+// Use this wrapper for bucket ACL/policy/probe checks too. SDK maxAttempts must
+// separately be 1: a lost PUT response is reconciled by a later explicit verify,
+// never by an automatic importer retry.
+export function createBoundedS3Transport(client, options = {}) {
+  const limits = timeouts(options);
+  return { send(command, sendOptions) {
+    const put = command instanceof PutObjectCommand;
+    return boundedSend(client, command,
+      put ? limits.uploadTimeoutMs : limits.operationTimeoutMs,
+      put || command instanceof GetObjectCommand
+        ? limits.streamTimeoutMs : limits.operationTimeoutMs, sendOptions);
+  } };
+}
+
+async function verifyBody(body, record, absoluteTimeoutMs, idleTimeoutMs) {
+  const hash = createHash('sha256');
+  let size = 0; let absoluteTimer; let idleTimer; let rejectDeadline; let stopped = false;
+  const deadline = new Promise((_, reject) => { rejectDeadline = reject; });
+  const expire = () => { if (!stopped) { rejectDeadline(timeoutError()); destroyBody(body); } };
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    if (!stopped) idleTimer = setTimeout(expire, idleTimeoutMs);
+  };
+  absoluteTimer = setTimeout(expire, absoluteTimeoutMs); resetIdle();
+  const reading = (async () => {
+    for await (const chunk of body) {
+      if (stopped) break;
+      size += chunk.length;
+      if (size > record.size) throw new Error('Private media object size mismatch');
+      if (chunk.length) resetIdle();
+      hash.update(chunk);
+    }
+    if (size !== record.size || hash.digest('hex') !== record.sha256) {
+      throw new Error('Private media object checksum mismatch');
+    }
+  })();
+  try { await Promise.race([reading, deadline]); }
+  catch (error) { destroyBody(body); throw error; }
+  finally { stopped = true; clearTimeout(absoluteTimer); clearTimeout(idleTimer); }
+}
+
+async function verifyObject(client, bucket, record, limits) {
+  const started = performance.now();
+  await assertPrivateObjectAcl(client, bucket, record.targetKey);
+  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: record.targetKey }));
+  try {
+    if (!result.Body || result.ContentType !== (record.metadata.contentType ?? 'application/octet-stream')) {
+      throw new Error('Private media object metadata mismatch');
+    }
+    const remaining = Math.ceil(limits.streamTimeoutMs - (performance.now() - started));
+    if (remaining < 1) throw timeoutError();
+    await verifyBody(result.Body, record, remaining, limits.streamIdleTimeoutMs);
+  } catch (error) { destroyBody(result.Body); throw error; }
+}
+
+export function createPrivateS3MediaAdapter(client, bucket, options = {}) {
+  const limits = timeouts(options);
+  const transport = createBoundedS3Transport(client, limits);
+  const progress = { verifiedObjects: 0, verifiedBytes: 0, putAttempts: 0 };
+  async function completed(record) {
+    progress.verifiedObjects++; progress.verifiedBytes += record.size;
+    if (options.onProgress) await options.onProgress({ ...progress });
+  }
   return {
-    verify(record) { return verifyObject(client, bucket, record); },
+    async verify(record) { await verifyObject(transport, bucket, record, limits); await completed(record); },
     async ensure(record) {
       try {
-        await verifyObject(client, bucket, record);
+        await verifyObject(transport, bucket, record, limits);
+        await completed(record);
         return;
       } catch (error) {
         if (!missingObject(error)) throw error;
       }
       try {
-        await client.send(new PutObjectCommand({
+        progress.putAttempts++;
+        await transport.send(new PutObjectCommand({
           Bucket: bucket, Key: record.targetKey, Body: record.bytes,
           ContentType: record.metadata.contentType ?? 'application/octet-stream',
           Metadata: { 'clrs-sha256': record.sha256 }, IfNoneMatch: '*',
@@ -222,7 +338,8 @@ export function createPrivateS3MediaAdapter(client, bucket) {
           throw error;
         }
       }
-      await verifyObject(client, bucket, record);
+      await verifyObject(transport, bucket, record, limits);
+      await completed(record);
     },
   };
 }

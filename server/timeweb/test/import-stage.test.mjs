@@ -146,6 +146,32 @@ test('staging preserves UID, typed orphan document, Storage metadata and hashes;
   assert.equal(object.targetKey, targetObjectKey(source.project, source.bucket, object.name));
 });
 
+test('lost COMMIT acknowledgement requires explicit target verification and preserves its cause', async () => {
+  const input = await archive(); const targets = fakeTargets();
+  const commit = targets.db.commit;
+  const lost = new Error('synthetic COMMIT acknowledgement lost');
+  targets.db.commit = async () => { await commit(); throw lost; };
+  targets.db.rollback = async () => { throw new Error('synthetic closed connection'); };
+  await assert.rejects(stageImport({ ...input, expectedSource, ...targets, dryRun: false }),
+    (error) => error.commitOutcomeUnknown === true && error.requiresVerification === true
+      && error.cause === lost);
+  assert.equal(targets.calls.commit, 1);
+  const verified = await verifyStagedImport({ ...input, expectedSource,
+    db: targets.verifier, media: targets.media, beforeRead: async () => {} });
+  assert.equal(verified.verified, true);
+  assert.equal(targets.data.auth.size, 1);
+});
+
+test('rollback failure does not replace the original pre-COMMIT failure', async () => {
+  const input = await archive(); const targets = fakeTargets();
+  const first = new Error('synthetic original media error');
+  targets.media.ensure = async () => { throw first; };
+  targets.db.rollback = async () => { throw new Error('synthetic rollback connection error'); };
+  await assert.rejects(stageImport({ ...input, expectedSource, ...targets, dryRun: false }),
+    (error) => error === first);
+  assert.equal(targets.calls.commit, 0);
+});
+
 test('partial archive and wrong object checksum are rejected before DB/S3 writes', async () => {
   const partial = await archive();
   await truncate(partial.archivePath, (await stat(partial.archivePath)).size - 8);

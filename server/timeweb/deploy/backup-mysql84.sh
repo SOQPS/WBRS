@@ -76,7 +76,7 @@ trap 'rm -f -- "$partial"' EXIT
   printf '%s\n' '-- CLRS_MYSQL84_STAGING_BACKUP_V1 clrs_staging'
   mysqldump --defaults-file=/dev/fd/3 "${client_flags[@]}" \
     --single-transaction --quick --skip-lock-tables --no-tablespaces \
-    --set-gtid-purged=OFF --skip-add-drop-table --skip-add-locks \
+    --set-gtid-purged=OFF --skip-add-drop-table --skip-add-locks --skip-disable-keys \
     --hex-blob "$MYSQL_DATABASE" 3< <(client_defaults)
 } | age -R "$BACKUP_AGE_RECIPIENT_FILE" > "$partial" \
   || die 'dump or encryption failed'

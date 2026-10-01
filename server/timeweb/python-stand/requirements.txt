@@ -1,0 +1,3 @@
+# Isolated CLRS API draft; install only on a separately reviewed deployment.
+cryptography==50.0.1
+PyMySQL==1.2.3

@@ -1,5 +1,14 @@
 import { scanImportArchive } from './import-core.mjs';
 
+export class ImportCommitUncertainError extends Error {
+  constructor(cause) {
+    super('Import commit outcome is unknown; verify the existing target before retry', { cause });
+    this.name = 'ImportCommitUncertainError';
+    this.commitOutcomeUnknown = true;
+    this.requiresVerification = true;
+  }
+}
+
 function assertSource(source, expected) {
   if (!expected || source.project !== expected.project
       || source.database !== expected.database || source.bucket !== expected.bucket) {
@@ -17,6 +26,7 @@ export async function stageImport({ archivePath, key, expectedSource, limits,
   if (dryRun) return { ...checked, imported: false };
   if (!db || !media) throw new Error('Database and private media adapters are required');
 
+  let commitStarted = false;
   try {
     if (!beforeWrite) throw new Error('Private media preflight is required');
     await beforeWrite();
@@ -26,6 +36,8 @@ export async function stageImport({ archivePath, key, expectedSource, limits,
       onAuth: (record) => db.stageAuth(record),
       onDocument: (record) => db.stageDocument(record),
       onObject: async (record) => {
+        // A buffered SQL conflict must fail before this object is uploaded.
+        if (db.flush) await db.flush();
         await media.ensure(record);
         await db.stageObject(record);
       },
@@ -36,12 +48,18 @@ export async function stageImport({ archivePath, key, expectedSource, limits,
         || imported.archiveSha256 !== checked.archiveSha256) {
       throw new Error('Archive changed between validation and import');
     }
+    if (db.flush) await db.flush();
     if (!beforeCommit) throw new Error('Private media final check is required');
     await beforeCommit();
+    commitStarted = true;
     await db.commit();
+    commitStarted = false;
     return { ...imported, imported: true };
   } catch (error) {
-    await db.rollback();
+    // A failed COMMIT acknowledgement does not prove rollback, even if a
+    // subsequent ROLLBACK appears successful. Never auto-retry this outcome.
+    try { await db.rollback(); } catch { /* preserve the initial error */ }
+    if (commitStarted) throw new ImportCommitUncertainError(error);
     throw error;
   }
 }
@@ -60,6 +78,7 @@ export async function verifyStagedImport({ archivePath, key, expectedSource, lim
       onAuth: (record) => db.verifyAuth(record),
       onDocument: (record) => db.verifyDocument(record),
       onObject: async (record) => {
+        if (db.flush) await db.flush();
         await db.verifyObject(record);
         await media.verify(record);
       },
@@ -68,11 +87,12 @@ export async function verifyStagedImport({ archivePath, key, expectedSource, lim
         || verified.archiveSha256 !== checked.archiveSha256) {
       throw new Error('Archive changed during verification');
     }
+    if (db.flush) await db.flush();
     await db.verifyCounts(verified.counts, verified.source);
     await db.commit();
     return { ...verified, verified: true };
   } catch (error) {
-    await db.rollback();
+    try { await db.rollback(); } catch { /* preserve the initial error */ }
     throw error;
   }
 }
