@@ -9,6 +9,7 @@ import 'timeweb_auth_lifecycle.dart';
 import 'timeweb_profile_edit_flow.dart';
 import 'timeweb_chat_flow.dart';
 import 'timeweb_temperament_flow.dart';
+import 'timeweb_geography_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -24,6 +25,7 @@ final class TimewebAppRuntime {
     DateTime Function()? clock,
     TimewebProfileEditJournal? profileEditJournal,
     TimewebTemperamentJournal? temperamentJournal,
+    TimewebGeographyJournal? geographyJournal,
     TimewebChatJournal? chatJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
@@ -42,6 +44,7 @@ final class TimewebAppRuntime {
     _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
     _chatJournal = chatJournal ?? TimewebChatJournal();
     _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
+    _geographyJournal = geographyJournal ?? TimewebGeographyJournal();
     _profileEditorEnabled =
         profileEditorEnabled ??
         (configuration.runtimeWritesEnabled &&
@@ -65,6 +68,7 @@ final class TimewebAppRuntime {
   late final TimewebProfileEditJournal _profileEditJournal;
   late final TimewebChatJournal _chatJournal;
   late final TimewebTemperamentJournal _temperamentJournal;
+  late final TimewebGeographyJournal _geographyJournal;
   late final bool _profileEditorEnabled;
   final bool currentChatsEnabled,
       currentOwnProfileEnabled,
@@ -176,6 +180,24 @@ final class TimewebAppRuntime {
       })
       .timeout(session.waitTimeout);
 
+  Future<TimewebGeographyFlow> openGeography(
+    TimewebCurrentOwnProfile snapshot,
+  ) => session
+      .runAuthenticated((lease) {
+        if (!profileEditorEnabled) {
+          throw StateError('Current geography editor is unavailable.');
+        }
+        snapshot.requireCurrent();
+        return TimewebGeographyFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _geographyJournal,
+          snapshot: snapshot,
+        );
+      })
+      .timeout(session.waitTimeout);
+
   Future<TimewebCurrentReadPage> readChats({
     TimewebCurrentReadCursor? cursor,
   }) => session
@@ -242,6 +264,7 @@ final class TimewebAppRuntime {
     await _profileEditJournal.drain();
     await _chatJournal.drain();
     await _temperamentJournal.drain();
+    await _geographyJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

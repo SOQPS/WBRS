@@ -9,6 +9,8 @@ import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
 import 'package:wbrs/service/timeweb_temperament_flow.dart';
+import 'package:wbrs/service/timeweb_geography_flow.dart';
+import 'package:wbrs/presentation/screens/edit_profile/timeweb_geography_page.dart';
 import 'package:wbrs/presentation/screens/test/timeweb_temperament_page.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
@@ -38,6 +40,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
   TimewebCurrentOwnProfile? _profile;
   TimewebProfileEditFlow? _editor;
   TimewebTemperamentFlow? _temperament;
+  TimewebGeographyFlow? _geography;
   late final int _epoch;
   int _generation = 0;
   bool _loading = false, _opening = false, _error = false, _invalidated = false;
@@ -80,6 +83,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _editor = null;
     _temperament?.close();
     _temperament = null;
+    _geography?.close();
+    _geography = null;
     _notice = null;
     _loading = false;
     _opening = false;
@@ -203,7 +208,12 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       flow.requireCurrent();
       _editor = flow;
       await Navigator.of(context).push<bool>(
-        MaterialPageRoute(builder: (_) => TimewebProfileEditPage(flow: flow!)),
+        MaterialPageRoute(
+          builder: (_) => TimewebProfileEditPage(
+            flow: flow!,
+            onEditLocation: _editGeography,
+          ),
+        ),
       );
       _editor = null;
       // Editor owns its save receipt; display obtains a new canonical full read
@@ -221,6 +231,34 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       }
     } finally {
       if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  Future<bool?> _editGeography(BuildContext editorContext) async {
+    if (!_current || !editorContext.mounted) return null;
+    _editor?.requireCurrent();
+    TimewebGeographyFlow? flow;
+    try {
+      // Geography has its own original operation and current CAS revision.
+      // A confirmed change closes the old editor before its stale revision can
+      // be used; the existing return path obtains a fresh complete profile.
+      final snapshot = await widget.runtime.readCurrentOwnProfile();
+      if (!_current || !editorContext.mounted) return null;
+      snapshot.requireCurrent();
+      flow = await widget.runtime.openGeography(snapshot);
+      if (!_current || !editorContext.mounted) return null;
+      flow.requireCurrent();
+      _geography = flow;
+      final result = await Navigator.of(editorContext).push<bool>(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: timewebGeographyRoute),
+          builder: (_) => TimewebGeographyPage(flow: flow!),
+        ),
+      );
+      return _current ? result : null;
+    } finally {
+      flow?.close();
+      if (identical(_geography, flow)) _geography = null;
     }
   }
 
@@ -262,6 +300,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _editor = null;
     _temperament?.close();
     _temperament = null;
+    _geography?.close();
+    _geography = null;
     unawaited(_subscription?.cancel());
     super.dispose();
   }

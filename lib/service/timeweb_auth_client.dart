@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 
 part 'timeweb_own_profile.dart';
@@ -11,6 +12,7 @@ part 'timeweb_mutations.dart';
 part 'timeweb_current_reads.dart';
 part 'timeweb_profile_editor.dart';
 part 'timeweb_current_own_profile.dart';
+part 'timeweb_geography.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {

@@ -4,7 +4,13 @@ const _mutationOperation = TimewebAuthOperation.mutation;
 const _mutationMaximumBytes = 65536;
 const _mutationMax63 = 9223372036854775807;
 
-enum TimewebMutationKind { sendMessage, markRead, editProfile, completeTest }
+enum TimewebMutationKind {
+  sendMessage,
+  markRead,
+  editProfile,
+  completeTest,
+  editGeography,
+}
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
 
@@ -21,6 +27,7 @@ enum TimewebMutationFailure {
   profileChanged,
   testAlreadyCompleted,
   profileIncomplete,
+  profileNotReady,
 }
 
 /// Only the reviewed editable fields. Original strings are preserved for the
@@ -111,8 +118,9 @@ final class TimewebMutationRequest {
     this.kind,
     this.operationId,
     this._payload,
-    this._segments,
-  ) {
+    this._segments, {
+    TimewebGeographyChanges? geography,
+  }) : _geography = geography {
     if (!RegExp(
       r'^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
     ).hasMatch(operationId)) {
@@ -198,16 +206,37 @@ final class TimewebMutationRequest {
       ['v1', 'runtime', 'me', 'temperament'],
     );
   }
+  factory TimewebMutationRequest.editOwnGeography({
+    required String operationId,
+    required String expectedUpdatedAt,
+    required TimewebGeographyChanges changes,
+  }) {
+    if (!_mutationStamp(expectedUpdatedAt)) {
+      throw ArgumentError('Invalid profile revision.');
+    }
+    return TimewebMutationRequest._(
+      TimewebMutationKind.editGeography,
+      operationId,
+      Map.unmodifiable({
+        'expectedUpdatedAt': expectedUpdatedAt,
+        'changes': changes._fields,
+      }),
+      ['v1', 'runtime', 'me', 'geography'],
+      geography: changes,
+    );
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
   final List<String> _segments;
+  final TimewebGeographyChanges? _geography;
   late final String requestHash;
   String get operation => switch (kind) {
     TimewebMutationKind.sendMessage => 'chat.send-text.v1',
     TimewebMutationKind.markRead => 'chat.mark-read.v1',
     TimewebMutationKind.editProfile => 'profile.edit.v1',
     TimewebMutationKind.completeTest => 'profile.complete-test.v1',
+    TimewebMutationKind.editGeography => 'profile.edit-geography.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -276,6 +305,7 @@ final class TimewebMutationResult {
     TimewebMarkReadReceipt? read,
     TimewebProfileEditReceipt? profile,
     TimewebCompletedTemperamentReceipt? temperament,
+    TimewebGeographyReceipt? geography,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -287,6 +317,7 @@ final class TimewebMutationResult {
        _read = read,
        _profile = profile,
        _temperament = temperament,
+       _geography = geography,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -301,6 +332,7 @@ final class TimewebMutationResult {
   final TimewebMarkReadReceipt? _read;
   final TimewebProfileEditReceipt? _profile;
   final TimewebCompletedTemperamentReceipt? _temperament;
+  final TimewebGeographyReceipt? _geography;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -375,6 +407,11 @@ final class TimewebMutationResult {
   TimewebCompletedTemperamentReceipt? get completedTemperament {
     requireCurrent();
     return _temperament;
+  }
+
+  TimewebGeographyReceipt? get editedGeography {
+    requireCurrent();
+    return _geography;
   }
 
   @override
@@ -1164,24 +1201,29 @@ TimewebMutationResult _decodeMutationReply(
       (409, 'test_already_completed') =>
         TimewebMutationFailure.testAlreadyCompleted,
       (409, 'profile_incomplete') => TimewebMutationFailure.profileIncomplete,
+      (409, 'profile_not_ready') => TimewebMutationFailure.profileNotReady,
       _ => null,
     };
     final profileFailure =
         failure == TimewebMutationFailure.profileChanged ||
         failure == TimewebMutationFailure.testAlreadyCompleted ||
         failure == TimewebMutationFailure.profileIncomplete ||
+        failure == TimewebMutationFailure.profileNotReady ||
         result['error'] == 'profile_not_found';
     if (failure == null ||
         profileFailure !=
             (const {
               TimewebMutationKind.editProfile,
               TimewebMutationKind.completeTest,
+              TimewebMutationKind.editGeography,
             }.contains(ref._request.kind)) ||
         (const {
               TimewebMutationFailure.testAlreadyCompleted,
               TimewebMutationFailure.profileIncomplete,
             }.contains(failure) &&
             ref._request.kind != TimewebMutationKind.completeTest) ||
+        (failure == TimewebMutationFailure.profileNotReady &&
+            ref._request.kind != TimewebMutationKind.editGeography) ||
         (failure == TimewebMutationFailure.quoteUnavailable &&
             ref._request.kind != TimewebMutationKind.sendMessage) ||
         (failure == TimewebMutationFailure.sequenceAhead &&
@@ -1280,6 +1322,35 @@ TimewebMutationResult _decodeMutationReply(
       replayed: replayed,
       revision: revision,
       read: TimewebMarkReadReceipt._(frozen, check),
+      receiptConfirmed: true,
+    );
+  }
+  if (request.kind == TimewebMutationKind.editGeography) {
+    final input = request._geography!;
+    if (reply.status != 200 ||
+        revision != null ||
+        !_mutationExact(result, {
+          'uid',
+          'country',
+          'countryCode',
+          'region',
+          'updatedAt',
+          'profileAuthority',
+        }) ||
+        result['uid'] != ref._uid ||
+        result['country'] != input._country ||
+        result['countryCode'] != input.countryCode ||
+        result['region'] != input.region ||
+        result['profileAuthority'] != 'canonical-current-v1' ||
+        !_mutationStamp(result['updatedAt'])) {
+      _mutationInvalidReply();
+    }
+    return TimewebMutationResult._(
+      ref,
+      TimewebMutationState.confirmed,
+      200,
+      replayed: replayed,
+      geography: TimewebGeographyReceipt._(frozen, check),
       receiptConfirmed: true,
     );
   }
