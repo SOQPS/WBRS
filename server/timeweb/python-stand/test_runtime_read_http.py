@@ -36,6 +36,12 @@ class Reader:
     def own_events(self, identity, **options):
         return self._call("events", identity, options)
 
+    def people(self, identity, **options):
+        return self._call("people", identity, options)
+
+    def public_person(self, identity, resource, **options):
+        return self._call("person", identity, {**options, "profileUid": resource})
+
     def _call(self, operation, identity, options):
         self.calls.append((operation, identity.uid, options))
         if self.error:
@@ -47,7 +53,8 @@ class RuntimeReadHttpTests(unittest.TestCase):
     def setUp(self):
         self.reader = Reader()
         self.native = Native()
-        self.http = RuntimeReadHttp(ENABLED, object(), read_factory=lambda *_: self.reader)
+        self.http = RuntimeReadHttp(ENABLED, object(), read_factory=lambda *_: self.reader,
+                                    people_factory=lambda *_: self.reader)
 
     def request(self, path="/v1/runtime/chats", query="", **extra):
         env = {"PATH_INFO": path, "QUERY_STRING": query, "REQUEST_METHOD": "GET",
@@ -116,6 +123,27 @@ class RuntimeReadHttpTests(unittest.TestCase):
         self.http.close()
         self.assertEqual(self.request().status, "503 Service Unavailable")
         self.assertEqual(self.reader.calls, [])
+
+    def test_people_exact_filters_and_public_target_use_verified_actor(self):
+        reply = self.request("/v1/runtime/people", "limit=10&minAge=20&maxAge=40&countryCode=RU")
+        self.assertEqual(reply.status, "200 OK")
+        self.assertEqual(self.reader.calls[-1], ("people", "owner", {
+            "limit": 10, "min_age": 20, "max_age": 40, "country_code": "RU", "access_token": "na1.synthetic"}))
+        reply = self.request("/v1/runtime/people/public-peer")
+        self.assertEqual(reply.status, "200 OK")
+        self.assertEqual(self.reader.calls[-1], ("person", "owner", {
+            "profileUid": "public-peer", "access_token": "na1.synthetic"}))
+        self.assertEqual(self.request("/v1/runtime/people/public-peer", "uid=other").status, "400 Bad Request")
+        self.assertEqual(self.request("/v1/runtime/people", REQUEST_METHOD="POST").status, "405 Method Not Allowed")
+
+    def test_people_hidden_target_and_unavailable_reader_have_safe_responses(self):
+        self.reader.error = RuntimeReadRejected
+        reply = self.request("/v1/runtime/people/hidden")
+        self.assertEqual((reply.status, reply.payload), ("404 Not Found", {"error": "not_found"}))
+        self.reader.error = RuntimeError
+        self.assertEqual(self.request("/v1/runtime/people").payload, {"error": "service_unavailable"})
+        self.http.close()
+        self.assertEqual(self.request("/v1/runtime/people").status, "503 Service Unavailable")
 
 
 if __name__ == "__main__":

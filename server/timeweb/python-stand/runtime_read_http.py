@@ -1,4 +1,4 @@
-"""Native-only bounded HTTP pages from the current canonical chat tables.
+"""Native-only bounded HTTP pages from current conversation/people authority.
 
 Uses the mutation service's existing transaction pool. No Firebase fallback,
 arbitrary audience, raw legacy payload, client URL or independent write path.
@@ -34,6 +34,13 @@ def _route(environ):
         return "chats", None
     if path == "/v1/runtime/events":
         return "events", None
+    if path == "/v1/runtime/people":
+        return "people", None
+    match = re.fullmatch(r"/v1/runtime/people/([^/]{1,191})", path)
+    if match:
+        if match[1] in {".", ".."} or any(ord(c) < 32 or ord(c) == 127 for c in match[1]):
+            return None
+        return "person", match[1]
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/messages", path)
     if match and environ.get("REQUEST_METHOD") != "POST":
         if any(ord(c) < 32 or ord(c) == 127 for c in match[1]):
@@ -44,16 +51,43 @@ def _route(environ):
 
 def _query(environ, operation):
     raw = environ.get("QUERY_STRING", "")
-    if (not isinstance(raw, str) or len(raw) > 4096
+    if (not isinstance(raw, str) or len(raw) > (8192 if operation == "people" else 4096)
             or re.search(r"%(?![a-fA-F0-9]{2})", raw)
             or any(ord(c) < 32 or ord(c) > 126 for c in raw)):
         raise RuntimeInvalidRequest()
     try:
         entries = parse_qsl(raw, keep_blank_values=True, strict_parsing=True,
-                            encoding="utf-8", errors="strict", max_num_fields=2)
+                            encoding="utf-8", errors="strict", max_num_fields=8 if operation == "people" else 2)
     except (ValueError, UnicodeError):
         raise RuntimeInvalidRequest() from None
     values = dict(entries)
+    if operation == "person":
+        if entries:
+            raise RuntimeInvalidRequest()
+        return {}
+    if operation == "people":
+        allowed = {"limit", "cursor", "minAge", "maxAge", "countryCode", "region", "pol", "compatibleGroup"}
+        if len(entries) != len(values) or set(values) - allowed:
+            raise RuntimeInvalidRequest()
+        result = {}
+        for name, parameter, default, maximum in (("limit", "limit", "30", 30),
+                ("minAge", "min_age", "18", 100), ("maxAge", "max_age", "100", 100)):
+            value = values.get(name, default)
+            if re.fullmatch(r"[1-9][0-9]{0,2}", value) is None or int(value) > maximum:
+                raise RuntimeInvalidRequest()
+            result[parameter] = int(value)
+        for name, parameter in (("countryCode", "country_code"), ("region", "region"),
+                                ("pol", "gender"), ("compatibleGroup", "compatible_group")):
+            if name in values:
+                result[parameter] = values[name]
+        from runtime_people import validate_people_filters
+        validate_people_filters(**{key: value for key, value in result.items() if key != "limit"})
+        if "cursor" in values:
+            cursor = values["cursor"]
+            if not cursor or len(cursor) > 4096 or re.fullmatch(r"[A-Za-z0-9_-]+", cursor) is None:
+                raise RuntimeInvalidRequest()
+            result["cursor"] = cursor
+        return result
     cursor_name = {"chats": "cursor", "messages": "beforeSequence",
                    "events": "afterEventId"}[operation]
     if len(entries) != len(values) or set(values) - {"limit", cursor_name}:
@@ -79,10 +113,11 @@ def _query(environ, operation):
 
 
 class RuntimeReadHttp:
-    def __init__(self, env, store, *, read_factory=None):
+    def __init__(self, env, store, *, read_factory=None, people_factory=None):
         self._enabled = (env.get("CLRS_RUNTIME_WRITES_ENABLED") == "1"
             and env.get("CLRS_RUNTIME_MEMBERSHIP_AUTHORITY") == "canonical-current-v1")
         self._reader = None
+        self._people = None
         if self._enabled and store is not None:
             try:
                 if read_factory is None:
@@ -91,10 +126,18 @@ class RuntimeReadHttp:
                 self._reader = read_factory(store, env)
             except Exception:
                 pass
+            try:
+                if people_factory is None:
+                    from runtime_people import RuntimePeopleService
+                    people_factory = RuntimePeopleService.from_env
+                self._people = people_factory(store, env)
+            except Exception:
+                pass
 
     def close(self):
         # The parent HTTP adapter owns and closes the shared transaction pool.
         self._reader = None
+        self._people = None
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
         route = _route(environ)
@@ -115,18 +158,23 @@ class RuntimeReadHttp:
                     or len(header) > 135 or any(c.isspace() for c in header[7:])
                     or not native_configured):
                 raise NativeRejected()
-            if native_service is None or self._reader is None:
+            reader = self._people if operation in {"people", "person"} else self._reader
+            if native_service is None or reader is None:
                 raise NativeUnavailable()
             token = header[7:]
             identity = native_service.authorize(token, peer=environ.get("REMOTE_ADDR", ""))
             if type(identity) is not NativeIdentity:
                 raise NativeUnavailable()
             if operation == "chats":
-                result = self._reader.own_chats(identity, access_token=token, **options)
+                result = reader.own_chats(identity, access_token=token, **options)
             elif operation == "messages":
-                result = self._reader.messages(identity, resource, access_token=token, **options)
+                result = reader.messages(identity, resource, access_token=token, **options)
+            elif operation == "people":
+                result = reader.people(identity, access_token=token, **options)
+            elif operation == "person":
+                result = reader.public_person(identity, resource, access_token=token)
             else:
-                result = self._reader.own_events(identity, access_token=token, **options)
+                result = reader.own_events(identity, access_token=token, **options)
             if type(result) is not dict:
                 raise NativeUnavailable()
             return RuntimeReadHttpReply("200 OK", result)
