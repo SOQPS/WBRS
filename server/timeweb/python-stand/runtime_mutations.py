@@ -51,7 +51,7 @@ class MutationOutcome:
 MAX_INTEGER = 2 ** 63 - 1
 MAX_JSON_BYTES = 65536
 MAX_RECEIPT_BYTES = 131072
-OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 RECEIPT_QUERY = """SELECT request_hash, state, response_status, result, entity_revision,
  completed_at FROM clrs_staging.idempotency_receipts
  WHERE actor_uid = %s AND operation = %s AND idempotency_key = %s LIMIT 1"""
@@ -182,12 +182,14 @@ class RuntimeMutationStore:
                       autocommit=False, charset="utf8mb4")
         return config
 
-    def register_replay_guard(self, operation, callback):
+    def register_replay_guard(self, operation, callback, *, response_guard=False):
         if operation not in OPERATIONS or not callable(callback) or operation in self._replay_guards:
             raise RuntimeUnavailable()
         # Trusted service setup only, before HTTP dispatch. The stored original
         # request lets hash-only reconciliation check current chat membership.
-        self._replay_guards[operation] = callback
+        if type(response_guard) is not bool:
+            raise RuntimeUnavailable()
+        self._replay_guards[operation] = (callback, response_guard)
 
     def _grants(self, rows):
         model = self._env.get("CLRS_RUNTIME_PERMISSION_MODEL", "strict-tables-v1")
@@ -403,7 +405,11 @@ class RuntimeMutationStore:
         if operation.startswith("chat.") and guard is None:
             raise RuntimeUnavailable()
         if guard is not None:
-            guard(cursor, execute, uid, wrapper["request"])
+            callback, response_guard = guard
+            if response_guard:
+                callback(cursor, execute, uid, wrapper["request"], wrapper["response"])
+            else:
+                callback(cursor, execute, uid, wrapper["request"])
         return self._outcome(operation, operation_id, digest, status, wrapper["response"], revision, replayed=True)
 
     def mutate(self, identity, operation, operation_id, payload, action, *, access_token):

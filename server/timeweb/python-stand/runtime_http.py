@@ -14,11 +14,12 @@ from native_sessions import NativeIdentity
 from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest,
     RuntimeRejected, RuntimeConflict, RuntimeUnavailable, RuntimeCommitUnknown)
 from runtime_chat import RuntimeChatService
+from runtime_personal_chat import RuntimePersonalChatService
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -45,6 +46,8 @@ def _route(path):
         return "profile.complete-test.v1", None, None
     if path == "/v1/runtime/me/geography":
         return "profile.edit-geography.v1", None, None
+    if path == "/v1/runtime/personal-chats":
+        return "chat.open-personal.v1", None, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
     if match:
         resource, suffix = match.groups()
@@ -76,7 +79,7 @@ def _body(environ):
 
 def _create(env):
     store = RuntimeMutationStore.from_env(env)
-    return store, RuntimeChatService(store), RuntimeProfileService(store)
+    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store)
 
 
 class RuntimeMutationHttp:
@@ -140,7 +143,7 @@ class RuntimeMutationHttp:
             identity = native_service.authorize(token, peer=environ.get("REMOTE_ADDR", ""))
             if type(identity) is not NativeIdentity:
                 raise NativeUnavailable()
-            store, chat, profile = self._services
+            store, chat, profile = self._services[:3]
             if full_profile_read:
                 result = profile.read_full(identity, access_token=token)
                 if type(result) is not dict:
@@ -158,7 +161,14 @@ class RuntimeMutationHttp:
                 operation_id = body.get("operationId")
                 if not isinstance(operation_id, str) or _UUID.fullmatch(operation_id) is None:
                     raise RuntimeInvalidRequest()
-                if operation == "chat.send-text.v1":
+                if operation == "chat.open-personal.v1":
+                    if set(body) != {"operationId", "targetUid"}:
+                        raise RuntimeInvalidRequest()
+                    if len(self._services) != 4:
+                        raise RuntimeUnavailable()
+                    outcome = self._services[3].open_personal(identity, body["targetUid"],
+                        operation_id, access_token=token)
+                elif operation == "chat.send-text.v1":
                     if set(body) != {"operationId", "text", "quoteMessageId"}:
                         raise RuntimeInvalidRequest()
                     outcome = chat.send_text(identity, resource, operation_id, body["text"],
