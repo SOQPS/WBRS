@@ -121,7 +121,20 @@ final class TimewebChatFlow {
 
   Future<void> loadLatest() => _load(false);
   Future<void> loadOlder() => _load(true);
-  Future<void> _load(bool older) {
+  Future<void> loadUpdates() => _load(false, updates: true);
+  Future<TimewebCurrentReadPage> readEvents(
+    TimewebCurrentReadCursor? after,
+  ) async {
+    requireCurrent();
+    final page = await _client.readCurrent(
+      TimewebCurrentReadRequest.events(limit: 100, after: after),
+    );
+    requireCurrent();
+    page.requireCurrent();
+    return page;
+  }
+
+  Future<void> _load(bool older, {bool updates = false}) {
     requireCurrent();
     if (_readFlight != null) return _readFlight!;
     if (older && !hasOlder) return Future.value();
@@ -136,17 +149,22 @@ final class TimewebChatFlow {
       requireCurrent();
       page.requireCurrent();
       final rows = <String, TimewebCurrentMessage>{
-        if (older)
+        if (older || updates)
           for (final message in _messages) message.messageId: message,
         for (final message in page.messages) message.messageId: message,
       }.values.toList()..sort((a, b) => b.sequence.compareTo(a.sequence));
       // Keep the oldest continuation intact while bounding the rendered window.
       // A manual latest refresh restores the newest page without a bare cursor.
-      if (rows.length > _maximumMessages) {
-        rows.removeRange(0, rows.length - _maximumMessages);
+      final capped = rows.length > _maximumMessages;
+      if (capped) {
+        if (updates) {
+          rows.removeRange(_maximumMessages, rows.length);
+        } else {
+          rows.removeRange(0, rows.length - _maximumMessages);
+        }
       }
       _messages = rows;
-      _older = page.nextCursor;
+      if (!updates || capped || _older == null) _older = page.nextCursor;
     })();
     _readFlight = future;
     unawaited(

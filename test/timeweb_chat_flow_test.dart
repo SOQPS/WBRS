@@ -13,6 +13,7 @@ import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_chat_flow.dart';
+import 'package:wbrs/service/timeweb_chat_events.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 
 final _now = DateTime.utc(2026, 10, 2);
@@ -188,6 +189,138 @@ Future<void> _stopRuntime(
 
 void main() {
   test(
+    'event cursor keeps busy and failed updates; pause and stale A discard',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('clrs-events-');
+      final store = _Store();
+      var eventReads = 0, busy = true, failApply = false, incoming = 4;
+      Completer<http.StreamedResponse>? delayed;
+      final wire = _Wire((request) async {
+        if (request.url.path == '/v1/runtime/chats') return _reply(_chats('A'));
+        if (request.url.path.endsWith('/messages')) {
+          if (request.url.queryParameters.containsKey('beforeSequence')) {
+            return _reply(_messages([_message(2)]));
+          }
+          return _reply(_messages([_message(incoming), _message(3)], 3));
+        }
+        expect(request.url.path, '/v1/runtime/events');
+        eventReads++;
+        if (delayed != null) return delayed.future;
+        final checkpoint = request.url.queryParameters['afterEventId'];
+        final id = checkpoint == null ? 11 : int.parse(checkpoint) + 1;
+        return _reply({
+          'kind': 'canonical-current',
+          'ordering': 'event_id_asc',
+          'items': [
+            {
+              'eventId': id,
+              'kind': 'chat.message.created.v1',
+              'chatId': 'chat-1',
+              'messageId': 'message-$incoming',
+              'sequence': incoming,
+              'senderUid': 'B',
+              'readerUid': null,
+              'readThroughSequence': null,
+              'chatRevision': 4,
+              'createdAt': _stamp,
+            },
+          ],
+          'nextAfterEventId': null,
+        });
+      });
+      final runtime = _runtime(store, wire, directory);
+      TimewebChatEventPump? pump;
+      try {
+        await runtime.start(remember: true);
+        final flow = await runtime.openChat(
+          (await runtime.readChats()).chats.single,
+        );
+        await flow.loadOlder();
+        var applied = 0;
+        pump = TimewebChatEventPump(
+          interval: const Duration(days: 1),
+          isCurrent: () => runtime.session.state.authenticated,
+          isVisible: () => true,
+          read: flow.readEvents,
+          apply: (events) async {
+            if (busy) return false;
+            if (failApply) {
+              throw const SocketException('Synthetic read failure');
+            }
+            applied++;
+            await flow.loadUpdates();
+            return true;
+          },
+        )..start(immediate: false);
+        await pump.pollNow();
+        expect(eventReads, 1);
+        expect(applied, 0);
+        busy = false;
+        failApply = true;
+        await pump.pollNow();
+        expect(wire.calls.last.url.path, '/v1/runtime/events');
+        expect(
+          wire.calls.last.url.queryParameters.containsKey('afterEventId'),
+          isFalse,
+        );
+        failApply = false;
+        incoming = 5;
+        await pump.pollNow();
+        expect(applied, 1);
+        expect(flow.messages.map((m) => m.sequence), [5, 4, 3, 2]);
+        delayed = Completer<http.StreamedResponse>();
+        final pending = pump.pollNow(), duplicate = pump.pollNow();
+        expect(identical(pending, duplicate), isTrue);
+        await Future<void>.delayed(Duration.zero);
+        expect(wire.calls.last.url.queryParameters['afterEventId'], '11');
+        pump.pause();
+        delayed.complete(
+          _reply({
+            'kind': 'canonical-current',
+            'ordering': 'event_id_asc',
+            'items': [],
+            'nextAfterEventId': null,
+          }),
+        );
+        await pending;
+        final pausedReads = eventReads;
+        await pump.pollNow();
+        expect(eventReads, pausedReads);
+        delayed = null;
+        pump.start(immediate: false);
+        await pump.pollNow();
+        expect(
+          wire.calls
+              .where((r) => r.url.path == '/v1/runtime/events')
+              .last
+              .url
+              .queryParameters['afterEventId'],
+          '11',
+        );
+        expect(applied, 2);
+        delayed = Completer<http.StreamedResponse>();
+        final oldA = pump.pollNow();
+        await Future<void>.delayed(Duration.zero);
+        await runtime.stop();
+        delayed.complete(
+          _reply({
+            'kind': 'canonical-current',
+            'ordering': 'event_id_asc',
+            'items': [],
+            'nextAfterEventId': null,
+          }),
+        );
+        await oldA;
+        expect(applied, 2);
+        flow.close();
+      } finally {
+        pump?.close();
+        await runtime.stop();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+  test(
     'durable send dedup and independent read; restart not-found stays lookup-only',
     () async {
       final directory = await Directory.systemTemp.createTemp('clrs-chat-');
@@ -348,6 +481,7 @@ void main() {
       Completer<http.StreamedResponse>? historyGate;
       TimewebMutationRequest? lateOperation, readOperation;
       var sendPosts = 0, readPosts = 0;
+      var incomingEvent = false;
       String? sentText;
       final longQuote =
           'Full original quoted text with enough words to wrap on a narrow screen. ' *
@@ -358,6 +492,29 @@ void main() {
             ? 'B'
             : 'A';
         if (request.method == 'GET') {
+          if (request.url.path == '/v1/runtime/events') {
+            return _reply({
+              'kind': 'canonical-current',
+              'ordering': 'event_id_asc',
+              'items': incomingEvent
+                  ? [
+                      {
+                        'eventId': 11,
+                        'kind': 'chat.message.created.v1',
+                        'chatId': 'chat-1',
+                        'messageId': 'message-6',
+                        'sequence': 6,
+                        'senderUid': 'B',
+                        'readerUid': null,
+                        'readThroughSequence': null,
+                        'chatRevision': 4,
+                        'createdAt': _stamp,
+                      },
+                    ]
+                  : [],
+              'nextAfterEventId': null,
+            });
+          }
           if (request.url.path == '/v1/runtime/chats') {
             final page = _chats(uid);
             if (uid == 'A') {
@@ -392,6 +549,7 @@ void main() {
           if (historyGate != null) return historyGate.future;
           return _reply(
             _messages([
+              if (incomingEvent) _message(6, text: 'New incoming from Timeweb'),
               if (sentText != null && uid == 'A')
                 _message(5, text: sentText, sender: 'A'),
               _message(4, sender: uid == 'A' ? 'B' : 'A')
@@ -561,6 +719,17 @@ void main() {
         // Unknown read is lookup-only. Allow it to settle before the A/B case.
         await tester.pump();
         await tester.enterText(composer, 'Unconfirmed A message');
+        incomingEvent = true;
+        await tester.pump(const Duration(seconds: 9));
+        await _waitFor(
+          tester,
+          () => find.text('New incoming from Timeweb').evaluate().isNotEmpty,
+        );
+        expect(
+          tester.widget<TextField>(composer).controller!.text,
+          'Unconfirmed A message',
+        );
+        incomingEvent = false;
         await tester.runAsync(() async {
           tester
               .widget<IconButton>(

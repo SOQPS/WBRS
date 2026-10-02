@@ -6,6 +6,7 @@ import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_chat_flow.dart';
+import 'package:wbrs/service/timeweb_chat_events.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -25,9 +26,11 @@ class TimewebChatsPage extends StatefulWidget {
   State<TimewebChatsPage> createState() => _TimewebChatsPageState();
 }
 
-class _TimewebChatsPageState extends State<TimewebChatsPage> {
+class _TimewebChatsPageState extends State<TimewebChatsPage>
+    with WidgetsBindingObserver {
   AppSessionLease? _lease;
   StreamSubscription<AppSessionState>? _subscription;
+  TimewebChatEventPump? _events;
   List<TimewebCurrentChat> _chats = [];
   TimewebCurrentReadCursor? _next;
   bool _invalid = false, _working = false;
@@ -37,6 +40,7 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     try {
       _lease = widget.runtime.session.captureLease();
       widget.initialPage.requireCurrent();
@@ -48,11 +52,40 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
     _subscription = widget.runtime.session.states.listen((_) {
       if (!_current) _invalidate();
     });
+    _events = TimewebChatEventPump(
+      isCurrent: () => _current,
+      isVisible: () => ModalRoute.of(context)?.isCurrent == true,
+      read: (after) async {
+        _lease!.requireCurrent();
+        final page = await widget.runtime.client.readCurrent(
+          TimewebCurrentReadRequest.events(limit: 100, after: after),
+        );
+        _lease!.requireCurrent();
+        return page;
+      },
+      apply: (events) async => events.isEmpty ? true : await _load(),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_current && _foreground) _events?.start();
+    });
+  }
+
+  bool get _foreground =>
+      WidgetsBinding.instance.lifecycleState == null ||
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _current) {
+      _events?.start();
+    } else {
+      _events?.pause();
+    }
   }
 
   bool get _current => mounted && !_invalid && (_lease?.isCurrent ?? false);
   void _invalidate() {
     if (!mounted || _invalid) return;
+    _events?.close();
     setState(() {
       _invalid = true;
       _chats = [];
@@ -70,8 +103,8 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
     });
   }
 
-  Future<void> _load({bool more = false}) async {
-    if (!_current || _working || (more && _next == null)) return;
+  Future<bool> _load({bool more = false}) async {
+    if (!_current || _working || (more && _next == null)) return false;
     final generation = ++_generation;
     setState(() {
       _working = true;
@@ -79,7 +112,7 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
     });
     try {
       final page = await widget.runtime.readChats(cursor: more ? _next : null);
-      if (!_current || generation != _generation) return;
+      if (!_current || generation != _generation) return false;
       page.requireCurrent();
       final chats = <String, TimewebCurrentChat>{
         if (more)
@@ -94,12 +127,14 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
         _chats = chats;
         _next = bounded ? null : page.nextCursor;
       });
+      return true;
     } catch (_) {
       if (_current) {
         setState(
           () => _error = 'Не удалось загрузить чаты. Проверьте подключение.',
         );
       }
+      return false;
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -107,6 +142,7 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
 
   Future<void> _open(TimewebCurrentChat chat) async {
     if (!_current || _working) return;
+    _events?.pause();
     setState(() {
       _working = true;
       _error = null;
@@ -134,11 +170,14 @@ class _TimewebChatsPageState extends State<TimewebChatsPage> {
       if (mounted) setState(() => _working = false);
     }
     if (_current) await _load();
+    if (_current && _foreground) _events?.start();
   }
 
   @override
   void dispose() {
     _generation++;
+    WidgetsBinding.instance.removeObserver(this);
+    _events?.close();
     unawaited(_subscription?.cancel());
     super.dispose();
   }
@@ -325,14 +364,19 @@ class TimewebChatPage extends StatefulWidget {
   State<TimewebChatPage> createState() => _TimewebChatPageState();
 }
 
-class _TimewebChatPageState extends State<TimewebChatPage> {
+class _TimewebChatPageState extends State<TimewebChatPage>
+    with WidgetsBindingObserver {
   final _composer = TextEditingController();
+  final _messageScroll = ScrollController();
   StreamSubscription<AppSessionState>? _subscription;
+  TimewebChatEventPump? _events;
   bool _invalid = false, _sending = false, _reading = false;
   String? _notice;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _messageScroll.addListener(_onScroll);
     try {
       widget.flow.requireCurrent();
       _composer.text = widget.flow.pendingText ?? '';
@@ -346,9 +390,61 @@ class _TimewebChatPageState extends State<TimewebChatPage> {
     _subscription = widget.flow.sessionStates.listen((_) {
       if (!_current) _invalidate();
     });
+    _events = TimewebChatEventPump(
+      isCurrent: () => _current,
+      isVisible: () => ModalRoute.of(context)?.isCurrent == true,
+      read: widget.flow.readEvents,
+      apply: _applyEvents,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_current) unawaited(_markRead());
+      if (_current) {
+        unawaited(_markRead());
+        if (_foreground) _events?.start();
+      }
     });
+  }
+
+  bool get _foreground =>
+      WidgetsBinding.instance.lifecycleState == null ||
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _current) {
+      _events?.start();
+    } else {
+      _events?.pause();
+    }
+  }
+
+  void _onScroll() {
+    if (_current && _messageScroll.offset < 24) unawaited(_markRead());
+  }
+
+  Future<bool> _applyEvents(List<TimewebCurrentEvent> events) async {
+    if (!_current || _reading || _sending) return false;
+    final messages = widget.flow.messages;
+    final newest = messages.isEmpty ? 0 : messages.first.sequence;
+    final changed = events.any(
+      (event) =>
+          event.chatId == widget.flow.chatId &&
+          event.kind == TimewebCurrentEventKind.messageCreated &&
+          event.sequence! > newest,
+    );
+    if (!changed) return true;
+    setState(() => _reading = true);
+    try {
+      await widget.flow.loadUpdates().timeout(widget.flow.observationTimeout);
+      if (!mounted || !_current || ModalRoute.of(context)?.isCurrent != true) {
+        return false;
+      }
+      setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_current) unawaited(_markRead());
+      });
+      return true;
+    } finally {
+      if (mounted) setState(() => _reading = false);
+    }
   }
 
   bool get _current {
@@ -363,6 +459,7 @@ class _TimewebChatPageState extends State<TimewebChatPage> {
 
   void _invalidate() {
     if (!mounted || _invalid) return;
+    _events?.close();
     setState(() {
       _invalid = true;
       _composer.clear();
@@ -377,7 +474,10 @@ class _TimewebChatPageState extends State<TimewebChatPage> {
   }
 
   Future<void> _markRead() async {
-    if (!mounted || !_current || ModalRoute.of(context)?.isCurrent != true) {
+    if (!mounted ||
+        !_current ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        (_messageScroll.hasClients && _messageScroll.offset >= 24)) {
       return;
     }
     try {
@@ -476,6 +576,9 @@ class _TimewebChatPageState extends State<TimewebChatPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _events?.close();
+    _messageScroll.dispose();
     widget.flow.close();
     unawaited(_subscription?.cancel());
     _composer.dispose();
@@ -546,6 +649,7 @@ class _TimewebChatPageState extends State<TimewebChatPage> {
                                 child: Text(context.tr('Сообщений пока нет')),
                               )
                             : ListView.builder(
+                                controller: _messageScroll,
                                 key: const ValueKey('timeweb-chat-messages'),
                                 reverse: true,
                                 padding: const EdgeInsets.symmetric(
