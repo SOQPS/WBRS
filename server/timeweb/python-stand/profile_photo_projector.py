@@ -346,7 +346,9 @@ class ProfilePhotoProjector:
         return SourcePhotoDocument(row[0], document(row[3]), _sha(row[4]))
 
     def _context(self, cursor, execute, uid, order):
-        execute(SOURCE_SQL); source = cursor.fetchall()
+        # PyMySQL returns a tuple of rows; synthetic adapters may use a list.
+        # Normalize the container while retaining the exact source tuple.
+        execute(SOURCE_SQL); source = list(cursor.fetchall())
         if source != [(SOURCE["project"], SOURCE["database"], SOURCE["bucket"])]:
             raise PhotoProjectionRefused("source_identity_mismatch")
         execute(OWNER_SQL, (uid, uid)); owner = cursor.fetchall()

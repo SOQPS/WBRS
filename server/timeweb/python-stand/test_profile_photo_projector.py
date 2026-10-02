@@ -180,6 +180,21 @@ class ProfilePhotoProjectorTests(unittest.TestCase):
     def setUp(self): self.db = Database(); self.projector = self.db.projector()
     def prepare(self): return self.projector.prepare(UID, reviewed_source_id_order=["photo-a"])
 
+    def test_mysql_tuple_result_preserves_source_checks_and_exact_apply(self):
+        from unittest.mock import patch
+        with patch.object(Cursor, "fetchall", lambda cursor: tuple(cursor.rows)):
+            prepared = self.prepare()
+            result = self.projector.apply(prepared, persist_receipt=self.db.persist)
+            self.assertEqual("applied", result["state"])
+            self.assertEqual("present_verified", self.projector.reconcile(self.db.receipts[-1])["state"])
+            self.assertEqual(1, len(self.db.state["photos"]))
+            self.assertEqual(1, sum(conn.commits for conn in self.db.connections))
+            wrong = Database(); wrong.state["source"] = ("wrong-project", SOURCE["database"], SOURCE["bucket"])
+            with self.assertRaises(PhotoProjectionRefused) as error:
+                wrong.projector().prepare(UID, reviewed_source_id_order=["photo-a"])
+            self.assertEqual("source_identity_mismatch", error.exception.reason)
+            self.assertFalse(any(conn.commits for conn in wrong.connections))
+
     def test_source_and_recovery_capabilities_are_mandatory_not_user_flags(self):
         for verifier in (None, lambda _: {}):
             with self.assertRaises(PhotoProjectionRefused): verify_source_snapshot(PROOF, trusted_verifier=verifier)
