@@ -13,6 +13,7 @@ from native_auth import NativeRejected, NativeUnavailable, NativeRateLimited
 from native_sessions import NativeIdentity
 from runtime_mutations import RuntimeInvalidRequest, RuntimeRejected, MAX_INTEGER
 from runtime_reads import RuntimeReadRejected
+from runtime_admin_http import RuntimeAdminUsersHttp
 
 
 class RuntimeReadHttpReply(NamedTuple):
@@ -113,11 +114,12 @@ def _query(environ, operation):
 
 
 class RuntimeReadHttp:
-    def __init__(self, env, store, *, read_factory=None, people_factory=None):
+    def __init__(self, env, store, *, read_factory=None, people_factory=None, admin_factory=None):
         self._enabled = (env.get("CLRS_RUNTIME_WRITES_ENABLED") == "1"
             and env.get("CLRS_RUNTIME_MEMBERSHIP_AUTHORITY") == "canonical-current-v1")
         self._reader = None
         self._people = None
+        self._admin = RuntimeAdminUsersHttp(env, store, service_factory=admin_factory)
         if self._enabled and store is not None:
             try:
                 if read_factory is None:
@@ -138,8 +140,13 @@ class RuntimeReadHttp:
         # The parent HTTP adapter owns and closes the shared transaction pool.
         self._reader = None
         self._people = None
+        self._admin.close()
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
+        admin_reply = self._admin.dispatch(environ, native_service=native_service,
+                                           native_configured=native_configured)
+        if admin_reply is not None:
+            return admin_reply
         route = _route(environ)
         if route is None:
             return None

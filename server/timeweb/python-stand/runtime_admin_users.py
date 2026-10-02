@@ -25,6 +25,12 @@ MAX_SCAN_ROWS = 128
 MAX_PUBLIC_BYTES = 65_536
 MAX_CURSOR_CHARS = 4096
 VERIFIED_SOURCES = frozenset({"firebase_claim", "approved_uid", "admin_grant"})
+
+
+class RuntimeAdminRoleRejected(RuntimeRejected):
+    """Current native identity is valid, but canonical admin access is denied."""
+
+
 ROLE_QUERY = """SELECT uid, role, verified_source, revoked_at
  FROM clrs_staging.role_grants WHERE uid = %s
  AND CAST(uid AS BINARY) = CAST(%s AS BINARY)
@@ -79,14 +85,14 @@ def admin_users_query(anchor=None):
 def _admin(cursor, execute, actor_uid):
     execute(ROLE_QUERY, (actor_uid, actor_uid)); rows = cursor.fetchall()
     if len(rows) != 1:
-        raise RuntimeRejected()
+        raise RuntimeAdminRoleRejected()
     row = rows[0]
     if (not isinstance(row, (tuple, list)) or len(row) != 4
             or type(row[0]) is not str or row[0] != actor_uid
             or type(row[1]) is not str or row[1] != "admin"
             or type(row[2]) is not str or row[2] not in VERIFIED_SOURCES
             or row[3] is not None):
-        raise RuntimeRejected()
+        raise RuntimeAdminRoleRejected()
     # A post-check must retain the same reviewed grant source as the pre-check.
     return tuple(row)
 
@@ -176,7 +182,7 @@ class RuntimeAdminUsersService:
             items = []; scanned = 0
             def finish(next_anchor=None):
                 if _admin(sql_cursor, execute, actor_uid) != before:
-                    raise RuntimeRejected()
+                    raise RuntimeAdminRoleRejected()
                 page = self._page(items, None if next_anchor is None
                     else self._next(actor_uid, limit, digest, next_anchor))
                 try:
