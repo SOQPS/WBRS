@@ -14,6 +14,7 @@ from native_sessions import NativeIdentity
 from runtime_mutations import RuntimeInvalidRequest, RuntimeRejected, MAX_INTEGER
 from runtime_reads import RuntimeReadRejected
 from runtime_admin_http import RuntimeAdminUsersHttp
+from runtime_meetings_http import RuntimeMeetingsHttp
 
 
 class RuntimeReadHttpReply(NamedTuple):
@@ -114,12 +115,14 @@ def _query(environ, operation):
 
 
 class RuntimeReadHttp:
-    def __init__(self, env, store, *, read_factory=None, people_factory=None, admin_factory=None):
+    def __init__(self, env, store, *, read_factory=None, people_factory=None, admin_factory=None,
+                 meetings_factory=None):
         self._enabled = (env.get("CLRS_RUNTIME_WRITES_ENABLED") == "1"
             and env.get("CLRS_RUNTIME_MEMBERSHIP_AUTHORITY") == "canonical-current-v1")
         self._reader = None
         self._people = None
         self._admin = RuntimeAdminUsersHttp(env, store, service_factory=admin_factory)
+        self._meetings = RuntimeMeetingsHttp(env, store, service_factory=meetings_factory)
         if self._enabled and store is not None:
             try:
                 if read_factory is None:
@@ -141,8 +144,13 @@ class RuntimeReadHttp:
         self._reader = None
         self._people = None
         self._admin.close()
+        self._meetings.close()
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
+        meetings_reply = self._meetings.dispatch(environ, native_service=native_service,
+                                                native_configured=native_configured)
+        if meetings_reply is not None:
+            return meetings_reply
         admin_reply = self._admin.dispatch(environ, native_service=native_service,
                                            native_configured=native_configured)
         if admin_reply is not None:
