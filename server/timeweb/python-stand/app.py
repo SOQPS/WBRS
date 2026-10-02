@@ -20,6 +20,7 @@ from legacy_conversation_http import LegacyConversationHttp
 from legacy_private_media_http import LegacyPrivateMediaHttp, MediaHttpReply
 from runtime_http import RuntimeMutationHttp
 from native_auth_lifecycle_http import NativeAuthLifecycleHttp
+from runtime_profile_photos_http import RuntimeProfilePhotoMediaReply, RuntimeProfilePhotosHttpReply
 
 
 def _reply(start_response, status, payload, *, head=False, authenticate=False, retry=False):
@@ -97,7 +98,8 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                legacy_http_factory=LegacyConversationHttp,
                media_http_factory=LegacyPrivateMediaHttp,
                runtime_http_factory=RuntimeMutationHttp,
-               lifecycle_http_factory=NativeAuthLifecycleHttp):
+               lifecycle_http_factory=NativeAuthLifecycleHttp,
+               profile_photos_http=None):
     """Construct WSGI app with injectable dependencies for offline tests."""
     if env is None:
         env = os.environ
@@ -225,6 +227,16 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
             return _reply(start_response, "200 OK", payload)
 
         if api:
+            if profile_photos_http is not None:
+                photo_reply = profile_photos_http.dispatch(environ, native_service=native_service,
+                                                          native_configured=native_configured)
+                if isinstance(photo_reply, RuntimeProfilePhotoMediaReply):
+                    photo_reply = photo_reply.respond(start_response)
+                    if not isinstance(photo_reply, RuntimeProfilePhotosHttpReply):
+                        return photo_reply
+                if photo_reply is not None:
+                    return _reply(start_response, photo_reply.status, photo_reply.payload,
+                                  authenticate=photo_reply.authenticate, retry=photo_reply.retry)
             lifecycle_reply = lifecycle_http.dispatch(environ)
             if lifecycle_reply is not None:
                 return _reply(start_response, lifecycle_reply.status, lifecycle_reply.payload,
@@ -298,7 +310,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
 
     def close():
         with init_lock:
-            for service in (lifecycle_http, media_http, native_service, runtime_http):
+            for service in (profile_photos_http, lifecycle_http, media_http, native_service, runtime_http):
                 cleanup = getattr(service, "close", None)
                 if callable(cleanup):
                     try:
