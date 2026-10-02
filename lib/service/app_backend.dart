@@ -23,6 +23,9 @@ class AppBackend {
   static const timewebAuthEnabled = bool.fromEnvironment(
     'CLRS_TIMEWEB_AUTH_ENABLED',
   );
+  static const timewebProfileEditorEnabled = bool.fromEnvironment(
+    'CLRS_TIMEWEB_PROFILE_EDITOR_ENABLED',
+  );
   static const timewebSourceSnapshot = String.fromEnvironment(
     'CLRS_TIMEWEB_SOURCE_SNAPSHOT',
   );
@@ -105,6 +108,7 @@ class AppBackend {
     final configuration = TimewebAuthConfiguration(
       endpoint: Uri.parse(timewebApiOrigin),
       enabled: true,
+      runtimeWritesEnabled: timewebProfileEditorEnabled,
     );
     final store = createAndroidTimewebTokenStore();
     final preferences = await SharedPreferences.getInstance();

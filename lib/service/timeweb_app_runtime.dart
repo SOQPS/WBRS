@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_session.dart';
 import 'timeweb_auth_client.dart';
 import 'timeweb_auth_lifecycle.dart';
+import 'timeweb_profile_edit_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -19,6 +20,7 @@ final class TimewebAppRuntime {
     required Future<void> Function() clearLocal,
     http.Client? transport,
     DateTime Function()? clock,
+    TimewebProfileEditJournal? profileEditJournal,
     this.emailLifecycleEnabled = false,
     this.registrationEnabled = false,
     Duration waitTimeout = const Duration(seconds: 20),
@@ -29,6 +31,7 @@ final class TimewebAppRuntime {
       throw ArgumentError('Native runtime configuration is unavailable.');
     }
     _rememberStore = _RememberingTokenStore(secureStore);
+    _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
     client = TimewebAuthClient(
       configuration: configuration,
       secureStore: _rememberStore,
@@ -44,6 +47,7 @@ final class TimewebAppRuntime {
 
   late final TimewebAuthClient client;
   late final _RememberingTokenStore _rememberStore;
+  late final TimewebProfileEditJournal _profileEditJournal;
   final String deviceId, expectedSourceSnapshot;
   final bool emailLifecycleEnabled, registrationEnabled;
   late final AppSession session;
@@ -107,6 +111,19 @@ final class TimewebAppRuntime {
         return TimewebSessionProfile._(lease, profile);
       });
 
+  bool get profileEditorEnabled => client.configuration.runtimeWritesEnabled;
+
+  Future<TimewebProfileEditFlow> openProfileEditor() => session
+      .runAuthenticated(
+        (lease) => TimewebProfileEditFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _profileEditJournal,
+        ),
+      )
+      .timeout(session.waitTimeout);
+
   TimewebAuthLifecycleClient createEmailLifecycleClient(
     TimewebLifecyclePurpose purpose,
   ) {
@@ -132,6 +149,7 @@ final class TimewebAppRuntime {
         result.settled != null) {
       result = await result.settled!;
     }
+    await _profileEditJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

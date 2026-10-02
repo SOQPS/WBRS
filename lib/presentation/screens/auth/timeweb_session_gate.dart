@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
+import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/presentation/screens/edit_profile/timeweb_profile_edit_page.dart';
 
 import 'login_screen/login_page.dart';
 
-/// Actual native account state + pinned full DTO only. Next native destinations
-/// remain unavailable until their own current services/onboarding are wired.
+/// Actual native account state plus the explicitly enabled current editor (or
+/// the default pinned DTO gate). Other native services/onboarding remain gated.
 /// This gate never enters Firebase SessionGate/Home or hydrates legacy globals.
 class TimewebSessionGate extends StatefulWidget {
   const TimewebSessionGate({super.key, required this.runtime});
@@ -21,6 +23,7 @@ class TimewebSessionGate extends StatefulWidget {
 class _TimewebSessionGateState extends State<TimewebSessionGate> {
   StreamSubscription<AppSessionState>? _subscription;
   TimewebSessionProfile? _profile;
+  TimewebProfileEditFlow? _editor;
   int? _loadedEpoch;
   int _generation = 0;
   bool _loading = false;
@@ -51,6 +54,8 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
     if (_loadedEpoch != state.epoch) {
       _generation++;
       _profile = null;
+      _editor?.close();
+      _editor = null;
       _loading = false;
       _error = false;
       _loadedEpoch = state.epoch;
@@ -72,8 +77,22 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       _loading = true;
       _error = false;
       _profile = null;
+      _editor?.close();
+      _editor = null;
     });
     try {
+      if (widget.runtime.profileEditorEnabled) {
+        final editor = await widget.runtime.openProfileEditor();
+        if (!mounted ||
+            generation != _generation ||
+            widget.runtime.session.state.epoch != epoch) {
+          editor.close();
+          return;
+        }
+        editor.requireCurrent();
+        setState(() => _editor = editor);
+        return;
+      }
       final profile = await widget.runtime.readGateProfile();
       if (!mounted ||
           generation != _generation ||
@@ -98,6 +117,7 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
   @override
   void dispose() {
     _generation++;
+    _editor?.close();
     unawaited(_subscription?.cancel());
     // The app owns the session. Leaving this screen is neither logout nor stop.
     super.dispose();
@@ -118,8 +138,11 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       );
     }
     String? stage;
+    TimewebProfileEditFlow? editor;
     try {
       stage = _profile?.onboarding.name;
+      _editor?.requireCurrent();
+      if (!terminal) editor = _editor;
     } catch (_) {
       // A queued rebuild must not render an old A snapshot after a B intent.
     }
@@ -133,7 +156,13 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(context.tr('Профиль недоступен')),
+                  Text(
+                    context.tr(
+                      editor == null
+                          ? 'Профиль недоступен'
+                          : 'Редактировать профиль',
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     context.tr(
@@ -144,6 +173,27 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
+                  if (editor != null)
+                    ElevatedButton(
+                      key: const ValueKey('timeweb-open-profile-editor'),
+                      onPressed: () async {
+                        final current = editor!;
+                        final epoch = state.epoch;
+                        current.requireCurrent();
+                        await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                TimewebProfileEditPage(flow: current),
+                          ),
+                        );
+                        if (mounted &&
+                            widget.runtime.session.state.authenticated &&
+                            widget.runtime.session.state.epoch == epoch) {
+                          await _load();
+                        }
+                      },
+                      child: Text(context.tr('Редактировать профиль')),
+                    ),
                   TextButton(
                     onPressed: terminal ? null : _load,
                     child: Text(context.tr('Повторить')),
