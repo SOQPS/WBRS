@@ -82,6 +82,8 @@ final class TimewebAppRuntime {
   late final AppSession session;
   Future<AppSessionResult>? _start;
   bool _policyUnsafe = false;
+  int? _adminProbeEpoch;
+  Future<bool>? _adminProbe;
 
   /// The install ID is routing metadata, never a password/token/account ID.
   static Future<String> loadDeviceId(SharedPreferences preferences) async {
@@ -192,6 +194,50 @@ final class TimewebAppRuntime {
         return person.bindSessionGuard(lease.requireCurrent);
       })
       .timeout(session.waitTimeout);
+
+  bool get adminUsersEnabled => ownProfileEnabled;
+
+  Future<TimewebAdminUsersResult> readAdminUsers(
+    TimewebAdminUsersRequest request, {
+    TimewebAdminUsersCursor? cursor,
+  }) => session
+      .runAuthenticated((lease) async {
+        if (!adminUsersEnabled) {
+          throw StateError('Current admin users are unavailable.');
+        }
+        try {
+          final page = await client.readAdminUsers(request, cursor: cursor);
+          lease.requireCurrent();
+          page.requireCurrent();
+          return page.bindSessionGuard(lease.requireCurrent);
+        } on TimewebAdminAccessDenied {
+          lease.requireCurrent();
+          _adminProbeEpoch = lease.epoch;
+          _adminProbe = Future.value(false);
+          rethrow;
+        }
+      })
+      .timeout(session.waitTimeout);
+
+  /// One bounded role probe per native epoch. Only an affordance: each admin
+  /// page still receives fresh server role/session authorization.
+  Future<bool> probeAdminUsersAccess() {
+    final epoch = session.state.epoch;
+    if (!adminUsersEnabled || !session.state.authenticated) {
+      return Future.value(false);
+    }
+    if (_adminProbeEpoch == epoch && _adminProbe != null) return _adminProbe!;
+    _adminProbeEpoch = epoch;
+    return _adminProbe = (() async {
+      try {
+        final result = await readAdminUsers(TimewebAdminUsersRequest(limit: 1));
+        result.requireCurrent();
+        return session.state.authenticated && session.state.epoch == epoch;
+      } catch (_) {
+        return false;
+      }
+    })();
+  }
 
   bool get personalChatEnabled => peopleEnabled && chatsEnabled;
 
@@ -327,6 +373,8 @@ final class TimewebAppRuntime {
   }
 
   Future<bool> stop() async {
+    _adminProbe = null;
+    _adminProbeEpoch = null;
     var result = await session.stop();
     while (result.outcome == AppSessionOutcome.pending &&
         result.settled != null) {

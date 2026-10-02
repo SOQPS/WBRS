@@ -15,6 +15,7 @@ part 'timeweb_current_own_profile.dart';
 part 'timeweb_geography.dart';
 part 'timeweb_people.dart';
 part 'timeweb_personal_chat.dart';
+part 'timeweb_admin_users.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -468,6 +469,7 @@ class TimewebAuthClient {
   final Map<int, _ProfileEditorFlight> _profileEditorFlights = {};
   final Map<int, _CurrentOwnProfileFlight> _currentOwnProfileFlights = {};
   final Map<String, _PeopleFlight> _peopleFlights = {};
+  final Map<String, _AdminUsersFlight> _adminUsersFlights = {};
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _stopping || _closed ? null : _session?.uid;
@@ -538,6 +540,7 @@ class TimewebAuthClient {
     unawaited(_cancelProfileEditorRead(this));
     unawaited(_cancelCurrentOwnProfileRead(this));
     unawaited(_cancelPeopleReads(this));
+    unawaited(_cancelAdminUsersReads(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -782,6 +785,15 @@ class TimewebAuthClient {
     filters: filters,
     cursor: cursor,
   ).then((value) => value as TimewebPeoplePage);
+
+  Future<TimewebAdminUsersResult> readAdminUsers(
+    TimewebAdminUsersRequest request, {
+    TimewebAdminUsersCursor? cursor,
+  }) => _startAdminUsersRead(
+    this,
+    request,
+    cursor,
+  ).then((value) => value as TimewebAdminUsersResult);
 
   Future<TimewebPublicPerson> readPerson(String uid) => _startPeopleRead(
     this,
@@ -1213,6 +1225,7 @@ class TimewebAuthClient {
     final editorDrain = _cancelProfileEditorRead(this);
     final ownProfileDrain = _cancelCurrentOwnProfileRead(this);
     final peopleDrain = _cancelPeopleReads(this);
+    final adminUsersDrain = _cancelAdminUsersReads(this);
     final mutationDrain = _cancelMutationTransfers(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
@@ -1221,6 +1234,7 @@ class TimewebAuthClient {
       await editorDrain;
       await ownProfileDrain;
       await peopleDrain;
+      await adminUsersDrain;
       await mutationDrain;
       _newEpoch();
       _closed = true;

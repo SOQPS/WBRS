@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:wbrs/presentation/screens/admin/timeweb_admin_users_page.dart';
+
 import 'package:wbrs/presentation/screens/list_of_users/timeweb_people_page.dart';
 
 import 'package:flutter/material.dart';
@@ -49,6 +51,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
   int _generation = 0;
   bool _loading = false, _opening = false, _error = false, _invalidated = false;
   String? _notice;
+  bool _adminAllowed = false;
 
   @override
   void initState() {
@@ -57,6 +60,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _profile = widget.initialProfile;
     _error = widget.initialError;
     unawaited(_prepareTemperament());
+    unawaited(_probeAdmin());
     _subscription = widget.runtime.session.states.listen((_) {
       if (!_current) _invalidate();
     });
@@ -90,6 +94,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _geography?.close();
     _geography = null;
     _notice = null;
+    _adminAllowed = false;
     _loading = false;
     _opening = false;
     setState(() {});
@@ -100,6 +105,32 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
         Navigator.of(context).removeRoute(route);
       }
     });
+  }
+
+  Future<void> _probeAdmin() async {
+    if (!_current || !widget.runtime.adminUsersEnabled) return;
+    final allowed = await widget.runtime.probeAdminUsersAccess();
+    if (_current) setState(() => _adminAllowed = allowed);
+  }
+
+  Future<void> _openAdmin() async {
+    if (!_current || !_adminAllowed || _loading || _opening) return;
+    setState(() => _opening = true);
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: timewebAdminUsersRoute),
+          builder: (_) => TimewebAdminUsersPage(
+            runtime: widget.runtime,
+            onAccessDenied: () {
+              if (_current) setState(() => _adminAllowed = false);
+            },
+          ),
+        ),
+      );
+    } finally {
+      if (_current) setState(() => _opening = false);
+    }
   }
 
   Future<void> _reload() async {
@@ -445,6 +476,15 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                             : null,
                         icon: const Icon(Icons.people_outline),
                         label: Text(context.tr('Люди')),
+                      ),
+                    if (_adminAllowed && widget.runtime.adminUsersEnabled)
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-admin-users'),
+                        onPressed: current && !_loading && !_opening
+                            ? _openAdmin
+                            : null,
+                        icon: const Icon(Icons.admin_panel_settings_outlined),
+                        label: Text(context.tr('Панель для админа')),
                       ),
                     if (widget.runtime.chatsEnabled)
                       ElevatedButton.icon(
