@@ -179,25 +179,25 @@ def _rows(values):
     return tuple(sorted(result, key=lambda x: x.ordinal))
 
 
-SOURCE_SQL = "SELECT source_project, source_database, source_bucket FROM clrs_staging.legacy_source WHERE singleton = 1 LIMIT 1 FOR UPDATE"
+SOURCE_SQL = "SELECT source_project, source_database, source_bucket FROM clrs_staging.legacy_source WHERE singleton = 1 LIMIT 1 FOR SHARE"
 OWNER_SQL = """SELECT a.uid, a.disabled, a.lifecycle, p.uid,
  CASE WHEN OCTET_LENGTH(CAST(p.legacy_raw AS CHAR CHARACTER SET utf8mb4)) <= 131072 THEN p.legacy_raw ELSE NULL END,
  DATE_FORMAT(p.updated_at, '%%Y-%%m-%%dT%%H:%%i:%%s.%%fZ')
  FROM clrs_staging.accounts AS a JOIN clrs_staging.profiles AS p
  ON p.uid = a.uid AND CAST(p.uid AS BINARY) = CAST(a.uid AS BINARY)
- WHERE a.uid = %s AND CAST(a.uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR UPDATE OF a, p"""
+ WHERE a.uid = %s AND CAST(a.uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR SHARE OF a, p"""
 DOC_COLUMNS = "firebase_path, collection_path, document_id, CASE WHEN OCTET_LENGTH(CAST(encoded_payload AS CHAR CHARACTER SET utf8mb4)) <= 131072 THEN encoded_payload ELSE NULL END, payload_sha256"
-ROOT_SQL = "SELECT " + DOC_COLUMNS + " FROM clrs_staging.legacy_documents WHERE firebase_path_sha256 = %s AND CAST(firebase_path AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR UPDATE"
-GALLERY_SQL = "SELECT " + DOC_COLUMNS + " FROM clrs_staging.legacy_documents WHERE collection_path_sha256 = %s AND CAST(collection_path AS BINARY) = CAST(%s AS BINARY) ORDER BY CAST(document_id AS BINARY) LIMIT 51 FOR UPDATE"
+ROOT_SQL = "SELECT " + DOC_COLUMNS + " FROM clrs_staging.legacy_documents WHERE firebase_path_sha256 = %s AND CAST(firebase_path AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR SHARE"
+GALLERY_SQL = "SELECT " + DOC_COLUMNS + " FROM clrs_staging.legacy_documents WHERE collection_path_sha256 = %s AND CAST(collection_path AS BINARY) = CAST(%s AS BINARY) ORDER BY CAST(document_id AS BINARY) LIMIT 51 FOR SHARE"
 PHOTOS_SQL = "SELECT uid, media_id, ordinal, is_primary, firebase_image_id FROM clrs_staging.profile_photos WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY) ORDER BY ordinal LIMIT 51 FOR UPDATE"
 
 
 def _storage_sql(count):
-    return "SELECT source_bucket, source_path, CASE WHEN OCTET_LENGTH(CAST(source_metadata AS CHAR CHARACTER SET utf8mb4)) <= 65536 THEN source_metadata ELSE NULL END, source_size, source_sha256, target_key, target_sha256, copied_at FROM clrs_staging.legacy_storage_objects WHERE source_bucket = %s AND source_path_sha256 IN (" + ",".join("%s" for _ in range(count)) + ") LIMIT 51 FOR UPDATE"
+    return "SELECT source_bucket, source_path, CASE WHEN OCTET_LENGTH(CAST(source_metadata AS CHAR CHARACTER SET utf8mb4)) <= 65536 THEN source_metadata ELSE NULL END, source_size, source_sha256, target_key, target_sha256, copied_at FROM clrs_staging.legacy_storage_objects WHERE source_bucket = %s AND source_path_sha256 IN (" + ",".join("%s" for _ in range(count)) + ") LIMIT 51 FOR SHARE"
 
 
 def _media_sql(count):
-    return "SELECT media_id, owner_uid, purpose, object_key, thumbnail_key, mime_type, byte_size, thumbnail_byte_size, sha256, status, legacy_storage_path FROM clrs_staging.media_objects WHERE object_key_sha256 IN (" + ",".join("%s" for _ in range(count)) + ") LIMIT 51 FOR UPDATE"
+    return "SELECT media_id, owner_uid, purpose, object_key, thumbnail_key, mime_type, byte_size, thumbnail_byte_size, sha256, status, legacy_storage_path FROM clrs_staging.media_objects WHERE object_key_sha256 IN (" + ",".join("%s" for _ in range(count)) + ") LIMIT 51 FOR SHARE"
 
 
 def _insert_sql(count):
@@ -254,6 +254,7 @@ class ProfilePhotoProjector:
         if model == STRICT_MODEL:
             scope = "strict-table-role"
             underlying = {"readTables": read, "insertTables": inserts,
+                "updateTables": [] if recovery else ["profile_photos"],
                 "deleteTables": deletes, "otherWriteTables": []}
         else:
             scope = "existing-approved-provider-database"
@@ -478,11 +479,19 @@ class ProfilePhotoProjector:
         if callback(encrypted) != hashlib.sha256(encrypted).hexdigest():
             raise PhotoProjectionRefused("durable_receipt_unconfirmed")
 
-    def _preflight_recovery(self):
-        # Actual verifier is mandatory BEFORE any INSERT and again before its
-        # COMMIT. This only proves runner readiness, never mutates or claims that
-        # a DELETE has already happened. Its connection is always separate.
-        self._transaction(lambda cursor, execute: (None, None), readonly=True, recovery=True)
+    def _preflight_recovery(self, prepared=None):
+        # BEFORE opening apply: execute the full exact mixed-lock context in a
+        # zero-DML WRITE transaction + ROLLBACK, proving actual query/lock rights.
+        # Before COMMIT: fresh TLS/grants only, with NO target locks; relocking
+        # profile_photos in another connection would deadlock our apply itself.
+        def action(cursor, execute):
+            if prepared is not None:
+                plan, context, rows = self._context(cursor, execute, prepared.uid, prepared.order)
+                if (plan != prepared.plan or context != prepared.context_digest
+                        or (rows and rows != plan.rows)):
+                    raise PhotoProjectionRefused("recovery_probe_context_changed")
+            return None, None
+        self._transaction(action, readonly=prepared is None, recovery=True)
 
     def apply(self, prepared, *, persist_receipt):
         if (type(prepared) is not PreparedPhotoProjection or prepared not in self._prepared
@@ -490,7 +499,7 @@ class ProfilePhotoProjector:
             raise PhotoProjectionRefused("prepared_plan_or_durable_receipt_missing")
         if prepared.uid in self._unknown or self._pending(prepared.uid) is not None:
             raise PhotoProjectionRefused("pending_receipt_reconcile_required")
-        self._preflight_recovery()
+        self._preflight_recovery(prepared)
         def action(cursor, execute):
             plan, context, existing = self._context(cursor, execute, prepared.uid, prepared.order)
             if context != prepared.context_digest or plan != prepared.plan:

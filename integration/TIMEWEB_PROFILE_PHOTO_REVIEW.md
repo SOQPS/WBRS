@@ -113,15 +113,22 @@ explicit pinned DNS host. `VerifiedPhotoRecovery` принимает **свой*
 переиспользуются. Перед каждым transaction verifier подтверждает actual CA/TLS/
 hostname, MySQL8.4, strict `clrs_staging`, socket timeout до двух секунд и fresh
 actual grants с digest. Minting capability не является фактическим DELETE witness.
-Перед первым INSERT и снова перед apply COMMIT отдельный свежий recovery
-preflight проверяет возможность guarded восстановления и завершается ROLLBACK.
+До открытия apply transaction отдельный свежий recovery probe выполняет полный
+`_context(uid, reviewed_order)` в WRITE-mode transaction **без DML**, проверяет
+exact prepared source/plan/context/rows и заканчивается ROLLBACK. Так проверяется
+actual query/lock capability до первого INSERT. Перед COMMIT отдельный READ ONLY
+preflight проверяет только fresh TLS/grants verifier и не блокирует associations
+повторно: повторный FOR UPDATE из другого connection ожидал бы собственный apply
+lock. Source/CAS/full rows перед COMMIT перепроверяются на самом apply connection.
 
 Две честно разделённые private permission models:
 
 - Default `strict-tables-v1`: actual underlying SELECT только на семь таблиц
   accounts/profiles/legacy_source/legacy_documents/legacy_storage_objects/
-  media_objects/profile_photos. Apply имеет INSERT только profile_photos без
-  DELETE; recovery имеет DELETE только profile_photos без INSERT. Иных writes нет.
+  media_objects/profile_photos. Apply имеет INSERT и UPDATE только profile_photos
+  без DELETE; UPDATE privilege нужен для FOR UPDATE, сам runner UPDATE не
+  выполняет. Recovery имеет DELETE только profile_photos без INSERT/UPDATE.
+  Иных writes нет.
 - Explicit `existing-provider-role`: `underlying_permissions_scope` =
   `existing-approved-provider-database`. Для apply декларируются реальные
   существующие broad privileges clrs_migrate CREATE/REFERENCES/SELECT/INSERT/
@@ -149,7 +156,10 @@ callback. Connection factory/config остаются у trusted caller, без �
 grants или environment loader.
 
 Prepare/reconcile используют SERIALIZABLE READ ONLY/FOR SHARE/ROLLBACK; apply и
-rollback — SERIALIZABLE/FOR UPDATE. Все account/profile UID JOIN/WHERE содержат
+rollback — SERIALIZABLE с **mixed locks**: source/account/profile/docs/storage/
+media FOR SHARE, только profile_photos FOR UPDATE. Это сохраняет source/context
+от concurrent changes и позволяет recovery с SELECT source + DELETE photos
+выполнить actual lock contract. Все account/profile UID JOIN/WHERE содержат
 indexed equality и binary exact guards. Root document проверяется по hash и full
 path, gallery query — indexed collection hash + exact collection, byte document-ID
 order и LIMIT51; >50 отказывает без truncation. Caller supplies явно reviewed
@@ -244,7 +254,7 @@ hash/copy marker, reviewed gallery ordering, ambiguous/unmapped/bounded inputs,
 existing-row conflict и отсутствие изменения входов. Это не SQL apply, S3 bytes,
 actual user mapping, live API privacy, promotion activation или device proof.
 
-`test_profile_photo_projector.py`: 11 SQL-shaped synthetic cases прошли через
+`test_profile_photo_projector.py`: 12 SQL-shaped synthetic cases прошли через
 caller-owned fake connections без TCP. Проверены source/recovery capability
 missing/mismatch, source/owner/hash/completeness/order refusal, CAS до INSERT и
 COMMIT, exact full readback, обязательная encrypted durable callback, unknown
@@ -255,5 +265,12 @@ broad provider permission declaration, separate recovery connection/preflights,
 SQL shape allowlist и recovery permission revocation до COMMIT. Это не actual
 MySQL parse, live TLS/role acceptance, fsync implementation, database apply или
 user photos. Более широкие наборы не запускались.
+
+Mixed-model case проверяет missing apply UPDATE photo lock capability, actual
+recovery association lock refusal до INSERT, полный zero-DML WRITE recovery
+probe и отсутствие association queries/locks у второго pre-COMMIT preflight.
+Root SQL syntax proofs прежнего frozen source hash сохраняются как **baseline**;
+они не объявляются proof изменённых mixed-lock запросов. Новый actual SQL/parser
+proof делает root отдельно, без user rows или mutations.
 
 Root подтвердил actual MySQL 8.4 parser для 7 SELECT shapes и INSERT shape через EXPLAIN без ANALYZE/выполнения. Gallery/media/storage/association queries используют существующие scoped indexes; источник — singleton PRIMARY. Данные пользователей не читались, writes/DDL=0. EXPLAIN INSERT первоначально отклонён MySQL1792 внутри READ ONLY; проверен отдельно только EXPLAIN в обычной transaction с rollback, без повторения успешных SELECT checks. Proof связан с projector SHA `1eaa4eafe9af8f2f73220bba72113ef345a5ea6017938a1fb16528188999f2b3`. Реальный apply не выполнялся: текущий `gen_user` имеет права на `default_db`, не на `clrs_staging` (1044), и не является recovery capability. Нужен actual проверяемый recovery доступ для exact записанных association rows перед любым COMMIT.

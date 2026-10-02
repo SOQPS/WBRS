@@ -33,6 +33,7 @@ def connection_verifier(connection):
         "underlying_permissions_scope": "strict-table-role",
         "underlying_permissions": {"readTables": sorted(READ_TABLES),
             "insertTables": [] if recovery else ["profile_photos"],
+            "updateTables": [] if recovery else connection.db.update_tables,
             "deleteTables": connection.db.delete_tables if recovery else [], "otherWriteTables": []},
         "executed_sql_scope": "profile-photo-projector-v1",
         "execution_mode": "recovery" if recovery else "apply", "runner_allowlist_enforced": True}
@@ -63,8 +64,9 @@ class Database:
             "root": doc_row(root, "users"), "gallery": [doc_row(image, "users/" + UID + "/images")],
             "storage": [tuple(proof.storage.values())], "media": [tuple(proof.media.values())], "photos": []}
         self.connections = []; self.calls = []; self.receipts = []
-        self.tls = True; self.delete_tables = ["profile_photos"]
+        self.tls = True; self.delete_tables = ["profile_photos"]; self.update_tables = ["profile_photos"]
         self.commit_error = None; self.corrupt_insert = False; self.after_photo_select = None
+        self.deny_recovery_lock = False
 
     def connect(self):
         connection = Connection(self, "apply"); self.connections.append(connection)
@@ -121,7 +123,10 @@ class Cursor:
         if sql.startswith("START TRANSACTION"):
             self.c.readonly = "READ ONLY" in sql; return 0
         if sql.startswith("SELECT "):
-            assert sql.endswith("FOR SHARE" if self.c.readonly else "FOR UPDATE") or sql.endswith("OF a, p")
+            if "FROM clrs_staging.profile_photos" in sql:
+                assert sql.endswith("FOR SHARE" if self.c.readonly else "FOR UPDATE")
+            else:
+                assert sql.endswith("FOR SHARE") or sql.endswith("FOR SHARE OF a, p")
             if self.c.readonly: assert "FOR UPDATE" not in sql
             if "FROM clrs_staging.legacy_source" in sql: self.rows = [state["source"]]
             elif "FROM clrs_staging.accounts AS a" in sql:
@@ -143,6 +148,8 @@ class Cursor:
                 self.rows = [x for x in state["media"] if hashlib.sha256(x[3].encode()).digest() in params][:51]
             elif "FROM clrs_staging.profile_photos" in sql:
                 assert "LIMIT 51" in sql and params[0] == params[1]
+                if self.c.role == "recovery" and not self.c.readonly and db.deny_recovery_lock:
+                    raise PermissionError("synthetic actual lock refusal")
                 self.rows = sorted([x for x in state["photos"] if x[0] == params[0]], key=lambda x: x[2])[:51]
                 self.c.photo_selects += 1
                 if db.after_photo_select: db.after_photo_select(self.c)
@@ -257,6 +264,33 @@ class ProfilePhotoProjectorTests(unittest.TestCase):
         self.assertEqual(self.db.state["photos"], [])
         self.assertEqual(self.db.receipts, [])
         self.assertFalse(any(c.commits for c in self.db.connections))
+
+    def test_mixed_model_requires_apply_lock_right_and_probe_never_relocks_before_commit(self):
+        self.db.update_tables = []
+        with self.assertRaises(PhotoProjectionRefused) as caught: self.prepare()
+        self.assertEqual(caught.exception.reason, "connection_or_recovery_role_unverified")
+        self.assertFalse(any(sql.startswith("INSERT") for sql, _ in self.db.calls))
+        self.db.update_tables = ["profile_photos"]
+        recovery = verify_photo_recovery(connect=self.db.recovery_connect,
+            trusted_connection_verifier=connection_verifier, pinned_host=HOST)
+        projector = self.db.projector(permission_model=PROVIDER_MODEL,
+            trusted_connection_verifier=provider_verifier, recovery=recovery)
+        prepared = projector.prepare(UID, reviewed_source_id_order=["photo-a"])
+        self.db.deny_recovery_lock = True
+        with self.assertRaises(PhotoProjectionRefused): projector.apply(prepared, persist_receipt=self.db.persist)
+        self.assertFalse(any(sql.startswith("INSERT") for sql, _ in self.db.calls))
+        self.assertFalse(any(c.commits for c in self.db.connections))
+        self.db.deny_recovery_lock = False
+        projector.apply(prepared, persist_receipt=self.db.persist)
+        probes = [c for c in self.db.connections if c.role == "recovery"][-2:]
+        self.assertFalse(probes[0].readonly)
+        self.assertEqual(probes[0].photo_selects, 1)
+        self.assertEqual(probes[0].rollbacks, 1)
+        self.assertEqual(probes[0].commits, 0)
+        self.assertTrue(probes[1].readonly)
+        self.assertEqual(probes[1].photo_selects, 0)
+        self.assertEqual(probes[1].rollbacks, 1)
+        self.assertEqual(probes[1].commits, 0)
 
     def test_source_owner_gallery_completeness_and_reviewed_query_order_refuse(self):
         original = copy.deepcopy(self.db.state)
