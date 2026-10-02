@@ -18,8 +18,11 @@ class TimewebProfileEditPage extends StatefulWidget {
 class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
+  final _age = TextEditingController();
+  final _height = TextEditingController();
   final _about = TextEditingController();
   final _interests = TextEditingController();
+  bool? _children;
   bool _busy = false;
   bool _invalidated = false;
   String? _notice;
@@ -31,8 +34,11 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     try {
       widget.flow.requireCurrent();
       _name.text = widget.flow.fullName;
+      _age.text = widget.flow.age?.toString() ?? '';
+      _height.text = widget.flow.rost?.toString() ?? '';
       _about.text = widget.flow.about;
       _interests.text = widget.flow.hobbi;
+      _children = widget.flow.deti;
       if (widget.flow.needsCheck) {
         _notice =
             'Результат пока не подтверждён. Нажмите «Проверить результат».';
@@ -59,8 +65,11 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     if (!mounted || _invalidated) return;
     _invalidated = true;
     _name.clear();
+    _age.clear();
+    _height.clear();
     _about.clear();
     _interests.clear();
+    _children = null;
     setState(() {});
     // Session invalidation closes this route. It never changes the app owner.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -87,6 +96,26 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     return null;
   }
 
+  String? _validateNumber(String field, String? value) {
+    if (!_current) return null;
+    final text = value ?? '';
+    final old = field == 'age' ? widget.flow.age : widget.flow.rost;
+    // Imported null/0/legacy ages remain untouched. Clearing an existing
+    // number cannot be sent as null by the reviewed mutation contract.
+    if (text == (old?.toString() ?? '')) return null;
+    final number = int.tryParse(text.trim());
+    final minimum = field == 'age' ? 18 : 1;
+    final maximum = field == 'age' ? 100 : 300;
+    if (number == null || number < minimum || number > maximum) {
+      return context.tr(
+        field == 'age'
+            ? 'Возраст должен быть от 18 до 100 лет'
+            : 'Укажите корректный рост.',
+      );
+    }
+    return null;
+  }
+
   Future<void> _submit() async {
     if (_busy || !_current) return;
     final check = widget.flow.needsCheck;
@@ -96,6 +125,9 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
           fullName: _name.text,
           about: _about.text,
           hobbi: _interests.text,
+          age: int.tryParse(_age.text.trim()),
+          rost: int.tryParse(_height.text.trim()),
+          deti: _children,
         )) {
       return;
     }
@@ -110,6 +142,9 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
               fullName: _name.text,
               about: _about.text,
               hobbi: _interests.text,
+              age: int.tryParse(_age.text.trim()),
+              rost: int.tryParse(_height.text.trim()),
+              deti: _children,
             );
       // Observe the same operation within a bounded UI interval. A timeout
       // does not clear/retry a POST; the next tap checks that original handle.
@@ -159,6 +194,8 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     widget.flow.close();
     unawaited(_subscription?.cancel());
     _name.dispose();
+    _age.dispose();
+    _height.dispose();
     _about.dispose();
     _interests.dispose();
     super.dispose();
@@ -196,16 +233,49 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
                         ),
                         const SizedBox(height: 12),
                         TextFormField(
-                          key: const ValueKey('timeweb-profile-about'),
-                          controller: _about,
+                          key: const ValueKey('timeweb-profile-age'),
+                          controller: _age,
                           enabled: !_busy && !pending && !reload,
-                          minLines: 3,
-                          maxLines: null,
-                          maxLength: 4096,
+                          keyboardType: TextInputType.number,
+                          maxLength: 3,
                           decoration: InputDecoration(
-                            labelText: context.tr('О себе'),
+                            labelText: context.tr('Возраст'),
                           ),
-                          validator: (v) => _validate('about', v),
+                          validator: (v) => _validateNumber('age', v),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          key: const ValueKey('timeweb-profile-height'),
+                          controller: _height,
+                          enabled: !_busy && !pending && !reload,
+                          keyboardType: TextInputType.number,
+                          maxLength: 3,
+                          decoration: InputDecoration(
+                            labelText: context.tr('Рост'),
+                          ),
+                          validator: (v) => _validateNumber('rost', v),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<bool>(
+                          key: const ValueKey('timeweb-profile-children'),
+                          value: _children,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: context.tr('Есть дети?'),
+                          ),
+                          items: [
+                            DropdownMenuItem(
+                              value: true,
+                              child: Text(context.tr('Да')),
+                            ),
+                            DropdownMenuItem(
+                              value: false,
+                              child: Text(context.tr('Нет')),
+                            ),
+                          ],
+                          onChanged: _busy || pending || reload
+                              ? null
+                              : (value) => setState(() => _children = value),
                         ),
                         const SizedBox(height: 12),
                         TextFormField(
@@ -219,6 +289,19 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
                             labelText: context.tr('Интересы и увлечения'),
                           ),
                           validator: (v) => _validate('hobbi', v),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          key: const ValueKey('timeweb-profile-about'),
+                          controller: _about,
+                          enabled: !_busy && !pending && !reload,
+                          minLines: 3,
+                          maxLines: null,
+                          maxLength: 4096,
+                          decoration: InputDecoration(
+                            labelText: context.tr('О себе'),
+                          ),
+                          validator: (v) => _validate('about', v),
                         ),
                         if (_notice != null) ...[
                           const SizedBox(height: 12),

@@ -99,49 +99,87 @@ final class TimewebProfileEditFlow {
   String get fullName => _text('fullName', _view.profile!.fullName);
   String get about => _text('about', _view.profile!.about);
   String get hobbi => _text('hobbi', _view.profile!.hobbi);
-  String _text(String key, String? source) {
+  int? get age => _value<int>('age', _view.profile!.age);
+  int? get rost => _value<int>('rost', _view.profile!.rost);
+  bool? get deti => _value<bool>('deti', _view.profile!.deti);
+  String? get pol => _value<String>('pol', _view.profile!.pol);
+  String? get relationStatus =>
+      _value<String>('relationStatus', _view.profile!.relationStatus);
+  String _text(String key, String? source) => _value<String>(key, source) ?? '';
+  T? _value<T>(String key, T? source) {
     requireCurrent();
-    return _intent?.changes[key] ?? source ?? '';
+    final value = _intent?.changes[key];
+    return value == null ? source : value as T;
   }
 
   bool hasChanges({
     required String fullName,
     required String about,
     required String hobbi,
+    int? age,
+    int? rost,
+    bool? deti,
+    String? pol,
+    String? relationStatus,
   }) {
     requireCurrent();
-    final profile = _view.profile!;
-    return fullName != (profile.fullName ?? '') ||
-        about != (profile.about ?? '') ||
-        hobbi != (profile.hobbi ?? '');
+    return fieldChanged('fullName', fullName) ||
+        fieldChanged('about', about) ||
+        fieldChanged('hobbi', hobbi) ||
+        fieldChanged('age', age) ||
+        fieldChanged('rost', rost) ||
+        fieldChanged('deti', deti) ||
+        fieldChanged('pol', pol) ||
+        fieldChanged('relationStatus', relationStatus);
   }
 
-  bool fieldChanged(String field, String text) {
+  bool fieldChanged(String field, Object? value) {
     requireCurrent();
     final profile = _view.profile!;
-    final old = switch (field) {
+    final Object? old = switch (field) {
       'fullName' => profile.fullName,
       'about' => profile.about,
       'hobbi' => profile.hobbi,
+      'age' => profile.age,
+      'rost' => profile.rost,
+      'deti' => profile.deti,
+      'pol' => profile.pol,
+      'relationStatus' => profile.relationStatus,
       _ => throw ArgumentError('Unsupported editor field.'),
     };
-    return text != (old ?? '');
+    if (const {'fullName', 'about', 'hobbi'}.contains(field)) {
+      return value != (old ?? '');
+    }
+    // The mutation contract cannot clear a field to null. Omitted optional
+    // arguments preserve old/null values and retain the original 3-field API.
+    return value != null && value != old;
   }
 
   Future<TimewebProfileEditOutcome> save({
     required String fullName,
     required String about,
     required String hobbi,
+    int? age,
+    int? rost,
+    bool? deti,
+    String? pol,
+    String? relationStatus,
   }) {
     requireCurrent();
     if (_active != null) return _active!;
     if (_intent != null || _requiresReload || _settled != null) {
       throw StateError('Reconcile or reload the original profile operation.');
     }
-    final changes = <String, String>{
+    final changes = <String, Object>{
       if (fieldChanged('fullName', fullName)) 'fullName': fullName,
       if (fieldChanged('about', about)) 'about': about,
       if (fieldChanged('hobbi', hobbi)) 'hobbi': hobbi,
+      if (fieldChanged('age', age)) 'age': age!,
+      if (fieldChanged('rost', rost)) 'rost': rost!,
+      if (fieldChanged('deti', deti)) 'deti': deti!,
+      if (fieldChanged('pol', pol)) 'pol': pol!,
+      if (fieldChanged('relationStatus', relationStatus))
+        'relationStatus': relationStatus!,
     };
     final intent = _EditIntent.create(
       _origin,
@@ -223,8 +261,8 @@ final class TimewebProfileEditFlow {
   String toString() => 'TimewebProfileEditFlow(<redacted>)';
 }
 
-/// Application-private profile intent, not credentials. Only these three text
-/// fields are persisted. One native runtime owns this journal; IO is serialized
+/// Application-private profile intent, not credentials. Only the eight reviewed
+/// editable fields are persisted. One runtime owns this journal; IO is serialized
 /// across its screens. Unresolved entries are immutable and never overwritten.
 final class TimewebProfileEditJournal {
   TimewebProfileEditJournal({Future<Directory> Function()? directory})
@@ -269,6 +307,7 @@ final class TimewebProfileEditJournal {
     if (data is! Map<String, dynamic> ||
         jsonEncode(data) != raw ||
         data.length != 8 ||
+        data['version'] is! int ||
         data['version'] != 1 ||
         data['origin'] != origin ||
         data['uid'] != uid ||
@@ -281,21 +320,33 @@ final class TimewebProfileEditJournal {
     }
     final changes = data['changes'] as Map;
     if (changes.isEmpty ||
-        changes.length > 3 ||
+        changes.length > 8 ||
         changes.entries.any(
-          (e) =>
-              !const {'fullName', 'about', 'hobbi'}.contains(e.key) ||
-              e.value is! String,
+          (e) => !switch (e.key) {
+            'fullName' ||
+            'about' ||
+            'hobbi' ||
+            'pol' ||
+            'relationStatus' => e.value is String,
+            'age' || 'rost' => e.value is int,
+            'deti' => e.value is bool,
+            _ => false,
+          },
         )) {
       throw const FormatException('Invalid private profile intent.');
     }
-    final intent = _EditIntent(
-      origin,
-      uid,
-      data['operationId'],
-      data['expectedUpdatedAt'],
-      Map<String, String>.from(changes),
-    );
+    final _EditIntent intent;
+    try {
+      intent = _EditIntent(
+        origin,
+        uid,
+        data['operationId'],
+        data['expectedUpdatedAt'],
+        Map<String, Object>.from(changes),
+      );
+    } on ArgumentError {
+      throw const FormatException('Invalid private profile intent.');
+    }
     if (intent.request.requestHash != data['requestHash']) {
       throw const FormatException('Invalid private profile intent.');
     }
@@ -341,15 +392,20 @@ final class _EditIntent {
     this.uid,
     this.operationId,
     this.stamp,
-    Map<String, String> changes,
+    Map<String, Object> changes,
   ) : changes = Map.unmodifiable(changes) {
     request = TimewebMutationRequest.editOwnProfile(
       operationId: operationId,
       expectedUpdatedAt: stamp,
       changes: TimewebProfileChanges(
-        fullName: changes['fullName'],
-        about: changes['about'],
-        hobbi: changes['hobbi'],
+        fullName: changes['fullName'] as String?,
+        age: changes['age'] as int?,
+        rost: changes['rost'] as int?,
+        about: changes['about'] as String?,
+        hobbi: changes['hobbi'] as String?,
+        deti: changes['deti'] as bool?,
+        pol: changes['pol'] as String?,
+        relationStatus: changes['relationStatus'] as String?,
       ),
     );
   }
@@ -357,7 +413,7 @@ final class _EditIntent {
     String origin,
     String uid,
     String stamp,
-    Map<String, String> changes,
+    Map<String, Object> changes,
   ) {
     final random = Random.secure();
     final bytes = List.generate(16, (_) => random.nextInt(256));
@@ -370,7 +426,7 @@ final class _EditIntent {
     return _EditIntent(origin, uid, id, stamp, changes);
   }
   final String origin, uid, operationId, stamp;
-  final Map<String, String> changes;
+  final Map<String, Object> changes;
   late final TimewebMutationRequest request;
   Map<String, Object> get data => {
     'version': 1,
