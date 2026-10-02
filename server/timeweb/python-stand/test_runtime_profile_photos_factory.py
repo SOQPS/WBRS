@@ -85,5 +85,40 @@ class NativePhotoFactoryTests(unittest.TestCase):
             make_store.return_value.close.assert_called_once()
             make_directory.return_value.cleanup.assert_called_once()
 
+    def test_explicit_available_factory_and_runtime_read_old_complete_rows(self):
+        import runtime_profile_photos as photos
+        from profile_photo_review import AVAILABLE_GALLERY_POLICY
+        from test_runtime_profile_photos import CurrentProfilePhotoTests, doc_row, KEY as PROFILE_KEY
+        from test_profile_photo_review import source, url
+        env = {**self.env(), "CLRS_RUNTIME_PROFILE_PHOTO_ORDER_POLICY": photos.GALLERY_AVAILABLE_ORDER_POLICY}
+        with patch.object(factory.RuntimeMutationStore, "from_env") as make_store, \
+                patch.object(factory, "SigV4HTTPSReadTransport") as transport, \
+                patch.object(factory, "TimewebPrivateBucketState") as state:
+            owned = factory.create_profile_photos_service(env)
+            try:
+                self.assertEqual(owned._service._gallery_original_policy, AVAILABLE_GALLERY_POLICY)
+                transport.return_value.open.assert_not_called(); state.return_value.assert_not_called()
+            finally: owned.close()
+            make_store.return_value.close.assert_called_once()
+        fixture = CurrentProfilePhotoTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture.db.add_profile("actor", count=2)
+        collection = "users/actor/images"
+        blank = source(collection + "/blank", thumbnailUrl={"stringValue": url("thumb-only.jpg")})
+        row = doc_row(blank, collection); fixture.db.state["galleries"]["actor"].append(row)
+        with self.assertRaises(photos.RuntimeProfilePhotoNotFound):
+            fixture.service.photos(fixture.db.identity, "actor", access_token=fixture.db.access)
+        service = photos.RuntimeProfilePhotosService(fixture.store, PROFILE_KEY,
+            **{**fixture.options, "gallery_order_policy": photos.GALLERY_AVAILABLE_ORDER_POLICY})
+        self.addCleanup(service.close)
+        page = service.photos(fixture.db.identity, "actor", access_token=fixture.db.access)
+        self.assertEqual([(x["ordinal"], x["isPrimary"]) for x in page["items"]], [(0, True), (1, False)])
+        reference = page["items"][0]["reference"]
+        fixture.db.state["galleries"]["actor"].remove(row)
+        self.assertEqual(len(service.photos(fixture.db.identity, "actor", access_token=fixture.db.access)["items"]), 2)
+        with self.assertRaises(photos.RuntimeInvalidRequest):
+            service._resource(fixture.db.identity, fixture.db.access, "actor", reference)
+        self.assertFalse(any(sql.startswith(("INSERT", "UPDATE", "DELETE")) for sql, _ in fixture.db.calls))
+        self.assertTrue(all(connection.commits == 0 for connection in fixture.db.connections))
+
 
 if __name__ == "__main__": unittest.main()

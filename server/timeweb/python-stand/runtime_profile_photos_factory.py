@@ -22,7 +22,8 @@ from private_media_s3 import (PrivateMediaS3, SigV4HTTPSReadTransport,
     TimewebPrivateBucketState)
 from profile_photo_projector import COUNTS, verify_source_snapshot
 from runtime_mutations import RuntimeMutationStore, RuntimeUnavailable
-from runtime_profile_photos import RuntimeProfilePhotosService, GALLERY_ORDER_POLICY
+from runtime_profile_photos import (RuntimeProfilePhotosService, GALLERY_ORDER_POLICY,
+    GALLERY_AVAILABLE_ORDER_POLICY)
 from runtime_profile_photos_http import RuntimeProfilePhotosHttp
 
 
@@ -84,7 +85,8 @@ def create_profile_photos_service(env):
                 or env.get("CLRS_LEGACY_MEDIA_PROMOTION_REVIEWED") != "1"
                 or env.get("CLRS_LEGACY_MEDIA_PROMOTION_MODE") != "reviewed-immutable-object-alias"
                 or env.get("CLRS_LEGACY_MEDIA_S3_USER_MODE") != "dedicated-read-only"
-                or env.get("CLRS_RUNTIME_PROFILE_PHOTO_ORDER_POLICY") != GALLERY_ORDER_POLICY):
+                or env.get("CLRS_RUNTIME_PROFILE_PHOTO_ORDER_POLICY") not in
+                    (GALLERY_ORDER_POLICY, GALLERY_AVAILABLE_ORDER_POLICY)):
             raise RuntimeUnavailable()
         cursor_key = decode_base64(env.get("CLRS_LEGACY_READ_CURSOR_KEY_B64"), max_bytes=32)
         session_key = decode_base64(env.get("CLRS_NATIVE_SESSION_KEY_B64"), max_bytes=32)
@@ -115,7 +117,7 @@ def create_profile_photos_service(env):
         service = RuntimeProfilePhotosService(store, cursor_key, private_s3=s3,
             expected_bucket=bucket, expected_owner=owner, source_snapshot=source,
             media_promotion=promotion, spool_directory=directory.name,
-            gallery_order_policy=GALLERY_ORDER_POLICY)
+            gallery_order_policy=env["CLRS_RUNTIME_PROFILE_PHOTO_ORDER_POLICY"])
         return _OwnedReader(service, store, directory)
     except Exception:
         if service is not None: service.close()

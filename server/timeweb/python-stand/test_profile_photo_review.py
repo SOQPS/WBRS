@@ -11,7 +11,7 @@ from legacy_conversation_payload import payload_digest
 from legacy_private_media import target_key
 from media_promotion_acknowledgement import PINS, SOURCE
 from profile_photo_review import (prepare_profile_photo_review, SourcePhotoDocument,
-    ReadyPhotoEvidence, ProfilePhotoAssociation, MAX_PHOTOS)
+    ReadyPhotoEvidence, ProfilePhotoAssociation, MAX_PHOTOS, AVAILABLE_GALLERY_POLICY)
 from profile_visibility import VisibilityAccount
 
 
@@ -183,6 +183,45 @@ class ProfilePhotoReviewTests(unittest.TestCase):
         refused = self.review(existing_rows=[changed])
         self.assertEqual((refused.state, refused.reason, refused.rows),
             ("refused", "existing_photo_association_conflict", ()))
+
+    def test_available_gallery_skips_only_blank_preserving_full_order_and_document_pins(self):
+        second_path = "users/exact-owner/photos/second.jpg"
+        first = source("users/" + UID + "/images/a", url={"stringValue": url(PATH)})
+        last = source("users/" + UID + "/images/c", url={"stringValue": url(second_path)})
+        fingerprints = []
+        for value in (None, {"nullValue": None}, {"nullValue": "NULL_VALUE"}, {"stringValue": ""}):
+            fields = {"thumbnailUrl": {"stringValue": url("thumb-only.jpg")}}
+            if value is not None: fields["url"] = value
+            blank = source("users/" + UID + "/images/b", **fields)
+            options = {"gallery_documents": [first, blank, last], "reviewed_gallery_order": ["a", "b", "c"],
+                "ready_evidence": [evidence(), evidence(second_path)]}
+            self.assertEqual(self.review(**options).reason, "gallery_original_unknown")
+            plan = self.review(**options, gallery_original_policy=AVAILABLE_GALLERY_POLICY)
+            self.assertEqual(plan.state, "reviewable")
+            self.assertEqual([(row.ordinal, row.is_primary, row.firebase_image_id) for row in plan.rows],
+                [(0, 1, "a"), (1, 0, "c")])
+            self.assertEqual(len(plan.document_pins), 4)
+            self.assertEqual(len(plan.media_pins), 2)
+            self.assertEqual(self.review(**{**options, "reviewed_gallery_order": ["a", "c"]},
+                gallery_original_policy=AVAILABLE_GALLERY_POLICY).reason, "reviewed_gallery_order_mismatch")
+            self.assertEqual(self.review(**{**options, "gallery_documents": [first, blank, blank]},
+                gallery_original_policy=AVAILABLE_GALLERY_POLICY).reason, "ambiguous_gallery_document")
+            fingerprints.append(plan.fingerprint)
+        self.assertEqual(len(set(fingerprints)), 4)
+
+    def test_available_gallery_malformed_nonempty_unmapped_refuses_whole_plan(self):
+        valid = source("users/" + UID + "/images/a", url={"stringValue": url(PATH)})
+        blank = source("users/" + UID + "/images/b", url={"nullValue": None})
+        values = [{"booleanValue": False}, {"stringValue": None}, {"nullValue": "wrong"},
+            {"stringValue": "", "nullValue": None}, {"stringValue": " "},
+            {"stringValue": "https://outside.invalid/photo.jpg"},
+            {"stringValue": url("unpromoted/original.jpg")},
+            {"stringValue": "gs://" + SOURCE["bucket"] + "/" + PATH}, {"stringValue": url(PATH)}]
+        for value in values:
+            malformed = source("users/" + UID + "/images/c", url=value)
+            plan = self.review(gallery_documents=[valid, blank, malformed], reviewed_gallery_order=["a", "b", "c"],
+                gallery_original_policy=AVAILABLE_GALLERY_POLICY)
+            self.assertEqual((plan.state, plan.rows, plan.fingerprint), ("refused", (), None))
 
 
 if __name__ == "__main__":

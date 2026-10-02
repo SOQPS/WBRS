@@ -21,6 +21,8 @@ from profile_visibility import VisibilityAccount
 
 
 MAX_PHOTOS = 50
+STRICT_GALLERY_POLICY = "strict-v1"
+AVAILABLE_GALLERY_POLICY = "available-originals-v2"
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _MEDIA_FIELDS = {"media_id", "owner_uid", "purpose", "object_key", "thumbnail_key",
     "mime_type", "byte_size", "thumbnail_byte_size", "sha256", "status", "legacy_storage_path"}
@@ -201,17 +203,21 @@ def _ready(evidence, owner):
         hashlib.sha256(key.encode()).hexdigest(), digest, media["media_id"])
 
 
-def _fingerprint(uid, rows, documents, media):
+def _fingerprint(uid, rows, documents, media, gallery_original_policy=STRICT_GALLERY_POLICY):
     body = {"kind": "clrs-profile-photo-review-v1", "archiveSha256": PINS["archiveSha256"],
         "uid": uid, "rows": [vars(row) for row in rows],
         "documents": documents, "media": [vars(pin) for pin in media]}
+    if gallery_original_policy == AVAILABLE_GALLERY_POLICY:
+        body.update(kind="clrs-profile-photo-review-v2",
+                    galleryOriginalPolicy=AVAILABLE_GALLERY_POLICY)
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
         allow_nan=False, separators=(",", ":")).encode()).hexdigest()
 
 
 def prepare_profile_photo_review(*, account, canonical_legacy_raw, root_document,
         gallery_documents, gallery_complete, ready_evidence, existing_rows,
-        source_archive_sha256, reviewed_gallery_order=None):
+        source_archive_sha256, reviewed_gallery_order=None,
+        gallery_original_policy=STRICT_GALLERY_POLICY):
     """Plan only; supplied evidence is not an authentication/permission proof.
 
     The caller must supply a completed bounded gallery and actual existing rows.
@@ -220,6 +226,8 @@ def prepare_profile_photo_review(*, account, canonical_legacy_raw, root_document
     Missing/native/unknown inputs do not invent or replace associations.
     """
     try:
+        if gallery_original_policy not in (STRICT_GALLERY_POLICY, AVAILABLE_GALLERY_POLICY):
+            raise _Refusal("gallery_original_policy_unreviewed")
         if source_archive_sha256 != PINS["archiveSha256"]:
             raise _Refusal("source_snapshot_unreviewed")
         if (type(account) is not VisibilityAccount or type(account.disabled) is not int
@@ -258,7 +266,8 @@ def prepare_profile_photo_review(*, account, canonical_legacy_raw, root_document
                 or type(ready_evidence) not in (tuple, list) or len(ready_evidence) > MAX_PHOTOS
                 or type(existing_rows) not in (tuple, list) or len(existing_rows) > MAX_PHOTOS):
             raise _Refusal("photo_input_bound_or_shape")
-        gallery = {}; by_path = {}; documents = [(hashlib.sha256(root_document.firebase_path.encode()).hexdigest(), payload_digest(root))]
+        gallery = {}; by_path = {}; source_ids = set()
+        documents = [(hashlib.sha256(root_document.firebase_path.encode()).hexdigest(), payload_digest(root))]
         for record in gallery_documents:
             if type(record) is not SourcePhotoDocument or type(record.firebase_path) is not str:
                 raise _Refusal("gallery_document_mismatch")
@@ -266,28 +275,33 @@ def prepare_profile_photo_review(*, account, canonical_legacy_raw, root_document
             if len(parts) != 4 or parts[:3] != ["users", uid, "images"]:
                 raise _Refusal("gallery_document_mismatch")
             image_id = _identifier(parts[3])
-            if image_id in gallery: raise _Refusal("ambiguous_gallery_document")
+            if image_id in source_ids: raise _Refusal("ambiguous_gallery_document")
+            source_ids.add(image_id)
             payload = _document(record, record.firebase_path)
+            # Even an omitted blank original remains in the complete source
+            # proof. Its payload/ID change invalidates every prepared context.
+            documents.append((hashlib.sha256(record.firebase_path.encode()).hexdigest(), payload_digest(payload)))
             url = _typed_string(payload["fields"], "url")
             if url is None or url == "":
-                return ProfilePhotoReviewPlan("unchanged", "gallery_original_unknown")
+                if gallery_original_policy == STRICT_GALLERY_POLICY:
+                    return ProfilePhotoReviewPlan("unchanged", "gallery_original_unknown")
+                continue
             path = _storage_path(url)
             if path in by_path: raise _Refusal("ambiguous_gallery_photo")
             if path == avatar_path and url != original:
                 raise _Refusal("avatar_gallery_reference_conflict")
             gallery[image_id] = path; by_path[path] = image_id
-            documents.append((hashlib.sha256(record.firebase_path.encode()).hexdigest(), payload_digest(payload)))
         if reviewed_gallery_order is None:
-            if len(gallery) > 1:
+            if len(source_ids) > 1:
                 return ProfilePhotoReviewPlan("unchanged", "gallery_order_unreviewed")
             order = tuple(gallery)
         else:
             if (type(reviewed_gallery_order) not in (tuple, list)
                     or any(type(x) is not str for x in reviewed_gallery_order)
-                    or len(reviewed_gallery_order) != len(gallery)
-                    or set(reviewed_gallery_order) != set(gallery)):
+                    or len(reviewed_gallery_order) != len(source_ids)
+                    or set(reviewed_gallery_order) != source_ids):
                 raise _Refusal("reviewed_gallery_order_mismatch")
-            order = tuple(reviewed_gallery_order)
+            order = tuple(image_id for image_id in reviewed_gallery_order if image_id in gallery)
         paths = [avatar_path, *(gallery[x] for x in order if gallery[x] != avatar_path)]
         if len(paths) > MAX_PHOTOS: raise _Refusal("photo_input_bound_or_shape")
         media = {}
@@ -305,7 +319,7 @@ def prepare_profile_photo_review(*, account, canonical_legacy_raw, root_document
             return ProfilePhotoReviewPlan("unchanged", "already_matches")
         docs = tuple(sorted(documents)); pins = tuple(media[path] for path in paths)
         return ProfilePhotoReviewPlan("reviewable", "exact_original_associations", rows,
-            docs, pins, _fingerprint(uid, rows, docs, pins))
+            docs, pins, _fingerprint(uid, rows, docs, pins, gallery_original_policy))
     except _Refusal as error:
         return ProfilePhotoReviewPlan("refused", error.reason)
     except (LegacyInvalid, LegacyReadUnavailable, UnicodeError, ValueError, TypeError, RecursionError):

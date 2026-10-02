@@ -23,7 +23,8 @@ from legacy_conversation_payload import document, payload_digest
 from media_promotion_acknowledgement import PINS, SOURCE, VerifiedMediaPromotion
 from profile_photo_review import (SourcePhotoDocument, ReadyPhotoEvidence,
     ProfilePhotoAssociation, prepare_profile_photo_review, _typed_string,
-    _storage_path, _identifier, _sha, MAX_PHOTOS)
+    _storage_path, _identifier, _sha, MAX_PHOTOS,
+    STRICT_GALLERY_POLICY, AVAILABLE_GALLERY_POLICY)
 from profile_visibility import VisibilityAccount
 from runtime_reads import _timestamp
 
@@ -222,7 +223,8 @@ _DELETE_SQL = frozenset(_delete_sql(n) for n in range(1, MAX_PHOTOS + 1))
 class ProfilePhotoProjector:
     def __init__(self, *, connect, trusted_connection_verifier, pinned_host,
             source_snapshot, media_promotion, recovery, receipt_key,
-            load_pending_receipt, permission_model=STRICT_MODEL, clock=time.time):
+            load_pending_receipt, permission_model=STRICT_MODEL, clock=time.time,
+            gallery_original_policy=STRICT_GALLERY_POLICY):
         if (type(source_snapshot) is not VerifiedSourceSnapshot or source_snapshot not in _SOURCE_CAPS
                 or type(recovery) is not VerifiedPhotoRecovery or recovery not in _RECOVERY_CAPS
                 or type(media_promotion) is not VerifiedMediaPromotion
@@ -233,11 +235,14 @@ class ProfilePhotoProjector:
         self._host = _host(pinned_host)
         if permission_model not in (STRICT_MODEL, PROVIDER_MODEL):
             raise PhotoProjectionRefused("permission_model_invalid")
+        if gallery_original_policy not in (STRICT_GALLERY_POLICY, AVAILABLE_GALLERY_POLICY):
+            raise PhotoProjectionRefused("gallery_original_policy_unreviewed")
         if recovery.pinned_host != self._host:
             raise PhotoProjectionRefused("recovery_host_binding_mismatch")
         self._connect = connect; self._source = source_snapshot
         self._verify_connection = trusted_connection_verifier
         self._permission_model = permission_model
+        self._gallery_original_policy = gallery_original_policy
         self._media = media_promotion; self._recovery = recovery
         self._cipher = AESGCM(receipt_key); self._pending = load_pending_receipt
         self._clock = clock; self._prepared = weakref.WeakSet()
@@ -405,7 +410,7 @@ class ProfilePhotoProjector:
         plan = prepare_profile_photo_review(account=account, canonical_legacy_raw=raw,
             root_document=root, gallery_documents=gallery, gallery_complete=True,
             ready_evidence=evidence, existing_rows=[], source_archive_sha256=self._source.archive_sha256,
-            reviewed_gallery_order=order)
+            reviewed_gallery_order=order, gallery_original_policy=self._gallery_original_policy)
         if plan.state != "reviewable": raise PhotoProjectionRefused(plan.reason)
         from legacy_private_media import _metadata
         provenance = []

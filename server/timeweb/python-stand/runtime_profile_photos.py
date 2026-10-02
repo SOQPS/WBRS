@@ -25,7 +25,7 @@ from private_media_s3 import PrivateMediaS3
 from profile_photo_projector import VerifiedSourceSnapshot, _SOURCE_CAPS
 from profile_photo_review import (SourcePhotoDocument, ReadyPhotoEvidence,
     ProfilePhotoAssociation, prepare_profile_photo_review, _identifier, _sha,
-    MAX_PHOTOS)
+    MAX_PHOTOS, STRICT_GALLERY_POLICY, AVAILABLE_GALLERY_POLICY)
 from profile_visibility import VisibilityAccount, CanonicalVisibility, evaluate_profile_visibility
 from runtime_mutations import RuntimeInvalidRequest, RuntimeRejected, RuntimeUnavailable, canonical_json
 from runtime_reads import _timestamp
@@ -38,6 +38,7 @@ REFERENCE_SECONDS = 60
 DOWNLOAD_SECONDS = 50
 MAX_TOKEN_CHARS = 4096
 GALLERY_ORDER_POLICY = "reviewed-source-document-id-binary-asc-v1"
+GALLERY_AVAILABLE_ORDER_POLICY = "reviewed-source-document-id-binary-asc-available-originals-v2"
 READ_TABLES = frozenset({"accounts", "profiles", "profile_photos", "media_objects",
     "legacy_source", "legacy_documents", "legacy_storage_objects"})
 _MEDIA_COLUMNS = ("media_id", "owner_uid", "purpose", "object_key", "thumbnail_key",
@@ -220,12 +221,14 @@ class RuntimeProfilePhotosService:
                 or private_s3._bucket != expected_bucket or private_s3._owner != expected_owner
                 or type(source_snapshot) is not VerifiedSourceSnapshot or source_snapshot not in _SOURCE_CAPS
                 or type(media_promotion) is not VerifiedMediaPromotion
-                or gallery_order_policy != GALLERY_ORDER_POLICY
+                or gallery_order_policy not in (GALLERY_ORDER_POLICY, GALLERY_AVAILABLE_ORDER_POLICY)
                 or not callable(clock) or not callable(monotonic)):
             raise RuntimeUnavailable()
         self._store = store; self._s3 = private_s3; self._source = source_snapshot
         self._promotion = media_promotion; self._directory = spool_directory
         self._clock = clock; self._monotonic = monotonic; self._gallery_policy = gallery_order_policy
+        self._gallery_original_policy = (AVAILABLE_GALLERY_POLICY
+            if gallery_order_policy == GALLERY_AVAILABLE_ORDER_POLICY else STRICT_GALLERY_POLICY)
         self._codec = OpaqueReferences(hmac.digest(cursor_key,
             b"clrs-runtime-current-profile-photos-v1\0", "sha256"))
         self._slots = threading.BoundedSemaphore(2)
@@ -290,7 +293,8 @@ class RuntimeProfilePhotosService:
             plan = prepare_profile_photo_review(account=account, canonical_legacy_raw=raw,
                 root_document=root, gallery_documents=gallery, gallery_complete=True,
                 ready_evidence=evidence, existing_rows=[],
-                source_archive_sha256=self._source.archive_sha256, reviewed_gallery_order=order)
+                source_archive_sha256=self._source.archive_sha256, reviewed_gallery_order=order,
+                gallery_original_policy=self._gallery_original_policy)
             if plan.state != "reviewable" or plan.rows != associations:
                 raise RuntimeProfilePhotoNotFound()
             provenance = []
