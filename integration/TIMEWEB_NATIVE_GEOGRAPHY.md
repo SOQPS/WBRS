@@ -137,3 +137,18 @@ hash conflict, disabled native actor и rollback при source/post-write corrup
 Это локальный backend contract/transaction proof. Deployed/live SQL, native UI/
 journal/device acceptance и production cutover этим шагом не подтверждены.
 Git/cloud/network/build/deploy/schema/flags и изменения платных ресурсов не выполнялись.
+
+### Последующее развёртывание 02.10.2026
+
+Пять runtime файлов из GitHub `4d8b83d` опубликованы в GitLab commit
+`caed7fbe12465905d6839f24b819ac2e94668641`. Перед публикацией сравнены полные
+байты прежних и новых редакторов, включая неизменный SHA-256 каталога.
+Существующий Timeweb stand 5179 находится ONLINE на этом commit; основной
+старый stand остаётся остановленным. Новых ресурсов, прав, schema или
+активации native flags не было.
+
+Один закрытый probe после deploy: `/healthz` — 200 `api_draft`, `/readyz` — 503
+`migration_incomplete`, unauthenticated geography POST — 404. `readyz` в режиме
+preview намеренно не подключается к пользовательской БД; это не доказательство
+ошибки соединения. Probe не читает профили и не выполняет записи. Живое
+редактирование профиля и полный переход приложения остаются отдельными gates.

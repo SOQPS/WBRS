@@ -180,3 +180,18 @@ allow для сохранённого canonical marker, historical integer/strin
 durable client intent, device acceptance и живое deployed выполнение ещё не
 подтверждены. Cloud/API/DB/network requests, schema/permissions changes,
 deployment/flags activation и платёжные ресурсы в этом шаге не выполнялись.
+
+### Последующий адресный SQL proof 02.10.2026
+
+Выражение eligibility из текущего `_legacy_details_proof_select` выполнено
+на реальной Timeweb MySQL `8.4.4-4` с девятью синтетическими JSON payloads.
+FROM заменён на parameterized derived table; настоящая таблица profiles не
+использовалась. Все девять ожидаемых решений совпали: integer/string/double
+legacy age, пустой native source, дробная строка, NaN, отсутствующий about и
+Unicode whitespace имени. READ ONLY transaction, 0 записей, 0 прочитанных
+пользовательских строк, TLS с проверкой CA и имени сервера. Это проверяет
+совместимость SQL с MySQL, а не вход или анкету живого пользователя.
+
+Текущая серверная версия опубликована на закрытом stand в GitLab
+`caed7fbe12465905d6839f24b819ac2e94668641`; native flags не включены. Клиентская
+анкета и её отдельные проверки описаны в `TIMEWEB_NATIVE_TEMPERAMENT_UI.md`.

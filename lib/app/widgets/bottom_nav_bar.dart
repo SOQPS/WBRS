@@ -2,7 +2,6 @@ import 'package:wbrs/localization/clrs_localizations.dart';
 // ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:wbrs/app/helper/global.dart';
 import 'package:wbrs/app/helper/helper_function.dart';
 import 'package:wbrs/app/widgets/widgets.dart';
@@ -54,9 +53,13 @@ class _MyBottomNavigationBarState extends State<MyBottomNavigationBar> {
       selectedIndex = previous;
       if (mounted) {
         setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(context
-                .tr('Не удалось открыть раздел. Проверьте подключение.'))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.tr('Не удалось открыть раздел. Проверьте подключение.'),
+            ),
+          ),
+        );
       }
     } finally {
       _navigating = false;
@@ -72,8 +75,9 @@ class _MyBottomNavigationBarState extends State<MyBottomNavigationBar> {
         .get()
         .timeout(Duration(seconds: 15));
     if (!mounted) return;
-    if (!doc.exists || firebaseAuth.currentUser?.uid != current.uid)
+    if (!doc.exists || firebaseAuth.currentUser?.uid != current.uid) {
       throw StateError('Профиль недоступен');
+    }
     final data = doc.data() ?? <String, dynamic>{};
     nextScreenReplace(
       context,
@@ -142,28 +146,6 @@ class _MyBottomNavigationBarState extends State<MyBottomNavigationBar> {
                   label: context.tr('Профиль'),
                 ),
               ],
-            ),
-            GestureDetector(
-              onTap: () {
-                //nextScreen(context, WebPage());
-                launchUrl(
-                    Uri.parse(
-                        'https://qr.nspk.ru/BS2A002KUIKV3G1Q8JGRDS9N32P84DCB?type=01&bank=100000000008&crc=5D81'),
-                    mode: LaunchMode.externalApplication);
-                showSnackbar(
-                    context, Colors.lightGreen, 'Спасибо за поддержку!');
-              },
-              child: Container(
-                padding: EdgeInsets.zero,
-                width: double.infinity,
-                height: MediaQuery.of(context).size.height * 0.03,
-                color: Colors.orangeAccent.shade400,
-                child: const Text(
-                  'Поддержать ❤ проект ',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16, letterSpacing: 0.3),
-                ),
-              ),
             ),
           ],
         ),
