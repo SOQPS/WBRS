@@ -20,6 +20,7 @@ import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/group_badge.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
+import 'package:wbrs/presentation/widgets/timeweb_profile_photos_view.dart';
 
 const timewebOwnProfileRoute = '/timeweb/own-profile';
 
@@ -552,12 +553,6 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                     ),
                   ),
                 if (profile != null) ...[
-                  _section(
-                    'Фотографии',
-                    Text(
-                      context.tr('Сервис пока недоступен. Попробуйте позднее.'),
-                    ),
-                  ),
                   _section('Обо мне', _facts(profile)),
                   _section('Интересы и увлечения', Text(_text(profile.hobbi))),
                   _section('О себе', Text(_text(profile.about))),
@@ -593,7 +588,11 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
             child: ClrsMotto(size: 18),
           ),
           const SizedBox(height: 32),
-          const Center(
+          if (_profile != null && widget.runtime.profilePhotosEnabled)
+            TimewebProfilePhotosView(
+              runtime: widget.runtime, targetUid: _profile!.uid,
+            )
+          else const Center(
             child: Icon(
               Icons.person_outline,
               size: 90,
@@ -601,7 +600,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
             ),
           ),
           const SizedBox(height: 16),
-          Center(
+          if (_profile == null || !widget.runtime.profilePhotosEnabled) Center(
             child: Text(
               context.tr('Фото профиля'),
               style: const TextStyle(color: LrsTheme.muted),

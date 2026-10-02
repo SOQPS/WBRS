@@ -16,6 +16,7 @@ part 'timeweb_geography.dart';
 part 'timeweb_people.dart';
 part 'timeweb_personal_chat.dart';
 part 'timeweb_admin_users.dart';
+part 'timeweb_profile_photos.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -470,6 +471,8 @@ class TimewebAuthClient {
   final Map<int, _CurrentOwnProfileFlight> _currentOwnProfileFlights = {};
   final Map<String, _PeopleFlight> _peopleFlights = {};
   final Map<String, _AdminUsersFlight> _adminUsersFlights = {};
+  final Map<String, _ProfilePhotoFlight> _profilePhotoFlights = {};
+  int _profilePhotoReaderSequence = 0;
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _stopping || _closed ? null : _session?.uid;
@@ -541,6 +544,7 @@ class TimewebAuthClient {
     unawaited(_cancelCurrentOwnProfileRead(this));
     unawaited(_cancelPeopleReads(this));
     unawaited(_cancelAdminUsersReads(this));
+    unawaited(_cancelPhotoFlights(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -794,6 +798,9 @@ class TimewebAuthClient {
     request,
     cursor,
   ).then((value) => value as TimewebAdminUsersResult);
+
+  TimewebProfilePhotoReader openProfilePhotos(String targetUid) =>
+      _openProfilePhotos(this, targetUid);
 
   Future<TimewebPublicPerson> readPerson(String uid) => _startPeopleRead(
     this,
@@ -1226,6 +1233,7 @@ class TimewebAuthClient {
     final ownProfileDrain = _cancelCurrentOwnProfileRead(this);
     final peopleDrain = _cancelPeopleReads(this);
     final adminUsersDrain = _cancelAdminUsersReads(this);
+    final photosDrain = _cancelPhotoFlights(this);
     final mutationDrain = _cancelMutationTransfers(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
@@ -1235,6 +1243,7 @@ class TimewebAuthClient {
       await ownProfileDrain;
       await peopleDrain;
       await adminUsersDrain;
+      await photosDrain;
       await mutationDrain;
       _newEpoch();
       _closed = true;

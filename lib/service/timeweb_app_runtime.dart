@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
@@ -167,6 +168,23 @@ final class TimewebAppRuntime {
       .timeout(session.waitTimeout);
 
   bool get peopleEnabled => ownProfileEnabled;
+
+  bool get profilePhotosEnabled => ownProfileEnabled;
+
+  Future<TimewebProfilePhotoReader> openProfilePhotos(String targetUid) =>
+      session.runAuthenticated((lease) async {
+        if (!profilePhotosEnabled) {
+          throw StateError('Current profile photos are unavailable.');
+        }
+        final reader = client.openProfilePhotos(targetUid);
+        try {
+          lease.requireCurrent();
+          return reader.bindSessionGuard(lease.requireCurrent);
+        } catch (_) {
+          unawaited(reader.close());
+          rethrow;
+        }
+      });
 
   Future<TimewebPeoplePage> readPeople(
     TimewebPeopleFilters filters, {

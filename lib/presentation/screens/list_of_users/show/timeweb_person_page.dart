@@ -9,7 +9,7 @@ import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
-import 'package:wbrs/shared/group_avatar.dart';
+import 'package:wbrs/presentation/widgets/timeweb_profile_photos_view.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 
 const timewebPersonRoute = '/timeweb/person';
@@ -310,20 +310,10 @@ class _TimewebPersonPageState extends State<TimewebPersonPage> {
           if (person == null && widget.runtime.personalChatEnabled && _current)
             _chatControls(),
           if (person != null) ...[
-            SizedBox(
-              height: (MediaQuery.sizeOf(context).width * .62).clamp(190, 300),
-              child: Center(
-                child: GroupAvatar(
-                  url: '',
-                  group: person.primaryGroup ?? '',
-                  size: 90,
-                ),
-              ),
-            ),
-            Text(
-              context.tr('Фото профиля'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: LrsTheme.muted),
+            TimewebProfilePhotosView(
+              runtime: widget.runtime, targetUid: person.uid,
+              primaryGroup: person.primaryGroup,
+              portraitHeight: (MediaQuery.sizeOf(context).width * .62).clamp(190, 300),
             ),
             const SizedBox(height: 10),
             Text(
@@ -378,10 +368,6 @@ class _TimewebPersonPageState extends State<TimewebPersonPage> {
                   ),
                 ],
               ),
-            ),
-            _section(
-              'Фотографии',
-              Text(context.tr('Сервис пока недоступен. Попробуйте позднее.')),
             ),
             _section('Интересы и увлечения', Text(_text(person.hobbi))),
             _section('О себе', Text(_text(person.about))),
