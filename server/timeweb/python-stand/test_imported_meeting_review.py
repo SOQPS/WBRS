@@ -274,6 +274,25 @@ class ImportedMeetingReviewTests(unittest.TestCase):
         raw = payload(); raw["fields"]["admin"] = string("bad/uid")
         self.assertRefused(self.review(raw))
 
+    def test_recent_message_time_private_string_never_creation_schedule_or_join_authority(self):
+        for value in ("2026-10-02 23:41:09.123456", "Timestamp(seconds=1790984469, nanoseconds=123000000)",
+                      "", "x" * 191):
+            with self.subTest(value=value):
+                raw = payload(recentMessageTime=string(value))
+                plan = self.review(raw)
+                self.assertEqual(plan.state, "ready_for_review")
+                self.assertEqual(json.loads(plan.meeting.legacy_raw)["fields"]["recentMessageTime"], string(value))
+                self.assertEqual(plan.meeting.created_at, STAMP); self.assertEqual(plan.meeting.updated_at, STAMP)
+                self.assertIsNone(plan.meeting.starts_at)
+                self.assertEqual(plan.members[0].joined_at, OBSERVED)
+                self.assertIsNone(json.loads(plan.members[0].legacy_raw)["historicalJoinedAt"])
+        for value in ({"timestampValue": STAMP}, {"integerValue": "1790984469"}, {"booleanValue": True},
+                      {"nullValue": "NULL_VALUE"}, {"stringValue": "safe", "timestampValue": STAMP},
+                      {"stringValue": 1}, string("x" * 192), string("🙂" * 192), string("bad\x00"),
+                      string("bad\n"), [], "plain-untyped"):
+            with self.subTest(value=value):
+                self.assertRefused(self.review(payload(recentMessageTime=value)))
+
     def test_fingerprint_deterministic_immutable_snapshots_and_redacted_summary(self):
         raw = payload(); original = copy.deepcopy(raw)
         plan = self.review(raw); same = self.review(raw)

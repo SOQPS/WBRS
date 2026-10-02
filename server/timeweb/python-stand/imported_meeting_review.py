@@ -30,7 +30,7 @@ _LOCAL_DATE = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4}) ([0-9]{1,2}):(
 _ROOT_FIELDS = frozenset({"name", "description", "admin", "type", "invitedUid",
     "invitedName", "inviterName", "users", "kicked", "usersWithoutNotification",
     "datetime", "timeStamp", "country", "countryCode", "region", "city",
-    "recentMessage", "recentMessageSender", "creationRequestId", "clientWriteReceipts",
+    "recentMessage", "recentMessageSender", "recentMessageTime", "creationRequestId", "clientWriteReceipts",
     "imageUrl", "meetingImageUrl"})
 
 
@@ -350,6 +350,13 @@ def _opaque_fields(fields):
     for name in ("imageUrl", "meetingImageUrl"):
         _string(fields, name, 4096)
     _string(fields, "recentMessage", 32768, controls=True)
+    if "recentMessageTime" in fields:
+        value = fields["recentMessageTime"]
+        # Actual message writers use DateTime/Timestamp.toString(). This private
+        # display cache is not a UTC creation/schedule/join timestamp authority.
+        if type(value) is not dict or set(value) != {"stringValue"}:
+            raise _Refusal("malformed_typed_field")
+        _string(fields, "recentMessageTime", 191)
     if "timeStamp" in fields:
         value = fields["timeStamp"]
         if type(value) is not dict or set(value) != {"timestampValue"}:

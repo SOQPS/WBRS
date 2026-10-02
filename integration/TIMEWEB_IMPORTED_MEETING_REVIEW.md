@@ -7,6 +7,22 @@ The successful state is `ready_for_review`; `applyAllowed` and public serving
 remain false. This is a proposal for a later reviewed importer/current read
 consumer, not live meeting migration or cutover evidence.
 
+Narrow subsequent source-contract correction: `recentMessageTime` is an actual
+private last-message display cache. `lib/service/chat_submission.dart:165-167`
+writes the submitted DateTime's `toString()` for meetings; the earlier
+`lib/service/database_service.dart:334` writes message `time.toString()`.
+No current meeting reader uses it as creation, schedule or membership chronology.
+The optional field accepts only exact nonnull `stringValue`, <=191 characters/
+764 UTF8bytes without C0/DEL/surrogates, and remains in original private raw.
+No parsing, trim, rewrite, UTC conversion or timestamp fallback is performed.
+One added substantive synthetic case passed, along with the affected existing
+unknown-field/kicked policy case; the earlier 13-case suite was not repeated.
+Total distinct scenarios previously/newly confirmed: 14.
+
+Changing this decoder changes its code hash. A previous private current-root
+receipt remains an original observation but cannot silently satisfy the helper's
+new code binding; root must obtain/review new evidence for the corrected decoder.
+
 ## Audited source facts
 
 Source files were read locally at repository HEAD
@@ -213,14 +229,42 @@ times plus newer canonical authority, client/UI/local schedule display and
 controlled production proof. No cohort coverage/count or completed migration
 claim is made by these synthetic tests.
 
+## Immediate imported runtime seam and date/geography limits
+
+Root's next real check is only the same four bounded current-root/existing-row
+cases after the `recentMessageTime` correction. No repeat import is needed.
+The subsequent runtime hook needs an optional reviewed imported-origin decoder
+and explicit factory injection, still default closed: bounded original meeting
+raw/hash plus member source-path/index/UID/hash must match reviewed source and
+current canonical rows; source kicked UIDs deny even without a SQL member row.
+Keep current SQL left/kicked/revision, native actor/session pre/post and foreign
+profile visibility checks, existing page/scan/body bounds, and bind continuation
+to the actual origin-policy fingerprint. Existing NULL `joined_at` stays unknown;
+no observation or creation timestamp becomes historical `joinedAt`.
+
+An initial real case reported `created_at` and `region` metadata differences.
+Their source mappings differ: `project-conversations-core.mjs:320-329` takes
+`timeStamp` (or document createTime for its local ISO fallback), while this pure
+review takes document createTime; mapper line 319 uses `region ?? city`, while
+review uses only exact source region/pinned catalog. Those field origins require
+explicit review before choosing a public projection or any later CAS correction;
+there is no automatic UPDATE, city→region inference or timezone guess here.
+Source local scheduled datetime legitimately leaves `starts_at=NULL`; a future
+approved local-date DTO/display must preserve that string's unknown timezone.
+
+The 300-second current-root receipt proves a bounded observation, not durable
+public serving authority or a final source write barrier. Runtime factory remains
+unwired/503 until source authority, production injection and meeting SELECT
+permissions are separately reviewed. No future-cap framework or renewal is added.
+
 ## Source binding
 
 | File | SHA256 |
 | --- | --- |
-| `server/timeweb/python-stand/imported_meeting_review.py` | `e00d8356bda89f59a6bb42b16322264fb564b8a183353d6d6235f1d5f12f2eb2` |
-| `server/timeweb/python-stand/test_imported_meeting_review.py` | `9ef2b1f964dfb8a535c0db1da3fff989b58cd8697f171267662aea0ee62199f5` |
+| `server/timeweb/python-stand/imported_meeting_review.py` | `455da93672c54a49be840ef0819a3a9a642c9b7c42d06bf95d48792ed752b972` |
+| `server/timeweb/python-stand/test_imported_meeting_review.py` | `193a912661dabf04e62bafdad48808d92881eb36557eb754415379a245866014` |
 
-Sorted JSON implementation/test manifest SHA256: `ad9896f7e49458793af94afe0e91245f2c8cacf6872de5a157e501cc920e32fb`.
+Sorted JSON implementation/test manifest SHA256: `d564e3629eb68567b8d9522301659ae637e19bfa3c93b4481d3449b1f97d135c`.
 
 Audited input contracts (read-only, not changed by this task):
 
