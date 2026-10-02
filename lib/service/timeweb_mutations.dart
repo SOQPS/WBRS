@@ -10,6 +10,7 @@ enum TimewebMutationKind {
   editProfile,
   completeTest,
   editGeography,
+  openPersonalChat,
 }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
@@ -22,6 +23,7 @@ enum TimewebMutationFailure {
   rateLimited,
   chatNotFound,
   chatUnavailable,
+  personUnavailable,
   quoteUnavailable,
   sequenceAhead,
   profileChanged,
@@ -225,6 +227,20 @@ final class TimewebMutationRequest {
       geography: changes,
     );
   }
+  factory TimewebMutationRequest.openPersonalChat({
+    required String operationId,
+    required String targetUid,
+  }) {
+    if (!_mutationId(targetUid)) {
+      throw ArgumentError('Invalid personal chat target.');
+    }
+    return TimewebMutationRequest._(
+      TimewebMutationKind.openPersonalChat,
+      operationId,
+      Map.unmodifiable({'targetUid': targetUid}),
+      ['v1', 'runtime', 'personal-chats'],
+    );
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
@@ -237,6 +253,7 @@ final class TimewebMutationRequest {
     TimewebMutationKind.editProfile => 'profile.edit.v1',
     TimewebMutationKind.completeTest => 'profile.complete-test.v1',
     TimewebMutationKind.editGeography => 'profile.edit-geography.v1',
+    TimewebMutationKind.openPersonalChat => 'chat.open-personal.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -306,6 +323,7 @@ final class TimewebMutationResult {
     TimewebProfileEditReceipt? profile,
     TimewebCompletedTemperamentReceipt? temperament,
     TimewebGeographyReceipt? geography,
+    TimewebOpenedPersonalChatReceipt? personalChat,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -318,6 +336,7 @@ final class TimewebMutationResult {
        _profile = profile,
        _temperament = temperament,
        _geography = geography,
+       _personalChat = personalChat,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -333,6 +352,7 @@ final class TimewebMutationResult {
   final TimewebProfileEditReceipt? _profile;
   final TimewebCompletedTemperamentReceipt? _temperament;
   final TimewebGeographyReceipt? _geography;
+  final TimewebOpenedPersonalChatReceipt? _personalChat;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -412,6 +432,11 @@ final class TimewebMutationResult {
   TimewebGeographyReceipt? get editedGeography {
     requireCurrent();
     return _geography;
+  }
+
+  TimewebOpenedPersonalChatReceipt? get openedPersonalChat {
+    requireCurrent();
+    return _personalChat;
   }
 
   @override
@@ -733,8 +758,13 @@ TimewebMutationResult _retainMutationOutcome(
   TimewebMutationResult result,
 ) {
   final confirmed = reference._settledResult;
-  if (confirmed?._acknowledgeable == true && !result._receiptConfirmed)
+  // Personal lookup must pass its fresh visibility/membership guard. A
+  // transport failure cannot fall back to an earlier route's cached receipt.
+  if (confirmed?._acknowledgeable == true &&
+      !result._receiptConfirmed &&
+      reference._request.kind != TimewebMutationKind.openPersonalChat) {
     return confirmed!;
+  }
   reference._settledResult = result;
   reference._postFlight = Future.value(result);
   return result;
@@ -892,6 +922,34 @@ Future<TimewebMutationResult> _executeMutationLookup(
   return _retainMutationOutcome(reference, result);
 }
 
+final class _MutationTransfer {
+  final abort = Completer<void>(), done = Completer<void>();
+  bool cancelled = false;
+  Future<void> Function()? cancelReader;
+  void cancel() {
+    cancelled = true;
+    if (!abort.isCompleted) abort.complete();
+    unawaited(cancelReader?.call().catchError((Object _) {}));
+  }
+
+  void check() {
+    if (cancelled) {
+      throw const TimewebAuthException(
+        _mutationOperation,
+        TimewebAuthError.staleSession,
+      );
+    }
+  }
+}
+
+Future<void> _cancelMutationTransfers(TimewebAuthClient owner) async {
+  final pending = owner._mutationTransfers.toList();
+  for (final transfer in pending) {
+    transfer.cancel();
+  }
+  await Future.wait(pending.map((transfer) => transfer.done.future));
+}
+
 Future<_Reply> _mutationTransfer(
   TimewebAuthClient owner,
   String method,
@@ -905,7 +963,9 @@ Future<_Reply> _mutationTransfer(
       TimewebAuthError.unavailable,
     );
   }
-  final abort = Completer<void>();
+  final flight = _MutationTransfer();
+  owner._mutationTransfers.add(flight);
+  final abort = flight.abort;
   final request = http.AbortableRequest(method, uri, abortTrigger: abort.future)
     ..followRedirects = false
     ..headers['Accept'] = 'application/json'
@@ -925,6 +985,7 @@ Future<_Reply> _mutationTransfer(
     return cancellation ??= current.cancel();
   }
 
+  flight.cancelReader = cancelReader;
   Future<_Reply> transfer() async {
     try {
       final response = await owner._http.send(request);
@@ -933,6 +994,7 @@ Future<_Reply> _mutationTransfer(
       unawaited(
         moving.then<void>((_) {}, onError: (Object _, StackTrace __) {}),
       );
+      flight.check();
       if (abandoned)
         throw const TimewebAuthException(
           _mutationOperation,
@@ -965,6 +1027,7 @@ Future<_Reply> _mutationTransfer(
       }
       final bytes = <int>[];
       while (await moving) {
+        flight.check();
         if (abandoned)
           throw const TimewebAuthException(
             _mutationOperation,
@@ -985,6 +1048,7 @@ Future<_Reply> _mutationTransfer(
           _mutationOperation,
           TimewebAuthError.deadline,
         );
+      flight.check();
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map<String, dynamic>) {
         throw const TimewebAuthException(
@@ -999,6 +1063,8 @@ Future<_Reply> _mutationTransfer(
         await cancelReader();
       } finally {
         owner._inflightRequests--;
+        owner._mutationTransfers.remove(flight);
+        if (!flight.done.isCompleted) flight.done.complete();
       }
     }
   }
@@ -1119,6 +1185,20 @@ TimewebMutationResult _decodeMutationReply(
         !const [400, 404, 409, 429].contains(reply.status)) {
       _mutationInvalidReply();
     }
+    if (lookup &&
+        ref._request.kind == TimewebMutationKind.openPersonalChat &&
+        reply.status == 404 &&
+        body['error'] == 'person_unavailable') {
+      // A fresh pair-visibility refusal does not alter/prove the original POST.
+      // Keep its intent/reference uncertain; do not refresh healthy actor auth.
+      return TimewebMutationResult._(
+        ref,
+        TimewebMutationState.unknown,
+        404,
+        failure: TimewebMutationFailure.personUnavailable,
+        unknownReason: TimewebAuthError.unavailable,
+      );
+    }
     final failure = switch ((reply.status, body['error'])) {
       (400, 'invalid_request') => TimewebMutationFailure.invalidRequest,
       (404, 'not_found') => TimewebMutationFailure.notFound,
@@ -1193,6 +1273,7 @@ TimewebMutationResult _decodeMutationReply(
     }
     final failure = switch ((reply.status, result['error'])) {
       (404, 'chat_not_found') => TimewebMutationFailure.chatNotFound,
+      (404, 'person_unavailable') => TimewebMutationFailure.personUnavailable,
       (404, 'profile_not_found') => TimewebMutationFailure.notFound,
       (409, 'chat_unavailable') => TimewebMutationFailure.chatUnavailable,
       (409, 'quote_unavailable') => TimewebMutationFailure.quoteUnavailable,
@@ -1211,6 +1292,13 @@ TimewebMutationResult _decodeMutationReply(
         failure == TimewebMutationFailure.profileNotReady ||
         result['error'] == 'profile_not_found';
     if (failure == null ||
+        (failure == TimewebMutationFailure.personUnavailable &&
+            ref._request.kind != TimewebMutationKind.openPersonalChat) ||
+        (ref._request.kind == TimewebMutationKind.openPersonalChat &&
+            !const {
+              TimewebMutationFailure.personUnavailable,
+              TimewebMutationFailure.chatUnavailable,
+            }.contains(failure)) ||
         profileFailure !=
             (const {
               TimewebMutationKind.editProfile,
@@ -1244,6 +1332,15 @@ TimewebMutationResult _decodeMutationReply(
   final frozen = _immutableJson(result) as Map<String, dynamic>;
   final request = ref._request;
   final check = ref.requireCurrent;
+  if (request.kind == TimewebMutationKind.openPersonalChat) {
+    return _decodeOpenedPersonalChat(
+      ref,
+      reply.status,
+      frozen,
+      revision,
+      replayed,
+    );
+  }
   if (request.kind == TimewebMutationKind.sendMessage) {
     if (!_mutationExact(result, {
           'chatId',

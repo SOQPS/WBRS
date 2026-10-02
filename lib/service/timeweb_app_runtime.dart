@@ -10,6 +10,7 @@ import 'timeweb_profile_edit_flow.dart';
 import 'timeweb_chat_flow.dart';
 import 'timeweb_temperament_flow.dart';
 import 'timeweb_geography_flow.dart';
+import 'timeweb_personal_chat_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -27,6 +28,7 @@ final class TimewebAppRuntime {
     TimewebTemperamentJournal? temperamentJournal,
     TimewebGeographyJournal? geographyJournal,
     TimewebChatJournal? chatJournal,
+    TimewebPersonalChatJournal? personalChatJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
     this.currentOwnProfileEnabled = false,
@@ -43,6 +45,7 @@ final class TimewebAppRuntime {
     _rememberStore = _RememberingTokenStore(secureStore);
     _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
     _chatJournal = chatJournal ?? TimewebChatJournal();
+    _personalChatJournal = personalChatJournal ?? TimewebPersonalChatJournal();
     _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
     _geographyJournal = geographyJournal ?? TimewebGeographyJournal();
     _profileEditorEnabled =
@@ -67,6 +70,7 @@ final class TimewebAppRuntime {
   late final _RememberingTokenStore _rememberStore;
   late final TimewebProfileEditJournal _profileEditJournal;
   late final TimewebChatJournal _chatJournal;
+  late final TimewebPersonalChatJournal _personalChatJournal;
   late final TimewebTemperamentJournal _temperamentJournal;
   late final TimewebGeographyJournal _geographyJournal;
   late final bool _profileEditorEnabled;
@@ -189,6 +193,40 @@ final class TimewebAppRuntime {
       })
       .timeout(session.waitTimeout);
 
+  bool get personalChatEnabled => peopleEnabled && chatsEnabled;
+
+  Future<TimewebPersonalChatFlow> openPersonalChat(String targetUid) => session
+      .runAuthenticated((lease) {
+        if (!personalChatEnabled) {
+          throw StateError('Personal chat is unavailable.');
+        }
+        return TimewebPersonalChatFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _personalChatJournal,
+          targetUid: targetUid,
+        );
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebChatFlow> openPersonalConversation(
+    TimewebOpenedPersonalChatReceipt receipt,
+  ) => session
+      .runAuthenticated((lease) {
+        if (!personalChatEnabled) {
+          throw StateError('Personal chat is unavailable.');
+        }
+        return TimewebChatFlow.openPersonal(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _chatJournal,
+          receipt: receipt,
+        );
+      })
+      .timeout(session.waitTimeout);
+
   bool get temperamentEnabled => currentTemperamentEnabled && ownProfileEnabled;
 
   Future<TimewebTemperamentFlow> openTemperament(
@@ -298,6 +336,7 @@ final class TimewebAppRuntime {
     await _chatJournal.drain();
     await _temperamentJournal.drain();
     await _geographyJournal.drain();
+    await _personalChatJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

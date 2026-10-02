@@ -184,13 +184,16 @@ void main() {
         expect(find.text('Не в сети'), findsNothing);
         expect(find.text('Нет'), findsNothing);
         expect(find.textContaining('Не указано'), findsWidgets);
+        expect(
+          find.byKey(const ValueKey('timeweb-person-open-chat')),
+          findsOneWidget,
+        );
         await tester.scrollUntilVisible(
           find.text('  Full\noriginal details  '),
           220,
           scrollable: find.byType(Scrollable).first,
         );
         expect(find.text('  Full\noriginal details  '), findsOneWidget);
-        expect(find.text('Отправить сообщение'), findsNothing);
         expect(find.text('Подарки'), findsNothing);
         navigator.currentState!.pop();
         await tester.pumpAndSettle();

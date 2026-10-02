@@ -14,6 +14,7 @@ part 'timeweb_profile_editor.dart';
 part 'timeweb_current_own_profile.dart';
 part 'timeweb_geography.dart';
 part 'timeweb_people.dart';
+part 'timeweb_personal_chat.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -451,6 +452,7 @@ class TimewebAuthClient {
   Future<bool>? _closeFlight;
   Future<TimewebStopResult>? _stopFlight;
   final Set<Future<void>> _authDrains = {};
+  final Set<_MutationTransfer> _mutationTransfers = {};
   bool _stopping = false;
   bool _stopAuthUnknown = false;
   bool _authStoreFailure = false;
@@ -531,6 +533,7 @@ class TimewebAuthClient {
     _epoch++;
     _cancelPrivateMedia(this);
     _mutationReferences.clear();
+    unawaited(_cancelMutationTransfers(this));
     _cancelCurrentReads(this);
     unawaited(_cancelProfileEditorRead(this));
     unawaited(_cancelCurrentOwnProfileRead(this));
@@ -1210,6 +1213,7 @@ class TimewebAuthClient {
     final editorDrain = _cancelProfileEditorRead(this);
     final ownProfileDrain = _cancelCurrentOwnProfileRead(this);
     final peopleDrain = _cancelPeopleReads(this);
+    final mutationDrain = _cancelMutationTransfers(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
       await Future.wait(_authDrains.toList());
@@ -1217,6 +1221,7 @@ class TimewebAuthClient {
       await editorDrain;
       await ownProfileDrain;
       await peopleDrain;
+      await mutationDrain;
       _newEpoch();
       _closed = true;
       if (_ownsTransport) _http.close();

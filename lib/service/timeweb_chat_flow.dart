@@ -20,13 +20,15 @@ final class TimewebChatFlow {
     this._session,
     this._lease,
     this._journal,
-    this._chat,
-  );
+    this._chat, [
+    this._opened,
+  ]);
   final TimewebAuthClient _client;
   final AppSession _session;
   final AppSessionLease _lease;
   final TimewebChatJournal _journal;
-  final TimewebCurrentChat _chat;
+  final TimewebCurrentChat? _chat;
+  final TimewebOpenedPersonalChatReceipt? _opened;
   List<TimewebCurrentMessage> _messages = [];
   TimewebCurrentReadCursor? _older;
   Future<void>? _readFlight;
@@ -34,7 +36,8 @@ final class TimewebChatFlow {
   final _references = <bool, TimewebMutationReference>{};
   final _writes = <bool, Future<TimewebChatWriteOutcome>>{};
   TimewebChatWriteOutcome? _completedSend;
-  late int _knownRead = _chat.readThrough;
+  // Zero is only a local lower bound until a current own-read receipt arrives.
+  late int _knownRead = _chat?.readThrough ?? 0;
   bool _closed = false;
   static const _limit = 50, _maximumMessages = 300;
 
@@ -50,30 +53,61 @@ final class TimewebChatFlow {
     final flow = TimewebChatFlow._(client, session, lease, journal, chat);
     await flow
         .loadLatest(); // server checks current membership, not a supplied UID
+    await flow._restoreIntents();
+    return flow;
+  }
+
+  static Future<TimewebChatFlow> openPersonal({
+    required TimewebAuthClient client,
+    required AppSession session,
+    required AppSessionLease lease,
+    required TimewebChatJournal journal,
+    required TimewebOpenedPersonalChatReceipt receipt,
+  }) async {
+    lease.requireCurrent();
+    receipt.requireClient(client);
+    if (receipt.ownerUid != lease.identity.uid ||
+        receipt.peerUid == lease.identity.uid) {
+      throw StateError('Personal chat receipt owner mismatch.');
+    }
+    final flow = TimewebChatFlow._(
+      client,
+      session,
+      lease,
+      journal,
+      null,
+      receipt,
+    );
+    await flow.loadLatest(); // fresh current membership check for the exact ID
+    await flow._restoreIntents();
+    return flow;
+  }
+
+  Future<void> _restoreIntents() async {
     for (final read in [false, true]) {
-      final intent = await journal._load(
-        flow._origin,
-        lease.identity.uid,
-        chat.chatId,
+      final intent = await _journal._load(
+        _origin,
+        _lease.identity.uid,
+        chatId,
         read,
       );
-      flow.requireCurrent();
+      requireCurrent();
       if (intent != null) {
-        flow._intents[read] = intent;
-        flow._references[read] = client.bindMutation(
+        _intents[read] = intent;
+        _references[read] = _client.bindMutation(
           intent.request,
-          expectedOwnerUid: lease.identity.uid,
+          expectedOwnerUid: _lease.identity.uid,
         );
       }
     }
-    return flow;
   }
 
   String get _origin => _client.configuration.endpoint.toString();
   void requireCurrent() {
     if (_closed) throw StateError('Chat screen is closed.');
     _lease.requireCurrent();
-    _chat.requireCurrent();
+    _chat?.requireCurrent();
+    _opened?.requireCurrent();
   }
 
   Stream<AppSessionState> get sessionStates => _session.states;
@@ -81,7 +115,7 @@ final class TimewebChatFlow {
       _client.requestDeadline + const Duration(seconds: 2);
   String? get name {
     requireCurrent();
-    return _chat.name;
+    return _chat?.name;
   }
 
   String get ownerUid {
@@ -91,7 +125,7 @@ final class TimewebChatFlow {
 
   String get chatId {
     requireCurrent();
-    return _chat.chatId;
+    return _chat?.chatId ?? _opened!.chatId;
   }
 
   List<TimewebCurrentMessage> get messages {
@@ -148,6 +182,9 @@ final class TimewebChatFlow {
       );
       requireCurrent();
       page.requireCurrent();
+      if (_opened != null && page.chatRevision! < _opened.chatRevision) {
+        throw StateError('Current chat revision precedes its receipt.');
+      }
       final rows = <String, TimewebCurrentMessage>{
         if (older || updates)
           for (final message in _messages) message.messageId: message,
