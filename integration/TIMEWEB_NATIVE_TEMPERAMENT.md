@@ -62,18 +62,43 @@ full-profile read. Все source поля сначала проходят вал
 3. `isRegistrationEnd=true` либо recognized primary group → `409`,
    `result:{error:test_already_completed,updatedAt:<current>}`. Повторный тест
    другой операцией не переписывает сохранённый результат.
-4. Нет реальных canonical saved details → `409`,
+4. Нет реальных canonical details или подтверждения прежнего сохранения → `409`,
    `result:{error:profile_incomplete}`.
 5. Иначе выполняется собственное completion.
 
 Readiness требует source непустой trimmed fullName, nonnull int age и непустые
-source pol/about/hobbi по existing historical details predicate. `profileDetailsSaved`
-в пустой/неполной canonical анкете сам не разрешает completion. Legacy short
+source pol/about/hobbi по existing historical details predicate. Дополнительно
+нужен `profileDetailsSaved=true` **или** исходный details fallback в приватном
+retained `profiles.legacy_raw.fields`. `profileDetailsSaved` в пустой/неполной
+canonical анкете сам не разрешает completion. Legacy short
 text сохраняет допуск; trim применяется только к fullName, остальные три
 строки используют exact `!= ""` совместимость прежнего gate. Новые требования
-к photos/geography или длине changed editor fields не придумываются.
+к geography или длине changed editor fields не придумываются.
 Malformed source/stamp/typed fields → `503 service_unavailable`, не новая
 регистрация и не client invalid_request.
+
+Private source proof выполняется bounded Boolean SELECT по тому же own UID,
+пока текущая profile row уже locked `FOR UPDATE`. Каждый original required
+field должен быть объектом ровно с одним Firestore type key. Original fullName,
+pol/about/hobbi — `stringValue` с прежними source bounds; fullName проверяется
+по точному whitespace-набору Python `.strip()`, остальные строки только по
+`!= ""`. Original age принимает прежние формы `integerValue`/`stringValue`
+с ASCII digits длины1..3 и значением0..150 либо `doubleValue` с finite JSON
+numeric INTEGER/DOUBLE значением0..150. `nullValue`, typed-null, лишние tags,
+строковые `NaN`/`Infinity`, неверные bounds или отсутствие original fields не
+подтверждают readiness. Type guards/CASE предшествуют numeric CAST. Current
+canonical age независимо должен быть валидным int0..130.
+
+Importer `server/timeweb/project-profiles-core.mjs` сохраняет исходный typed
+Firestore документ в `legacy_raw`; native signup
+`server/timeweb/python-stand/native_pending_account.py` создаёт profile с flags0
+и default `legacy_raw={}`. Existing edit8 не пишет ни этот archive, ни saved
+marker. Поэтому заполнение новой анкеты через edit8 не заменяет обязательное
+сохранение регистрации с3фото: даже при current fallback `onboarding:test`
+completion возвращает durable `409 profile_incomplete`. Историческая анкета
+с доказанным original fallback и реальными current details сохраняет доступ.
+Raw archive не читается через connector, не выдаётся в DTO/receipt и не пишется.
+Current public onboarding и контракт geography этим proof не изменяются.
 
 ## Запись и точный response
 
@@ -141,6 +166,9 @@ legacy short details transition, classifier primary/secondary ties, exact
 score/body bounds, missing/incomplete/corrupt sources, CAS/already-completed/
 other-device no override, original receipt replay/hash conflict, lost COMMIT ACK
 с успешным lookup, disabled actor и rollback при неверном final JSON proof.
+Readiness cases также подтверждают refusal для заполненного native source `{}`,
+allow для сохранённого canonical marker, historical integer/string/double age,
+отказ при typed-null/лишних tags/строковом NaN и whitespace-only original name.
 
 ```sh
 # cwd: server/timeweb/python-stand

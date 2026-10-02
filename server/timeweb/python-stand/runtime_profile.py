@@ -1,8 +1,8 @@
 """Own current profile reads, edits and test completion under native authority.
 
 The mutation store revalidates the access token in the same transaction. This
-module does not modify the retained Firebase archive, roles, balance, media or
-geography. Edits preserve onboarding; explicit test completion changes only the
+module does not modify the retained Firebase archive, roles, balance or media.
+Field/geography edits preserve onboarding; explicit test completion changes only the
 current group, canonical test result and completion flag. Updated-at CAS prevents one device from
 silently overwriting another device's edit; an operation receipt handles an
 uncertain response without a second mutation.
@@ -13,6 +13,7 @@ from datetime import datetime
 import re
 
 from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable, canonical_json
+from runtime_geography import resolve_geography
 
 
 class ProfileEditInvalid(ValueError):
@@ -21,6 +22,7 @@ class ProfileEditInvalid(ValueError):
 
 PROFILE_EDIT_OPERATION = "profile.edit.v1"
 PROFILE_TEST_OPERATION = "profile.complete-test.v1"
+PROFILE_GEOGRAPHY_OPERATION = "profile.edit-geography.v1"
 _SCORES = ("brown", "red", "blue", "white")
 _STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _FIELDS = {
@@ -78,6 +80,53 @@ def _full_select():
 
 
 _FULL_SELECT = _full_select()
+
+
+def _legacy_details_proof_select():
+    # The importer alone retains the original Firestore typed fields here;
+    # native registration starts with {} and edit8 cannot write this archive.
+    # Return only one bounded Boolean, while the own profile UPDATE lock is
+    # held. Do not put retained content in the current public profile decoder.
+    predicates = []
+    # Exact Python str.strip whitespace, including U+001C..U+001F which a
+    # SQL TRIM or an ICU whitespace class would not necessarily remove.
+    whitespace = ("\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+                  "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+                  "\u2028\u2029\u202f\u205f\u3000")
+    nonblank = ("[^" + whitespace + "]").encode("utf-8").hex()
+    for name, maximum in (("fullName", 1000), ("pol", 191), ("about", 4096), ("hobbi", 4096)):
+        field = f"JSON_EXTRACT(legacy_raw, '$.fields.{name}')"
+        scalar = f"JSON_EXTRACT(legacy_raw, '$.fields.{name}.stringValue')"
+        value = f"JSON_UNQUOTE({scalar})"
+        present = (f"REGEXP_LIKE({value}, CONVERT(0x{nonblank} USING utf8mb4), 'c')"
+                   if name == "fullName" else f"CHAR_LENGTH({value}) > 0")
+        predicates.append(
+            f"CASE WHEN JSON_TYPE({field}) = 'OBJECT' AND JSON_LENGTH({field}) = 1"
+            f" AND JSON_TYPE({scalar}) = 'STRING' AND CHAR_LENGTH({value}) <= {maximum}"
+            f" AND OCTET_LENGTH({value}) <= {maximum * 4} THEN {present} ELSE 0 END")
+    age = "JSON_EXTRACT(legacy_raw, '$.fields.age')"
+    forms = []
+    for tag in ("integerValue", "stringValue"):
+        scalar = f"JSON_EXTRACT(legacy_raw, '$.fields.age.{tag}')"
+        value = f"JSON_UNQUOTE({scalar})"
+        forms.append(
+            f"CASE WHEN JSON_TYPE({scalar}) = 'STRING' AND CHAR_LENGTH({value}) BETWEEN 1 AND 3"
+            f" AND NOT REGEXP_LIKE({value}, '[^0-9]', 'c')"
+            f" THEN CAST({value} AS UNSIGNED) <= 150 ELSE 0 END")
+    number = "JSON_EXTRACT(legacy_raw, '$.fields.age.doubleValue')"
+    # MySQL JSON permits only finite numeric values. JSON_TYPE rejects a
+    # string NaN/Infinity or numeric-looking string before the numeric CAST.
+    forms.append(f"CASE WHEN JSON_TYPE({number}) IN ('INTEGER', 'DOUBLE')"
+                 f" THEN CAST(JSON_UNQUOTE({number}) AS DOUBLE) BETWEEN 0 AND 150 ELSE 0 END")
+    predicates.append(f"(JSON_TYPE({age}) = 'OBJECT' AND JSON_LENGTH({age}) = 1"
+                      " AND (" + " OR ".join(forms) + "))")
+    return ("SELECT COALESCE((JSON_TYPE(legacy_raw) = 'OBJECT'"
+            " AND JSON_TYPE(JSON_EXTRACT(legacy_raw, '$.fields')) = 'OBJECT' AND "
+            + " AND ".join(predicates) + "), 0) FROM clrs_staging.profiles"
+            " WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR SHARE")
+
+
+_LEGACY_DETAILS_PROOF = _legacy_details_proof_select()
 
 
 def _full_profile(row):
@@ -193,6 +242,16 @@ def validate_temperament(payload):
             "scores": {name: payload["scores"][name] for name in _SCORES}}
 
 
+def validate_geography(payload):
+    if type(payload) is not dict or set(payload) != {"expectedUpdatedAt", "changes"}:
+        raise RuntimeInvalidRequest()
+    try:
+        expected = _stamp(payload["expectedUpdatedAt"])
+    except ProfileEditInvalid:
+        raise RuntimeInvalidRequest() from None
+    return {"expectedUpdatedAt": expected, "geography": resolve_geography(payload["changes"])}
+
+
 def _temperament(scores):
     # Exact existing temperament.dart order. Max ties resolve white > blue >
     # red > brown. Secondary ties have a different order for each primary.
@@ -276,6 +335,14 @@ class RuntimeProfileService:
                 return 409, {"error": "test_already_completed", "updatedAt": before["updatedAt"]}, None
             if not _has_profile_details(before):
                 return 409, {"error": "profile_incomplete"}, None
+            if before["profileDetailsSaved"] is not True:
+                execute(_LEGACY_DETAILS_PROOF, (uid, uid))
+                proof = cursor.fetchone()
+                if (not isinstance(proof, (tuple, list)) or len(proof) != 1
+                        or type(proof[0]) is not int or proof[0] not in (0, 1)):
+                    raise RuntimeUnavailable()
+                if proof[0] != 1:
+                    return 409, {"error": "profile_incomplete"}, None
             execute("""UPDATE clrs_staging.profiles SET primary_group = %s,
  test_result = %s, registration_complete = 1,
  updated_at = GREATEST(UTC_TIMESTAMP(6), updated_at + INTERVAL 1 MICROSECOND)
@@ -312,6 +379,54 @@ class RuntimeProfileService:
         validate_temperament(payload)
         request = {"expectedUpdatedAt": payload["expectedUpdatedAt"], "scores": dict(payload["scores"])}
         return self._store.lookup(identity, PROFILE_TEST_OPERATION, operation_id,
+                                  payload=request, access_token=access_token)
+
+    def edit_geography(self, identity, operation_id, payload, *, access_token):
+        checked = validate_geography(payload)
+        request = {"expectedUpdatedAt": payload["expectedUpdatedAt"], "changes": dict(payload["changes"])}
+        geography = checked["geography"]
+        select = _FULL_SELECT.replace("FOR SHARE", "FOR UPDATE")
+
+        def action(cursor, execute, uid):
+            execute(select, (uid, uid))
+            row = cursor.fetchone()
+            if row is None:
+                return 404, {"error": "profile_not_found"}, None
+            before = _full_profile(row)
+            if before["updatedAt"] != checked["expectedUpdatedAt"]:
+                return 409, {"error": "profile_changed", "updatedAt": before["updatedAt"]}, None
+            if not (_full_onboarding(before) == "search"
+                    or (before["profileDetailsSaved"] is True and _has_profile_details(before))):
+                return 409, {"error": "profile_not_ready"}, None
+            changed = any(before[name] != value for name, value in geography.items())
+            if changed:
+                execute("""UPDATE clrs_staging.profiles SET country = %s, country_code = %s,
+ region = %s, updated_at = GREATEST(UTC_TIMESTAMP(6), updated_at + INTERVAL 1 MICROSECOND)
+ WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY)
+ AND updated_at = CAST(%s AS DATETIME(6))""",
+                    (geography["country"], geography["countryCode"], geography["region"], uid, uid,
+                     checked["expectedUpdatedAt"][:-1].replace("T", " ")))
+                if cursor.rowcount != 1:
+                    raise RuntimeUnavailable()
+            execute(select, (uid, uid))
+            after = _full_profile(cursor.fetchone())
+            if (any(after[name] != value for name, value in geography.items())
+                    or (changed and after["updatedAt"] <= before["updatedAt"])
+                    or (not changed and after["updatedAt"] != before["updatedAt"])
+                    or any(after[name] != value for name, value in before.items()
+                           if name not in {"country", "countryCode", "region", "updatedAt"})
+                    or _full_onboarding(after) != _full_onboarding(before)):
+                raise RuntimeUnavailable()
+            return 200, {"uid": uid, **geography, "updatedAt": after["updatedAt"],
+                         "profileAuthority": "canonical-current-v1"}, None
+
+        return self._store.mutate(identity, PROFILE_GEOGRAPHY_OPERATION, operation_id,
+                                  request, action, access_token=access_token)
+
+    def reconcile_geography(self, identity, operation_id, payload, *, access_token):
+        validate_geography(payload)
+        request = {"expectedUpdatedAt": payload["expectedUpdatedAt"], "changes": dict(payload["changes"])}
+        return self._store.lookup(identity, PROFILE_GEOGRAPHY_OPERATION, operation_id,
                                   payload=request, access_token=access_token)
 
     def edit(self, identity, operation_id, payload, *, access_token):

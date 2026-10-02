@@ -5,6 +5,8 @@ import json
 import ssl
 import unittest
 
+from legacy_own_profile import _age, _string
+from legacy_conversation_payload import LegacyInvalid
 from runtime_http import RuntimeMutationHttp
 from runtime_profile import RuntimeProfileService, validate_temperament, _temperament
 from runtime_mutations import RuntimeInvalidRequest, request_digest
@@ -24,9 +26,29 @@ def payload(values=(20, 5, 5, 5), stamp=STAMP):
     return {"expectedUpdatedAt": stamp, "scores": dict(zip(("brown", "red", "blue", "white"), values))}
 
 
+def retained_details(age=None):
+    return {"fields": {"fullName": {"stringValue": "  Старое имя  "},
+        "age": {"integerValue": "28"} if age is None else age,
+        "pol": {"stringValue": "мужской"}, "about": {"stringValue": "Коротко"},
+        "hobbi": {"stringValue": "\t"}}}
+
+
+def retained_details_ready(source):
+    # The no-TCP SQL fixture evaluates the source predicate with the actual
+    # legacy typed decoders; production returns only its SQL Boolean.
+    try:
+        fields = source["fields"]
+        return (bool(_string(fields, "fullName", 1000).strip()) and _age(fields) is not None
+                and all(_string(fields, name, maximum) not in (None, "")
+                        for name, maximum in (("pol", 191), ("about", 4096), ("hobbi", 4096))))
+    except (LegacyInvalid, KeyError, TypeError, AttributeError):
+        return False
+
+
 class TestDatabase(ProfileDatabase):
     def __init__(self):
         super().__init__()
+        self.state["profiles"]["actor"]["legacy_raw"] = retained_details()
         self.bad_json_proof = False
 
     def connect(self, **config):
@@ -50,6 +72,14 @@ class TestCursor(ProfileCursor):
             assert self.c.held and not self.c.readonly and params[0] == params[1]
             source = self.c.state["profiles"].get(params[0])
             self.rows = [] if source is None else [tuple(source[column] for column in SQL_COLUMNS) + (1,)]
+            self.rowcount = len(self.rows)
+            return self.rowcount
+        if sql.startswith("SELECT COALESCE((JSON_TYPE(legacy_raw)"):
+            self.c.db.calls.append((sql, params))
+            assert self.c.held and not self.c.readonly and params[0] == params[1]
+            assert sql.endswith("LIMIT 1 FOR SHARE")
+            source = self.c.state["profiles"].get(params[0])
+            self.rows = [] if source is None else [(int(retained_details_ready(source["legacy_raw"])),)]
             self.rowcount = len(self.rows)
             return self.rowcount
         if sql.startswith("UPDATE clrs_staging.profiles SET primary_group"):
@@ -123,6 +153,14 @@ class NativeTemperamentTests(unittest.TestCase):
         self.assertEqual(self.profile_updates()[0][1][2:4], ("actor", "actor"))
         self.assertEqual(sum(c.commits for c in self.db.connections), 1)
         self.assertNotIn("scores", result); self.assertNotIn("test_result", result)
+        proofs = [(sql, params) for sql, params in self.db.calls if sql.startswith("SELECT COALESCE((JSON_TYPE(legacy_raw)")]
+        self.assertEqual(len(proofs), 1)
+        proof_sql, proof_uid = proofs[0]
+        self.assertEqual(proof_uid, ("actor", "actor"))
+        self.assertIn("JSON_LENGTH(JSON_EXTRACT(legacy_raw, '$.fields.age')) = 1", proof_sql)
+        self.assertIn("JSON_TYPE(JSON_EXTRACT(legacy_raw, '$.fields.age.doubleValue')) IN ('INTEGER', 'DOUBLE') THEN CAST", proof_sql)
+        self.assertIn("CHAR_LENGTH(JSON_UNQUOTE(JSON_EXTRACT(legacy_raw, '$.fields.about.stringValue'))) <= 4096", proof_sql)
+        self.assertIn("WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY)", proof_sql)
 
     def test_classifier_preserves_existing_primary_and_secondary_ties(self):
         cases = (([5, 5, 5, 5], "белая"), ([20, 20, 0, 0], "красная"),
@@ -170,6 +208,42 @@ class NativeTemperamentTests(unittest.TestCase):
         self.assertEqual((corrupt.status, corrupt.payload),
             ("503 Service Unavailable", {"error": "service_unavailable"}))
         self.assertEqual(self.profile_updates(), [])
+        malformed = retained_details(); malformed["fields"]["fullName"] = {"stringValue": "\u001c\u2000\u3000"}
+        cases = ((profile(legacy_raw={}), False),
+            (profile(legacy_raw=malformed), False),
+            (profile(legacy_raw=retained_details({"integerValue": "28", "stringValue": "28"})), False),
+            (profile(legacy_raw=retained_details({"doubleValue": "NaN"})), False),
+            (profile(legacy_raw=retained_details({"nullValue": None})), False),
+            (profile(legacy_raw=retained_details({"stringValue": "150"})), True),
+            (profile(legacy_raw=retained_details({"doubleValue": 28.5})), True),
+            (profile(profile_details_saved=1, legacy_raw={}), True))
+        allowed = 0
+        for index, (source, eligible) in enumerate(cases):
+            self.db.state["profiles"]["actor"] = source
+            original = copy.deepcopy(source)
+            operation = "12345678-1234-4234-8234-123456789ad" + str(index)
+            with self.subTest(source_proof=index):
+                if index == 0:
+                    view = self.service.read_full(self.db.identity, access_token=self.db.access)
+                    self.assertEqual(view["onboarding"], "test")
+                    self.assertIs(view["profile"]["profileDetailsSaved"], False)
+                reply = self.post({"operationId": operation, **payload()})
+                if eligible:
+                    allowed += 1
+                    self.assertEqual(reply.status, "200 OK")
+                    self.assertEqual(reply.payload["result"]["onboarding"], "search")
+                    self.assertEqual(self.db.state["profiles"]["actor"]["legacy_raw"], original["legacy_raw"])
+                else:
+                    self.assertEqual((reply.status, reply.payload["result"]),
+                        ("409 Conflict", {"error": "profile_incomplete"}))
+                    self.assertEqual(self.db.state["profiles"]["actor"], original)
+                self.assertEqual(len(self.profile_updates()), allowed)
+        # A fresh native source cannot forge historical readiness by edit8;
+        # its refusal is durable and lookup returns the same committed result.
+        operation = "12345678-1234-4234-8234-123456789ad0"
+        refused = self.lookup(operation_id=operation)
+        self.assertEqual((refused.status, refused.payload["state"], refused.payload["result"]),
+            ("409 Conflict", "committed", {"error": "profile_incomplete"}))
 
     def test_cas_and_already_completed_never_override_previous_or_other_device_result(self):
         reply = self.post({"operationId": OP, **payload(stamp="2027-01-15T08:00:00.000000Z")})
@@ -181,7 +255,7 @@ class NativeTemperamentTests(unittest.TestCase):
         reply = self.post({"operationId": SECOND_OP, **payload()})
         self.assertEqual(reply.payload["result"], {"error": "test_already_completed", "updatedAt": STAMP})
         self.assertEqual(self.db.state["profiles"]["actor"], existing)
-        self.db.state["profiles"]["actor"] = profile()
+        self.db.state["profiles"]["actor"] = profile(legacy_raw=retained_details())
         third = "12345678-1234-4234-8234-123456789abe"
         self.post({"operationId": third, **payload()})
         source = copy.deepcopy(self.db.state["profiles"]["actor"])

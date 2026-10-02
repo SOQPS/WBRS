@@ -18,7 +18,7 @@ from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1", "profile.complete-test.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -43,6 +43,8 @@ def _route(path):
         return "profile.full-read.v1", None, None
     if path == "/v1/runtime/me/temperament":
         return "profile.complete-test.v1", None, None
+    if path == "/v1/runtime/me/geography":
+        return "profile.edit-geography.v1", None, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
     if match:
         resource, suffix = match.groups()
@@ -171,6 +173,12 @@ class RuntimeMutationHttp:
                         raise RuntimeInvalidRequest()
                     outcome = profile.complete_test(identity, operation_id,
                         {"expectedUpdatedAt": body["expectedUpdatedAt"], "scores": body["scores"]},
+                        access_token=token)
+                elif operation == "profile.edit-geography.v1":
+                    if set(body) != {"operationId", "expectedUpdatedAt", "changes"}:
+                        raise RuntimeInvalidRequest()
+                    outcome = profile.edit_geography(identity, operation_id,
+                        {"expectedUpdatedAt": body["expectedUpdatedAt"], "changes": body["changes"]},
                         access_token=token)
                 else:
                     if set(body) != {"operationId", "expectedUpdatedAt", "changes"}:
