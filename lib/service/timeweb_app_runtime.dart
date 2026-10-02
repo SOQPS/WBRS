@@ -25,6 +25,7 @@ final class TimewebAppRuntime {
     TimewebChatJournal? chatJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
+    this.currentOwnProfileEnabled = false,
     this.emailLifecycleEnabled = false,
     this.registrationEnabled = false,
     Duration waitTimeout = const Duration(seconds: 20),
@@ -39,7 +40,9 @@ final class TimewebAppRuntime {
     _chatJournal = chatJournal ?? TimewebChatJournal();
     _profileEditorEnabled =
         profileEditorEnabled ??
-        (configuration.runtimeWritesEnabled && !currentChatsEnabled);
+        (configuration.runtimeWritesEnabled &&
+            !currentChatsEnabled &&
+            !currentOwnProfileEnabled);
     client = TimewebAuthClient(
       configuration: configuration,
       secureStore: _rememberStore,
@@ -58,7 +61,7 @@ final class TimewebAppRuntime {
   late final TimewebProfileEditJournal _profileEditJournal;
   late final TimewebChatJournal _chatJournal;
   late final bool _profileEditorEnabled;
-  final bool currentChatsEnabled;
+  final bool currentChatsEnabled, currentOwnProfileEnabled;
   final String deviceId, expectedSourceSnapshot;
   final bool emailLifecycleEnabled, registrationEnabled;
   late final AppSession session;
@@ -128,6 +131,23 @@ final class TimewebAppRuntime {
       currentChatsEnabled &&
       client.configuration.currentReadsEnabled &&
       client.configuration.runtimeWritesEnabled;
+
+  bool get ownProfileEnabled =>
+      currentOwnProfileEnabled &&
+      client.configuration.currentReadsEnabled &&
+      client.configuration.runtimeWritesEnabled;
+
+  Future<TimewebCurrentOwnProfile> readCurrentOwnProfile() => session
+      .runAuthenticated((lease) async {
+        if (!ownProfileEnabled) {
+          throw StateError('Current own profile is unavailable.');
+        }
+        final profile = await client.readCurrentOwnProfile();
+        lease.requireCurrent();
+        profile.requireCurrent();
+        return profile.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
 
   Future<TimewebCurrentReadPage> readChats({
     TimewebCurrentReadCursor? cursor,

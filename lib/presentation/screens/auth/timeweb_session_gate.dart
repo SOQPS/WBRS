@@ -9,6 +9,7 @@ import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/presentation/screens/edit_profile/timeweb_profile_edit_page.dart';
 import 'package:wbrs/presentation/screens/chat_screen/timeweb_chats_page.dart';
+import 'package:wbrs/presentation/screens/profile/timeweb_own_profile_page.dart';
 
 import 'login_screen/login_page.dart';
 
@@ -25,6 +26,7 @@ class TimewebSessionGate extends StatefulWidget {
 class _TimewebSessionGateState extends State<TimewebSessionGate> {
   StreamSubscription<AppSessionState>? _subscription;
   TimewebSessionProfile? _profile;
+  TimewebCurrentOwnProfile? _currentOwnProfile;
   TimewebProfileEditFlow? _editor;
   TimewebCurrentReadPage? _chats;
   int? _loadedEpoch;
@@ -57,6 +59,7 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
     if (_loadedEpoch != state.epoch) {
       _generation++;
       _profile = null;
+      _currentOwnProfile = null;
       _editor?.close();
       _editor = null;
       _chats = null;
@@ -81,11 +84,23 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       _loading = true;
       _error = false;
       _profile = null;
+      _currentOwnProfile = null;
       _editor?.close();
       _editor = null;
       _chats = null;
     });
     try {
+      if (widget.runtime.ownProfileEnabled) {
+        final profile = await widget.runtime.readCurrentOwnProfile();
+        if (!mounted ||
+            generation != _generation ||
+            widget.runtime.session.state.epoch != epoch) {
+          return;
+        }
+        profile.requireCurrent();
+        setState(() => _currentOwnProfile = profile);
+        return;
+      }
       if (widget.runtime.profileEditorEnabled || widget.runtime.chatsEnabled) {
         TimewebProfileEditFlow? editor;
         TimewebCurrentReadPage? chats;
@@ -161,6 +176,14 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
     if (!terminal && (!state.authenticated || _loading)) {
       return const ClrsScaffold(
         body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (!terminal && widget.runtime.ownProfileEnabled) {
+      return TimewebOwnProfilePage(
+        key: ValueKey('timeweb-own-profile-${state.epoch}-$_generation'),
+        runtime: widget.runtime,
+        initialProfile: _currentOwnProfile,
+        initialError: _error,
       );
     }
     String? stage;

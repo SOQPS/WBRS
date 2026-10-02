@@ -1,0 +1,456 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:wbrs/localization/clrs_localizations.dart';
+import 'package:wbrs/presentation/screens/chat_screen/timeweb_chats_page.dart';
+import 'package:wbrs/presentation/screens/edit_profile/timeweb_profile_edit_page.dart';
+import 'package:wbrs/service/app_session.dart';
+import 'package:wbrs/service/timeweb_app_runtime.dart';
+import 'package:wbrs/service/timeweb_auth_client.dart';
+import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
+import 'package:wbrs/shared/clrs_brand.dart';
+import 'package:wbrs/shared/clrs_screen.dart';
+import 'package:wbrs/shared/group_badge.dart';
+import 'package:wbrs/shared/lrs_theme.dart';
+
+const timewebOwnProfileRoute = '/timeweb/own-profile';
+
+/// The approved CLRS profile composition over current native fields. No legacy
+/// hydration, Firebase destinations, inferred presence or fake media gallery.
+class TimewebOwnProfilePage extends StatefulWidget {
+  const TimewebOwnProfilePage({
+    super.key,
+    required this.runtime,
+    this.initialProfile,
+    this.initialError = false,
+  });
+  final TimewebAppRuntime runtime;
+  final TimewebCurrentOwnProfile? initialProfile;
+  final bool initialError;
+  @override
+  State<TimewebOwnProfilePage> createState() => _TimewebOwnProfilePageState();
+}
+
+class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
+  StreamSubscription<AppSessionState>? _subscription;
+  TimewebCurrentOwnProfile? _profile;
+  TimewebProfileEditFlow? _editor;
+  late final int _epoch;
+  int _generation = 0;
+  bool _loading = false, _opening = false, _error = false, _invalidated = false;
+  String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    _epoch = widget.runtime.session.state.epoch;
+    _profile = widget.initialProfile;
+    _error = widget.initialError;
+    _subscription = widget.runtime.session.states.listen((_) {
+      if (!_current) _invalidate();
+    });
+  }
+
+  bool get _current {
+    final state = widget.runtime.session.state;
+    if (!mounted ||
+        _invalidated ||
+        !state.authenticated ||
+        state.epoch != _epoch) {
+      return false;
+    }
+    try {
+      _profile?.requireCurrent();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _invalidate() {
+    if (!mounted || _invalidated) return;
+    _invalidated = true;
+    _generation++;
+    _profile = null;
+    _editor?.close();
+    _editor = null;
+    _notice = null;
+    _loading = false;
+    _opening = false;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          ModalRoute.of(context)?.isCurrent == true &&
+          Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  Future<void> _reload() async {
+    if (!_current || _loading || _opening) return;
+    final generation = ++_generation;
+    setState(() {
+      _profile = null;
+      _loading = true;
+      _error = false;
+      _notice = null;
+    });
+    try {
+      final profile = await widget.runtime.readCurrentOwnProfile();
+      if (!_current || generation != _generation) return;
+      profile.requireCurrent();
+      setState(() => _profile = profile);
+    } catch (_) {
+      if (_current && generation == _generation) setState(() => _error = true);
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _edit() async {
+    if (!_current ||
+        _loading ||
+        _opening ||
+        !widget.runtime.profileEditorEnabled ||
+        _profile?.profileExists != true) {
+      return;
+    }
+    setState(() {
+      _opening = true;
+      _notice = null;
+    });
+    TimewebProfileEditFlow? flow;
+    try {
+      flow = await widget.runtime.openProfileEditor();
+      if (!mounted || !_current) {
+        flow.close();
+        return;
+      }
+      flow.requireCurrent();
+      _editor = flow;
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => TimewebProfileEditPage(flow: flow!)),
+      );
+      _editor = null;
+      // Editor owns its save receipt; display obtains a new canonical full read
+      // after any return, including cancel and unknown save confirmation.
+      if (_current) {
+        setState(() => _opening = false);
+        await _reload();
+      }
+    } catch (_) {
+      flow?.close();
+      if (_current) {
+        setState(
+          () => _notice = 'Не удалось открыть редактор. Попробуйте ещё раз.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  Future<void> _openChats() async {
+    if (!_current || _loading || _opening || !widget.runtime.chatsEnabled) {
+      return;
+    }
+    setState(() {
+      _opening = true;
+      _notice = null;
+    });
+    try {
+      final page = await widget.runtime.readChats();
+      if (!mounted || !_current) return;
+      page.requireCurrent();
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: timewebChatsRoute),
+          builder: (_) =>
+              TimewebChatsPage(runtime: widget.runtime, initialPage: page),
+        ),
+      );
+    } catch (_) {
+      if (_current) {
+        setState(
+          () => _notice = 'Не удалось загрузить чаты. Попробуйте ещё раз.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _profile = null;
+    _editor?.close();
+    _editor = null;
+    unawaited(_subscription?.cancel());
+    super.dispose();
+  }
+
+  String _text(String? value) =>
+      value == null || value.isEmpty ? context.tr('Не указано') : value;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = _current;
+    final snapshot = current ? _profile : null;
+    final profile = snapshot?.profile;
+    final stage = snapshot?.onboarding;
+    return ClrsScaffold(
+      key: const ValueKey('timeweb-current-own-profile'),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: const ClrsLogo(size: 34),
+        actions: [
+          IconButton(
+            key: const ValueKey('timeweb-profile-refresh'),
+            tooltip: context.tr('Обновить'),
+            onPressed: current && !_loading && !_opening ? _reload : null,
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            key: const ValueKey('timeweb-profile-logout'),
+            tooltip: context.tr('Выйти'),
+            onPressed: current
+                ? () async {
+                    if (!_current) return;
+                    await widget.runtime.session.logout();
+                  }
+                : null,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          _portrait(profile),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (profile != null && widget.runtime.profileEditorEnabled)
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-profile-editor'),
+                        onPressed: current && !_loading && !_opening
+                            ? _edit
+                            : null,
+                        icon: const Icon(Icons.edit_outlined),
+                        label: Text(context.tr('Редактировать профиль')),
+                      ),
+                    if (widget.runtime.chatsEnabled)
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-chats'),
+                        onPressed: current && !_loading && !_opening
+                            ? _openChats
+                            : null,
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: Text(context.tr('Чаты')),
+                      ),
+                  ],
+                ),
+                if (_loading || _opening)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: LinearProgressIndicator(),
+                  ),
+                if (_notice != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(context.tr(_notice!)),
+                  ),
+                if (!current)
+                  _section('Профиль', Text(context.tr('Сеанс завершён'))),
+                if (current && _error)
+                  _section(
+                    'Профиль',
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          context.tr(
+                            'Не удалось загрузить профиль. Проверьте соединение и повторите попытку.',
+                          ),
+                        ),
+                        TextButton(
+                          key: const ValueKey('timeweb-profile-retry'),
+                          onPressed: _reload,
+                          child: Text(context.tr('Повторить')),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (current && snapshot != null && profile == null)
+                  _section(
+                    'Профиль',
+                    Text(
+                      context.tr(
+                        'Анкета пока не создана. Создание анкеты пока недоступно.',
+                      ),
+                    ),
+                  ),
+                if (profile != null && stage != TimewebOnboarding.search)
+                  _section(
+                    'Профиль',
+                    Text(
+                      context.tr(
+                        stage == TimewebOnboarding.test
+                            ? 'Для завершения анкеты нужен тест. Прохождение теста пока недоступно.'
+                            : 'Анкета заполнена частично. Завершение регистрации пока недоступно.',
+                      ),
+                    ),
+                  ),
+                if (profile != null) ...[
+                  _section(
+                    'Фотографии',
+                    Text(context.tr('Фотографии пока недоступны')),
+                  ),
+                  _section('Обо мне', _facts(profile)),
+                  _section('Интересы и увлечения', Text(_text(profile.hobbi))),
+                  _section('О себе', Text(_text(profile.about))),
+                ],
+                const ClrsValuesFooter(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _portrait(TimewebCurrentProfile? profile) => Container(
+    decoration: const BoxDecoration(
+      color: Color(0x4431241D),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Colors.transparent, Color(0xED1D160F)],
+      ),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: MediaQuery.paddingOf(context).top + kToolbarHeight + 12,
+          ),
+          const Align(
+            alignment: Alignment.centerRight,
+            child: ClrsMotto(size: 18),
+          ),
+          const SizedBox(height: 32),
+          const Center(
+            child: Icon(
+              Icons.person_outline,
+              size: 90,
+              color: LrsTheme.peachLight,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Text(
+              context.tr('Фото пока недоступно'),
+              style: const TextStyle(color: LrsTheme.muted),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            profile == null
+                ? context.tr('Мой профиль')
+                : _text(profile.fullName),
+            key: const ValueKey('timeweb-own-profile-name'),
+            style: const TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.w700,
+              color: LrsTheme.text,
+            ),
+          ),
+          if (profile?.primaryGroup != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  GroupRing(group: profile!.primaryGroup!, size: 24),
+                  const SizedBox(width: 7),
+                  Expanded(child: Text(profile.primaryGroup!)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _section(String title, Widget child) => Padding(
+    padding: const EdgeInsets.only(top: 14),
+    child: ClrsPanel(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            context.tr(title),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    ),
+  );
+
+  Widget _facts(TimewebCurrentProfile profile) {
+    final values = <(String, String)>[
+      ('Возраст', profile.age?.toString() ?? context.tr('Не указано')),
+      ('Рост', profile.rost?.toString() ?? context.tr('Не указано')),
+      ('Пол', _text(profile.pol)),
+      ('Статус', _text(profile.relationStatus)),
+      (
+        'Дети',
+        profile.deti == null
+            ? context.tr('Не указано')
+            : context.tr(profile.deti! ? 'Есть' : 'Нет'),
+      ),
+      ('Страна', _text(profile.country)),
+      ('Код страны', _text(profile.countryCode)),
+      ('Регион', _text(profile.region)),
+      ('Город', _text(profile.city)),
+      ('Язык', _text(profile.languageCode)),
+      ('Группа', _text(profile.primaryGroup)),
+      ('Дополнительная группа', _text(profile.secondaryGroup)),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final value in values)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr(value.$1),
+                  style: const TextStyle(fontSize: 12, color: LrsTheme.muted),
+                ),
+                Text(value.$2),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}

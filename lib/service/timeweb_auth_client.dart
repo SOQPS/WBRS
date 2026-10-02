@@ -10,6 +10,7 @@ part 'timeweb_private_media.dart';
 part 'timeweb_mutations.dart';
 part 'timeweb_current_reads.dart';
 part 'timeweb_profile_editor.dart';
+part 'timeweb_current_own_profile.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -460,6 +461,7 @@ class TimewebAuthClient {
   final Map<String, TimewebMutationReference> _mutationReferences = {};
   final Map<String, _CurrentReadFlight> _currentReadFlights = {};
   final Map<int, _ProfileEditorFlight> _profileEditorFlights = {};
+  final Map<int, _CurrentOwnProfileFlight> _currentOwnProfileFlights = {};
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _stopping || _closed ? null : _session?.uid;
@@ -527,6 +529,7 @@ class TimewebAuthClient {
     _mutationReferences.clear();
     _cancelCurrentReads(this);
     unawaited(_cancelProfileEditorRead(this));
+    unawaited(_cancelCurrentOwnProfileRead(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -759,6 +762,9 @@ class TimewebAuthClient {
   Future<TimewebProfileEditorSnapshot> readProfileForEdit(
     TimewebProfileEditorRequest request,
   ) => _readProfileForEdit(this, request);
+
+  Future<TimewebCurrentOwnProfile> readCurrentOwnProfile() =>
+      _readCurrentOwnProfile(this);
 
   /// No profile value cache. Every read is authorized by its own opaque bearer.
   Future<Map<String, dynamic>> readOwnProfile() async {
@@ -1183,11 +1189,13 @@ class TimewebAuthClient {
     _cancelPrivateMedia(this);
     _cancelCurrentReads(this);
     final editorDrain = _cancelProfileEditorRead(this);
+    final ownProfileDrain = _cancelCurrentOwnProfileRead(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
       await Future.wait(_authDrains.toList());
       await _storeTail;
       await editorDrain;
+      await ownProfileDrain;
       _newEpoch();
       _closed = true;
       if (_ownsTransport) _http.close();
