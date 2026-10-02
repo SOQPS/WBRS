@@ -1,4 +1,4 @@
-"""Default-off native-only HTTP routes for current-authority mutations.
+"""Default-off native-only HTTP routes for current-authority reads/mutations.
 
 Mounted after the existing operator preview guard. No Firebase-token fallback,
 arbitrary paths/SQL or automatic retry of a transaction with unknown commit.
@@ -39,6 +39,8 @@ def _route(path):
         return None
     if path == "/v1/runtime/me/profile":
         return "profile.edit.v1", None, None
+    if path == "/v1/runtime/me/full-profile":
+        return "profile.full-read.v1", None, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
     if match:
         resource, suffix = match.groups()
@@ -106,7 +108,8 @@ class RuntimeMutationHttp:
             return RuntimeHttpReply("404 Not Found", {"error": "not_found"})
         operation, resource, operation_id = route
         profile_read = operation == "profile.edit.v1" and environ.get("REQUEST_METHOD") == "GET"
-        method = "GET" if operation == "reconcile" or profile_read else "POST"
+        full_profile_read = operation == "profile.full-read.v1"
+        method = "GET" if operation == "reconcile" or profile_read or full_profile_read else "POST"
         if environ.get("REQUEST_METHOD") != method:
             return RuntimeHttpReply("405 Method Not Allowed", {"error": "method_not_allowed"})
         try:
@@ -116,9 +119,9 @@ class RuntimeMutationHttp:
                     raise RuntimeInvalidRequest()
                 if environ.get("HTTP_TRANSFER_ENCODING") or environ.get("CONTENT_LENGTH", "") not in ("", "0"):
                     raise RuntimeInvalidRequest()
-            elif query:
+            elif query or (full_profile_read and not isinstance(query, str)):
                 raise RuntimeInvalidRequest()
-            if profile_read and (environ.get("HTTP_TRANSFER_ENCODING")
+            if (profile_read or full_profile_read) and (environ.get("HTTP_TRANSFER_ENCODING")
                     or environ.get("CONTENT_LENGTH", "") not in ("", "0")):
                 raise RuntimeInvalidRequest()
             header = environ.get("HTTP_AUTHORIZATION", "")
@@ -134,6 +137,11 @@ class RuntimeMutationHttp:
             if type(identity) is not NativeIdentity:
                 raise NativeUnavailable()
             store, chat, profile = self._services
+            if full_profile_read:
+                result = profile.read_full(identity, access_token=token)
+                if type(result) is not dict:
+                    raise RuntimeUnavailable()
+                return RuntimeHttpReply("200 OK", result)
             if profile_read:
                 return RuntimeHttpReply("200 OK", profile.read_for_edit(identity, access_token=token))
             if operation == "reconcile":

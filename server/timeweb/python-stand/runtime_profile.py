@@ -1,4 +1,4 @@
-"""Own existing profile edits under current native SQL authority only.
+"""Own current profile reads and edits under native SQL authority only.
 
 The mutation store revalidates the access token in the same transaction. This
 module does not modify the retained Firebase archive, onboarding completion,
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+
+from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable
 
 
 class ProfileEditInvalid(ValueError):
@@ -27,6 +29,102 @@ _SELECT = """SELECT full_name, age, height_cm, about_text, interests_text,
  has_children, gender, relationship_status, profile_details_saved,
  registration_complete, DATE_FORMAT(updated_at, '%%Y-%%m-%%dT%%H:%%i:%%s.%%fZ')
  FROM clrs_staging.profiles WHERE uid = %s LIMIT 1 FOR UPDATE"""
+
+# Current projection maps the exact legacy `группа` to primary_group. Keep the
+# accepted cases local: importing a snapshot reader would mix authorities.
+_CURRENT_GROUPS = frozenset({
+    "коричнево-красная", "коричнево-синяя", "коричневая", "коричнево-белая",
+    "бело-коричневая", "бело-красная", "бело-синяя", "белая", "сине-белая",
+    "красно-синяя", "красно-белая", "красная", "красно-коричневая", "синяя",
+    "сине-коричневая", "сине-красная",
+})
+_FULL_FIELDS = {
+    **_FIELDS, "country": "country", "countryCode": "country_code",
+    "region": "region", "city": "city", "languageCode": "language_code",
+    "primaryGroup": "primary_group", "secondaryGroup": "secondary_group",
+    "profileDetailsSaved": "profile_details_saved",
+    "isRegistrationEnd": "registration_complete",
+}
+_FULL_TEXT_LIMITS = {
+    "fullName": 1000, "about": 4096, "hobbi": 4096, "pol": 191,
+    "relationStatus": 191, "country": 191, "countryCode": 191,
+    "region": 191, "city": 191, "languageCode": 191,
+    "primaryGroup": 191, "secondaryGroup": 191,
+}
+
+
+def _full_select():
+    # TEXT/LONGTEXT values are bounded before crossing the SQL connector. The
+    # extra validity bit distinguishes a real SQL NULL from oversized content.
+    columns = []
+    valid = []
+    for name, column in _FULL_FIELDS.items():
+        if name in _FULL_TEXT_LIMITS:
+            maximum = _FULL_TEXT_LIMITS[name]
+            predicate = (f"({column} IS NULL OR (CHAR_LENGTH({column}) <= {maximum}"
+                         f" AND OCTET_LENGTH({column}) <= {maximum * 4}))")
+            columns.append(f"CASE WHEN {predicate} THEN {column} ELSE NULL END")
+            valid.append(predicate)
+        else:
+            columns.append(column)
+    columns.append("DATE_FORMAT(updated_at, '%%Y-%%m-%%dT%%H:%%i:%%s.%%fZ')")
+    columns.append("(" + " AND ".join(valid) + ")")
+    return ("SELECT " + ",\n ".join(columns) +
+            " FROM clrs_staging.profiles WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY)"
+            " LIMIT 1 FOR SHARE")
+
+
+_FULL_SELECT = _full_select()
+
+
+def _full_profile(row):
+    if (not isinstance(row, (tuple, list)) or len(row) != len(_FULL_FIELDS) + 2
+            or type(row[-1]) is not int or row[-1] != 1):
+        raise RuntimeUnavailable()
+    result = dict(zip(_FULL_FIELDS, row))
+    for name, maximum in _FULL_TEXT_LIMITS.items():
+        value = result[name]
+        if value is None:
+            continue
+        if (not isinstance(value, str) or len(value) > maximum
+                or any((ord(c) < 32 and c not in "\n\r\t") or ord(c) == 127
+                       or 0xD800 <= ord(c) <= 0xDFFF for c in value)):
+            raise RuntimeUnavailable()
+        try:
+            if len(value.encode("utf-8")) > maximum * 4:
+                raise RuntimeUnavailable()
+        except UnicodeError:
+            raise RuntimeUnavailable() from None
+    for name, maximum in (("age", 130), ("rost", 300)):
+        value = result[name]
+        if value is not None and (type(value) is not int or not 0 <= value <= maximum):
+            raise RuntimeUnavailable()
+    for name in ("deti", "profileDetailsSaved", "isRegistrationEnd"):
+        value = result[name]
+        if value is not None and (type(value) is not int or value not in (0, 1)):
+            raise RuntimeUnavailable()
+        result[name] = None if value is None else bool(value)
+    try:
+        result["updatedAt"] = _stamp(row[-2])
+    except ProfileEditInvalid:
+        raise RuntimeUnavailable() from None
+    return result
+
+
+def _full_onboarding(profile):
+    if profile is None:
+        return "registration"
+    primary = profile["primaryGroup"]
+    if (profile["isRegistrationEnd"] is True
+            or (primary is not None and primary.strip().lower() in _CURRENT_GROUPS)):
+        return "search"
+    if (profile["profileDetailsSaved"] is True
+            or (profile["fullName"] is not None and profile["fullName"].strip()
+                and profile["age"] is not None
+                and all(profile[name] is not None and profile[name] != ""
+                        for name in ("pol", "about", "hobbi")))):
+        return "test"
+    return "registration"
 
 
 def _stamp(value):
@@ -93,6 +191,21 @@ def _profile(row):
 class RuntimeProfileService:
     def __init__(self, store):
         self._store = store
+
+    def read_full(self, identity, *, access_token):
+        def action(cursor, execute, uid):
+            execute(_FULL_SELECT, (uid, uid))
+            row = cursor.fetchone()
+            profile = None if row is None else _full_profile(row)
+            return {"uid": uid, "profileExists": row is not None,
+                    "profile": profile, "onboarding": _full_onboarding(profile),
+                    "profileAuthority": "canonical-current-v1", "mediaReady": False}
+        try:
+            return self._store.read_authenticated(identity, action, access_token=access_token)
+        except RuntimeInvalidRequest:
+            # This GET accepts no JSON input. A store serialization/budget error
+            # is unavailable server content rather than a malformed request.
+            raise RuntimeUnavailable() from None
 
     def read_for_edit(self, identity, *, access_token):
         def action(cursor, execute, uid):
