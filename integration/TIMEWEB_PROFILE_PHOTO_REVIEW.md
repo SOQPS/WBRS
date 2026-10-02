@@ -1,8 +1,27 @@
 # Native public profile photo: association review preparation
 
-Сейчас это **pure review plan**, не native media route и не показ фотографий в
-приложении. Никаких SQL/S3/cloud запросов, записей, DDL, grants, deploy или включения
-флагов нет. `runtime_people.py`, `runtime_read_http.py` и `RUNTIME_READS.md` не изменены.
+Актуальный принятый v2 сохраняет default `strict-v1`: прежние fingerprint, AAD и
+receipt semantics не меняются. Только явный `gallery_original_policy="available-originals-v2"`
+пропускает gallery `url`, который отсутствует, имеет корректный typed null или
+равен пустой строке. Все source documents, включая пропущенные, их payload pins
+и полная reviewed последовательность source IDs остаются bound в fingerprint /
+context; изменение любого такого evidence инвалидирует prepare/reconcile и
+runtime reference. Original `profilePic` остаётся обязательным, а каждый непустой
+gallery original требует прежних exact ready-media/owner/provenance proofs.
+Malformed, nonempty unmapped, foreign или conflicting evidence отказывает целому
+плану; thumbnail/Auth.photoURL/произвольный owned object не становятся original.
+
+Projector и runtime выбирают один explicit policy. Runtime v2 задаётся существующей
+переменной `CLRS_RUNTIME_PROFILE_PHOTO_ORDER_POLICY=reviewed-source-document-id-binary-asc-available-originals-v2`;
+старое значение `reviewed-source-document-id-binary-asc-v1` сохраняет strict.
+Полные прежние associations читаются и в v2, новые leases получают отдельный v2
+fingerprint, а старые receipts проверяются через strict reconcile. Принятые source/tests
+сохранены в GitHub `bec0a3d`; root подтвердил GitLab `7f880d9` ONLINE за preview
+guard и контролируемые реальные association apply/readback. Это ограниченное
+подтверждение не доказывает перенос всех фотографий, native login, публичный
+доступ или cutover; grants, auth/visibility и private S3 guards не расширяются.
+Ранние разделы ниже сохраняют историю подготовки и исходных ограничений; их
+формулировки «ещё не подключено» не являются текущим статусом принятого v2.
 
 ## Подтверждённый пробел
 
