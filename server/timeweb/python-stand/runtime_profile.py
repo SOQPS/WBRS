@@ -1,8 +1,9 @@
-"""Own current profile reads and edits under native SQL authority only.
+"""Own current profile reads, edits and test completion under native authority.
 
 The mutation store revalidates the access token in the same transaction. This
-module does not modify the retained Firebase archive, onboarding completion,
-roles, balance, media or geography. Updated-at CAS prevents one device from
+module does not modify the retained Firebase archive, roles, balance, media or
+geography. Edits preserve onboarding; explicit test completion changes only the
+current group, canonical test result and completion flag. Updated-at CAS prevents one device from
 silently overwriting another device's edit; an operation receipt handles an
 uncertain response without a second mutation.
 """
@@ -11,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 import re
 
-from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable
+from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable, canonical_json
 
 
 class ProfileEditInvalid(ValueError):
@@ -19,6 +20,8 @@ class ProfileEditInvalid(ValueError):
 
 
 PROFILE_EDIT_OPERATION = "profile.edit.v1"
+PROFILE_TEST_OPERATION = "profile.complete-test.v1"
+_SCORES = ("brown", "red", "blue", "white")
 _STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _FIELDS = {
     "fullName": "full_name", "age": "age", "rost": "height_cm",
@@ -111,6 +114,13 @@ def _full_profile(row):
     return result
 
 
+def _has_profile_details(profile):
+    return (profile["fullName"] is not None and bool(profile["fullName"].strip())
+            and profile["age"] is not None
+            and all(profile[name] is not None and profile[name] != ""
+                    for name in ("pol", "about", "hobbi")))
+
+
 def _full_onboarding(profile):
     if profile is None:
         return "registration"
@@ -118,11 +128,7 @@ def _full_onboarding(profile):
     if (profile["isRegistrationEnd"] is True
             or (primary is not None and primary.strip().lower() in _CURRENT_GROUPS)):
         return "search"
-    if (profile["profileDetailsSaved"] is True
-            or (profile["fullName"] is not None and profile["fullName"].strip()
-                and profile["age"] is not None
-                and all(profile[name] is not None and profile[name] != ""
-                        for name in ("pol", "about", "hobbi")))):
+    if profile["profileDetailsSaved"] is True or _has_profile_details(profile):
         return "test"
     return "registration"
 
@@ -172,6 +178,38 @@ def validate_profile_edit(payload):
     return {"expectedUpdatedAt": expected, "changes": changes}
 
 
+def validate_temperament(payload):
+    if (type(payload) is not dict or set(payload) != {"expectedUpdatedAt", "scores"}
+            or type(payload["scores"]) is not dict or set(payload["scores"]) != set(_SCORES)
+            or any(type(value) is not int or not 0 <= value <= 20
+                   for value in payload["scores"].values())
+            or sum(payload["scores"].values()) < 20):
+        raise RuntimeInvalidRequest()
+    try:
+        expected = _stamp(payload["expectedUpdatedAt"])
+    except ProfileEditInvalid:
+        raise RuntimeInvalidRequest() from None
+    return {"expectedUpdatedAt": expected,
+            "scores": {name: payload["scores"][name] for name in _SCORES}}
+
+
+def _temperament(scores):
+    # Exact existing temperament.dart order. Max ties resolve white > blue >
+    # red > brown. Secondary ties have a different order for each primary.
+    maximum = max(scores.values())
+    second = max((value for value in scores.values() if value != maximum), default=0)
+    primary = next(name for name in ("white", "blue", "red", "brown") if scores[name] == maximum)
+    secondary_order = {"brown": ("white", "blue", "red"),
+        "red": ("white", "blue", "brown"), "blue": ("white", "brown", "red"),
+        "white": ("brown", "blue", "red")}
+    pure = {"brown": "коричневая", "red": "красная", "blue": "синяя", "white": "белая"}
+    prefix = {"brown": "коричнево", "red": "красно", "blue": "сине", "white": "бело"}
+    if second == 0:
+        return pure[primary]
+    secondary = next(name for name in secondary_order[primary] if scores[name] == second)
+    return prefix[primary] + "-" + pure[secondary]
+
+
 def _profile(row):
     if not isinstance(row, (tuple, list)) or len(row) != 11:
         raise ProfileEditInvalid()
@@ -218,6 +256,63 @@ class RuntimeProfileService:
                     "profileAuthority": "canonical-current-v1",
                     "editableFields": list(_FIELDS)}
         return self._store.read_authenticated(identity, action, access_token=access_token)
+
+    def complete_test(self, identity, operation_id, payload, *, access_token):
+        checked = validate_temperament(payload)
+        request = {"expectedUpdatedAt": payload["expectedUpdatedAt"], "scores": dict(payload["scores"])}
+        primary = _temperament(checked["scores"])
+        test_result = canonical_json({"scores": checked["scores"], "primaryGroup": primary}).decode()
+        select = _FULL_SELECT.replace("FOR SHARE", "FOR UPDATE")
+
+        def action(cursor, execute, uid):
+            execute(select, (uid, uid))
+            row = cursor.fetchone()
+            if row is None:
+                return 404, {"error": "profile_not_found"}, None
+            before = _full_profile(row)
+            if before["updatedAt"] != checked["expectedUpdatedAt"]:
+                return 409, {"error": "profile_changed", "updatedAt": before["updatedAt"]}, None
+            if _full_onboarding(before) == "search":
+                return 409, {"error": "test_already_completed", "updatedAt": before["updatedAt"]}, None
+            if not _has_profile_details(before):
+                return 409, {"error": "profile_incomplete"}, None
+            execute("""UPDATE clrs_staging.profiles SET primary_group = %s,
+ test_result = %s, registration_complete = 1,
+ updated_at = GREATEST(UTC_TIMESTAMP(6), updated_at + INTERVAL 1 MICROSECOND)
+ WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY)
+ AND updated_at = CAST(%s AS DATETIME(6))""",
+                (primary, test_result, uid, uid, checked["expectedUpdatedAt"][:-1].replace("T", " ")))
+            if cursor.rowcount != 1:
+                raise RuntimeUnavailable()
+            execute(select, (uid, uid))
+            after = _full_profile(cursor.fetchone())
+            if (after["primaryGroup"] != primary or after["isRegistrationEnd"] is not True
+                    or after["updatedAt"] <= before["updatedAt"]
+                    or any(after[name] != value for name, value in before.items()
+                           if name not in {"primaryGroup", "isRegistrationEnd", "updatedAt"})):
+                raise RuntimeUnavailable()
+            # Verify the written JSON without returning its raw contents.
+            execute("""SELECT JSON_TYPE(test_result), JSON_LENGTH(test_result),
+ (test_result = CAST(%s AS JSON)) FROM clrs_staging.profiles
+ WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR SHARE""",
+                (test_result, uid, uid))
+            proof = cursor.fetchone()
+            if (not isinstance(proof, (tuple, list)) or len(proof) != 3 or proof[0] != "OBJECT"
+                    or type(proof[1]) is not int or proof[1] != 2
+                    or type(proof[2]) is not int or proof[2] != 1):
+                raise RuntimeUnavailable()
+            return 200, {"uid": uid, "primaryGroup": primary, "isRegistrationEnd": True,
+                         "onboarding": "search", "updatedAt": after["updatedAt"],
+                         "profileAuthority": "canonical-current-v1"}, None
+
+        return self._store.mutate(identity, PROFILE_TEST_OPERATION, operation_id,
+                                  request, action, access_token=access_token)
+
+    def reconcile_test(self, identity, operation_id, payload, *, access_token):
+        validate_temperament(payload)
+        request = {"expectedUpdatedAt": payload["expectedUpdatedAt"], "scores": dict(payload["scores"])}
+        return self._store.lookup(identity, PROFILE_TEST_OPERATION, operation_id,
+                                  payload=request, access_token=access_token)
 
     def edit(self, identity, operation_id, payload, *, access_token):
         checked = validate_profile_edit(payload)

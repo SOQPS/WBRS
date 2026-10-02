@@ -18,7 +18,7 @@ from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "profile.edit.v1", "profile.complete-test.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -41,6 +41,8 @@ def _route(path):
         return "profile.edit.v1", None, None
     if path == "/v1/runtime/me/full-profile":
         return "profile.full-read.v1", None, None
+    if path == "/v1/runtime/me/temperament":
+        return "profile.complete-test.v1", None, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
     if match:
         resource, suffix = match.groups()
@@ -149,6 +151,8 @@ class RuntimeMutationHttp:
                     access_token=token, request_hash=bytes.fromhex(query[12:]))
             else:
                 body = _body(environ)
+                if type(body) is not dict:
+                    raise RuntimeInvalidRequest()
                 operation_id = body.get("operationId")
                 if not isinstance(operation_id, str) or _UUID.fullmatch(operation_id) is None:
                     raise RuntimeInvalidRequest()
@@ -162,6 +166,12 @@ class RuntimeMutationHttp:
                         raise RuntimeInvalidRequest()
                     outcome = chat.mark_read(identity, resource, operation_id,
                         body["throughSequence"], access_token=token)
+                elif operation == "profile.complete-test.v1":
+                    if set(body) != {"operationId", "expectedUpdatedAt", "scores"}:
+                        raise RuntimeInvalidRequest()
+                    outcome = profile.complete_test(identity, operation_id,
+                        {"expectedUpdatedAt": body["expectedUpdatedAt"], "scores": body["scores"]},
+                        access_token=token)
                 else:
                     if set(body) != {"operationId", "expectedUpdatedAt", "changes"}:
                         raise RuntimeInvalidRequest()
