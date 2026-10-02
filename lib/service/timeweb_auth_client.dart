@@ -13,6 +13,7 @@ part 'timeweb_current_reads.dart';
 part 'timeweb_profile_editor.dart';
 part 'timeweb_current_own_profile.dart';
 part 'timeweb_geography.dart';
+part 'timeweb_people.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -464,6 +465,7 @@ class TimewebAuthClient {
   final Map<String, _CurrentReadFlight> _currentReadFlights = {};
   final Map<int, _ProfileEditorFlight> _profileEditorFlights = {};
   final Map<int, _CurrentOwnProfileFlight> _currentOwnProfileFlights = {};
+  final Map<String, _PeopleFlight> _peopleFlights = {};
 
   /// Exposes identity only; credentials remain between transport/store.
   String? get currentUid => _stopping || _closed ? null : _session?.uid;
@@ -532,6 +534,7 @@ class TimewebAuthClient {
     _cancelCurrentReads(this);
     unawaited(_cancelProfileEditorRead(this));
     unawaited(_cancelCurrentOwnProfileRead(this));
+    unawaited(_cancelPeopleReads(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -767,6 +770,20 @@ class TimewebAuthClient {
 
   Future<TimewebCurrentOwnProfile> readCurrentOwnProfile() =>
       _readCurrentOwnProfile(this);
+
+  Future<TimewebPeoplePage> readPeople(
+    TimewebPeopleFilters filters, {
+    TimewebPeopleCursor? cursor,
+  }) => _startPeopleRead(
+    this,
+    filters: filters,
+    cursor: cursor,
+  ).then((value) => value as TimewebPeoplePage);
+
+  Future<TimewebPublicPerson> readPerson(String uid) => _startPeopleRead(
+    this,
+    targetUid: uid,
+  ).then((value) => value as TimewebPublicPerson);
 
   /// No profile value cache. Every read is authorized by its own opaque bearer.
   Future<Map<String, dynamic>> readOwnProfile() async {
@@ -1192,12 +1209,14 @@ class TimewebAuthClient {
     _cancelCurrentReads(this);
     final editorDrain = _cancelProfileEditorRead(this);
     final ownProfileDrain = _cancelCurrentOwnProfileRead(this);
+    final peopleDrain = _cancelPeopleReads(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
       await Future.wait(_authDrains.toList());
       await _storeTail;
       await editorDrain;
       await ownProfileDrain;
+      await peopleDrain;
       _newEpoch();
       _closed = true;
       if (_ownsTransport) _http.close();

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:wbrs/presentation/screens/list_of_users/timeweb_people_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/service/app_session.dart';
@@ -179,6 +181,18 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       );
     }
     if (!terminal && widget.runtime.ownProfileEnabled) {
+      try {
+        _currentOwnProfile?.requireCurrent();
+        if (_currentOwnProfile?.onboarding == TimewebOnboarding.search) {
+          return TimewebPeoplePageView(
+            key: ValueKey('timeweb-people-${state.epoch}-$_generation'),
+            runtime: widget.runtime,
+            initialOwnProfile: _currentOwnProfile,
+          );
+        }
+      } catch (_) {
+        /* Never render an old directory owner. */
+      }
       return TimewebOwnProfilePage(
         key: ValueKey('timeweb-own-profile-${state.epoch}-$_generation'),
         runtime: widget.runtime,

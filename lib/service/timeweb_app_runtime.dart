@@ -160,6 +160,35 @@ final class TimewebAppRuntime {
       })
       .timeout(session.waitTimeout);
 
+  bool get peopleEnabled => ownProfileEnabled;
+
+  Future<TimewebPeoplePage> readPeople(
+    TimewebPeopleFilters filters, {
+    TimewebPeopleCursor? cursor,
+  }) => session
+      .runAuthenticated((lease) async {
+        if (!peopleEnabled) {
+          throw StateError('Current people directory is unavailable.');
+        }
+        final page = await client.readPeople(filters, cursor: cursor);
+        lease.requireCurrent();
+        page.requireCurrent();
+        return page.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebPublicPerson> readPerson(String uid) => session
+      .runAuthenticated((lease) async {
+        if (!peopleEnabled) {
+          throw StateError('Current public profile is unavailable.');
+        }
+        final person = await client.readPerson(uid);
+        lease.requireCurrent();
+        person.requireCurrent();
+        return person.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
+
   bool get temperamentEnabled => currentTemperamentEnabled && ownProfileEnabled;
 
   Future<TimewebTemperamentFlow> openTemperament(
@@ -202,7 +231,9 @@ final class TimewebAppRuntime {
     TimewebCurrentReadCursor? cursor,
   }) => session
       .runAuthenticated((lease) async {
-        if (!chatsEnabled) throw StateError('Current chats are unavailable.');
+        if (!chatsEnabled) {
+          throw StateError('Current chats are unavailable.');
+        }
         final page = await client.readCurrent(
           TimewebCurrentReadRequest.chats(cursor: cursor),
         );
@@ -214,7 +245,9 @@ final class TimewebAppRuntime {
 
   Future<TimewebChatFlow> openChat(TimewebCurrentChat chat) => session
       .runAuthenticated((lease) {
-        if (!chatsEnabled) throw StateError('Current chats are unavailable.');
+        if (!chatsEnabled) {
+          throw StateError('Current chats are unavailable.');
+        }
         return TimewebChatFlow.open(
           client: client,
           session: session,
@@ -289,7 +322,9 @@ final class _RememberingTokenStore implements TimewebSecureTokenStore {
   Future<void> setRemember(bool value) {
     _remember = value;
     return _serial(() async {
-      if (!value) await _protected.clear();
+      if (!value) {
+        await _protected.clear();
+      }
     });
   }
 

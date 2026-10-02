@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:wbrs/presentation/screens/list_of_users/timeweb_people_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/chat_screen/timeweb_chats_page.dart';
@@ -27,10 +29,12 @@ class TimewebOwnProfilePage extends StatefulWidget {
     required this.runtime,
     this.initialProfile,
     this.initialError = false,
+    this.onOpenPeople,
   });
   final TimewebAppRuntime runtime;
   final TimewebCurrentOwnProfile? initialProfile;
   final bool initialError;
+  final VoidCallback? onOpenPeople;
   @override
   State<TimewebOwnProfilePage> createState() => _TimewebOwnProfilePageState();
 }
@@ -90,10 +94,10 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _opening = false;
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted &&
-          ModalRoute.of(context)?.isCurrent == true &&
-          Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && route.isActive && !route.isFirst) {
+        Navigator.of(context).removeRoute(route);
       }
     });
   }
@@ -116,7 +120,9 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       setState(() => _profile = profile);
       await _prepareTemperament();
     } catch (_) {
-      if (_current && generation == _generation) setState(() => _error = true);
+      if (_current && generation == _generation) {
+        setState(() => _error = true);
+      }
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
@@ -182,7 +188,9 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
         await _reload();
       }
     } finally {
-      if (mounted) setState(() => _opening = false);
+      if (mounted) {
+        setState(() => _opening = false);
+      }
     }
   }
 
@@ -230,12 +238,16 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _opening = false);
+      if (mounted) {
+        setState(() => _opening = false);
+      }
     }
   }
 
   Future<bool?> _editGeography(BuildContext editorContext) async {
-    if (!_current || !editorContext.mounted) return null;
+    if (!_current || !editorContext.mounted) {
+      return null;
+    }
     _editor?.requireCurrent();
     TimewebGeographyFlow? flow;
     try {
@@ -243,10 +255,14 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       // A confirmed change closes the old editor before its stale revision can
       // be used; the existing return path obtains a fresh complete profile.
       final snapshot = await widget.runtime.readCurrentOwnProfile();
-      if (!_current || !editorContext.mounted) return null;
+      if (!_current || !editorContext.mounted) {
+        return null;
+      }
       snapshot.requireCurrent();
       flow = await widget.runtime.openGeography(snapshot);
-      if (!_current || !editorContext.mounted) return null;
+      if (!_current || !editorContext.mounted) {
+        return null;
+      }
       flow.requireCurrent();
       _geography = flow;
       final result = await Navigator.of(editorContext).push<bool>(
@@ -259,6 +275,36 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     } finally {
       flow?.close();
       if (identical(_geography, flow)) _geography = null;
+    }
+  }
+
+  Future<void> _openPeople() async {
+    if (!_current ||
+        _loading ||
+        _opening ||
+        !widget.runtime.peopleEnabled ||
+        _profile?.onboarding != TimewebOnboarding.search) {
+      return;
+    }
+    if (widget.onOpenPeople != null) {
+      widget.onOpenPeople!();
+      return;
+    }
+    setState(() => _opening = true);
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: timewebPeopleRoute),
+          builder: (_) => TimewebPeoplePageView(
+            runtime: widget.runtime,
+            initialOwnProfile: _profile,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _opening = false);
+      }
     }
   }
 
@@ -288,7 +334,9 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _opening = false);
+      if (mounted) {
+        setState(() => _opening = false);
+      }
     }
   }
 
@@ -387,6 +435,16 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                                 : 'Пройти тест',
                           ),
                         ),
+                      ),
+                    if (widget.runtime.peopleEnabled &&
+                        stage == TimewebOnboarding.search)
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-people'),
+                        onPressed: current && !_loading && !_opening
+                            ? _openPeople
+                            : null,
+                        icon: const Icon(Icons.people_outline),
+                        label: Text(context.tr('Люди')),
                       ),
                     if (widget.runtime.chatsEnabled)
                       ElevatedButton.icon(

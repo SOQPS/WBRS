@@ -206,12 +206,23 @@ Future<void> _stopRuntime(
 
 Future<void> _wait(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 100 && finder.evaluate().isEmpty; i++) {
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 5)),
     );
   }
   expect(finder, findsOneWidget);
+}
+
+Future<void> _openOwnFromDirectory(WidgetTester tester) async {
+  final entry = find.byKey(const ValueKey('timeweb-people-own-profile'));
+  await _wait(tester, entry);
+  await _until(
+    tester,
+    () => tester.widget<ElevatedButton>(entry).onPressed != null,
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(entry);
 }
 
 void main() {
@@ -499,7 +510,7 @@ void main() {
   );
 
   testWidgets(
-    'native gate shows own profile and chats; edit confirmation rereads current full profile',
+    'native gate directory opens own profile and chats; edit confirmation rereads current full profile',
     (tester) async {
       final directory = (await tester.runAsync(
         () => Directory.systemTemp.createTemp('clrs-current-own-'),
@@ -508,6 +519,16 @@ void main() {
       var fullReads = 0, posts = 0;
       final data = _profile('A');
       final wire = _Wire((request) async {
+        if (request.url.path == '/v1/runtime/people') {
+          return _reply({
+            'kind': 'canonical-current',
+            'ordering': 'last_online_at_desc_uid_binary_asc_null_last',
+            'items': [],
+            'nextCursor': null,
+            'mediaReady': false,
+          });
+        }
+
         if (request.method == 'GET') {
           if (request.url.path == '/v1/runtime/me/full-profile') {
             fullReads++;
@@ -554,10 +575,11 @@ void main() {
             home: TimewebSessionGate(runtime: runtime),
           ),
         );
+        await _openOwnFromDirectory(tester);
         await _wait(tester, find.byType(TimewebOwnProfilePage));
         await tester.pumpAndSettle();
         expect(find.text(' Current A '), findsOneWidget);
-        expect(fullReads, 1);
+        expect(fullReads, 2);
         expect(
           find.byKey(const ValueKey('timeweb-open-chats')),
           findsOneWidget,
@@ -593,11 +615,11 @@ void main() {
         await _until(
           tester,
           () =>
-              fullReads == 2 &&
+              fullReads == 3 &&
               find.byType(TimewebProfileEditPage).evaluate().isEmpty,
         );
         await tester.pumpAndSettle();
-        expect(fullReads, 2);
+        expect(fullReads, 3);
         expect(posts, 1);
         await tester.scrollUntilVisible(
           find.text(data['about']),
@@ -627,6 +649,16 @@ void main() {
       final store = _Store();
       var readsA = 0;
       final wire = _Wire((request) async {
+        if (request.url.path == '/v1/runtime/people') {
+          return _reply({
+            'kind': 'canonical-current',
+            'ordering': 'last_online_at_desc_uid_binary_asc_null_last',
+            'items': [],
+            'nextCursor': null,
+            'mediaReady': false,
+          });
+        }
+
         if (request.url.path == '/v1/auth/login') return _reply(_tokens('B'));
         final uid = request.headers['Authorization'] == 'Bearer na1.B'
             ? 'B'
@@ -635,7 +667,7 @@ void main() {
           return _reply(_editable(uid, _profile(uid)));
         }
         expect(request.url.path, '/v1/runtime/me/full-profile');
-        if (uid == 'A' && ++readsA == 2) return late.future;
+        if (uid == 'A' && ++readsA == 3) return late.future;
         return _reply(
           _full(
             uid,
@@ -654,6 +686,7 @@ void main() {
             home: TimewebSessionGate(runtime: runtime),
           ),
         );
+        await _openOwnFromDirectory(tester);
         await _wait(tester, find.byType(TimewebOwnProfilePage));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
@@ -677,10 +710,11 @@ void main() {
         tester.view.resetViewInsets();
         await tester.tap(find.byTooltip('Back'));
         await tester.pump(const Duration(milliseconds: 350));
-        expect(readsA, 2);
+        expect(readsA, 3);
         await tester.runAsync(
           () => runtime.login(email: 'B@example.invalid', password: 'password'),
         );
+        await _openOwnFromDirectory(tester);
         await _wait(tester, find.textContaining('Current B'));
         await tester.pumpAndSettle();
         late.complete(_reply(_full('A')));
@@ -708,6 +742,7 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(Firebase.apps, isEmpty);
       } finally {
+        if (!late.isCompleted) late.complete(_reply(_full('A')));
         tester.view.resetViewInsets();
         await tester.binding.setSurfaceSize(null);
         await tester.pumpWidget(const SizedBox());
