@@ -43,8 +43,10 @@ the approved profile treatment. The unavailable photo has a visible placeholder;
 there is no fake gallery, online/offline claim, balance, gifts or unsupported
 native action. Nullable children remain “Не указано”; false is displayed as
 “Нет”. Missing/incomplete/test-required profiles have distinct truthful messages.
-The screen does not create a profile, save onboarding or complete the test.
-User fields render as plain current text without a Firebase translation request.
+The screen does not create a profile or save registration. Test completion now
+has a separate default-off native flow documented in
+`TIMEWEB_NATIVE_TEMPERAMENT_UI.md`. User fields render as plain current text
+without a Firebase translation request.
 
 ## Ownership and bounded transport
 
@@ -95,5 +97,12 @@ This is source and focused local evidence only. It adds no live/cloud/API/SQL
 write, deployment, flag activation or paid resource. The previously built
 1.0.25-43 APK predates the new profile/chat source, so it does not contain or
 prove this implementation. Final source synchronization/cutover, native profile
-creation/onboarding/test writes, current media and device/live acceptance remain
-separate unfinished migration work.
+creation/registration, current media and device/live acceptance remain separate
+unfinished migration work. Test completion has separate source-only evidence and
+is still disabled until final synchronization and controlled live acceptance.
+
+The current profile UI reuses existing bundled messages where their meaning
+matches. Seven short missing field/state labels are supplied manually in all
+23 bundled catalogs; the combined own-profile/native-test UI uses 41 catalog
+messages and the local key-presence check found no missing values. This check
+confirms coverage, not device acceptance or professional linguistic review.

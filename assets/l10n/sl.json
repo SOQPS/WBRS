@@ -910,5 +910,12 @@
   "Код из письма": "Koda iz e-poštnega sporočila",
   "Введите шестизначный код": "Vnesite šestmestno kodo",
   "Подтвердить email": "Potrdi e-pošto",
-  "Получить код": "Pridobi kodo"
+  "Получить код": "Pridobi kodo",
+  "Анкета не создана": "Profil ni ustvarjen",
+  "Анкета заполнена частично": "Profil je delno izpolnjen",
+  "Тест ещё не завершён": "Test še ni končan",
+  "Город": "Mesto",
+  "Не указано": "Ni navedeno",
+  "Код страны": "Koda države",
+  "Дополнительная группа": "Dodatna skupina"
 }

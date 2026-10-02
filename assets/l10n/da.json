@@ -896,5 +896,12 @@
   "Код из письма": "Kode fra e-mailen",
   "Введите шестизначный код": "Indtast den sekscifrede kode",
   "Подтвердить email": "Bekræft e-mailadresse",
-  "Получить код": "Få kode"
+  "Получить код": "Få kode",
+  "Анкета не создана": "Profilen er ikke oprettet",
+  "Анкета заполнена частично": "Profilen er delvist udfyldt",
+  "Тест ещё не завершён": "Testen er endnu ikke afsluttet",
+  "Город": "By",
+  "Не указано": "Ikke angivet",
+  "Код страны": "Landekode",
+  "Дополнительная группа": "Yderligere gruppe"
 }

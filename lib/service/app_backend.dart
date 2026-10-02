@@ -26,6 +26,9 @@ class AppBackend {
   static const timewebProfileEditorEnabled = bool.fromEnvironment(
     'CLRS_TIMEWEB_PROFILE_EDITOR_ENABLED',
   );
+  static const timewebTemperamentEnabled = bool.fromEnvironment(
+    'CLRS_TIMEWEB_TEMPERAMENT_ENABLED',
+  );
   static const timewebOwnProfileEnabled = bool.fromEnvironment(
     'CLRS_TIMEWEB_OWN_PROFILE_ENABLED',
   );
@@ -117,7 +120,8 @@ class AppBackend {
       runtimeWritesEnabled:
           timewebProfileEditorEnabled ||
           timewebChatsEnabled ||
-          timewebOwnProfileEnabled,
+          timewebOwnProfileEnabled ||
+          timewebTemperamentEnabled,
       currentReadsEnabled: timewebChatsEnabled || timewebOwnProfileEnabled,
     );
     final store = createAndroidTimewebTokenStore();
@@ -134,6 +138,7 @@ class AppBackend {
       profileEditorEnabled: timewebProfileEditorEnabled,
       currentChatsEnabled: timewebChatsEnabled,
       currentOwnProfileEnabled: timewebOwnProfileEnabled,
+      currentTemperamentEnabled: timewebTemperamentEnabled,
     );
     _timewebRuntime = runtime;
     bindEmailLifecycleSession(runtime.session);

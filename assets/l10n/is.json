@@ -896,5 +896,12 @@
   "Код из письма": "Kóði úr tölvupósti",
   "Введите шестизначный код": "Sláðu inn sex stafa kóðann",
   "Подтвердить email": "Staðfesta netfang",
-  "Получить код": "Fá kóða"
+  "Получить код": "Fá kóða",
+  "Анкета не создана": "Prófíll hefur ekki verið búinn til",
+  "Анкета заполнена частично": "Prófíll er útfylltur að hluta",
+  "Тест ещё не завершён": "Prófinu er ekki lokið enn",
+  "Город": "Borg",
+  "Не указано": "Ekki tilgreint",
+  "Код страны": "Landskóði",
+  "Дополнительная группа": "Viðbótarhópur"
 }

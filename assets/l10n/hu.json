@@ -889,5 +889,12 @@
   "Код из письма": "E-mailben kapott kód",
   "Введите шестизначный код": "Adja meg a hatjegyű kódot",
   "Подтвердить email": "E-mail-cím megerősítése",
-  "Получить код": "Kód kérése"
+  "Получить код": "Kód kérése",
+  "Анкета не создана": "A profil még nem készült el",
+  "Анкета заполнена частично": "A profil részben van kitöltve",
+  "Тест ещё не завершён": "A teszt még nincs befejezve",
+  "Город": "Város",
+  "Не указано": "Nincs megadva",
+  "Код страны": "Országkód",
+  "Дополнительная группа": "További csoport"
 }

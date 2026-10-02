@@ -8,6 +8,7 @@ import 'timeweb_auth_client.dart';
 import 'timeweb_auth_lifecycle.dart';
 import 'timeweb_profile_edit_flow.dart';
 import 'timeweb_chat_flow.dart';
+import 'timeweb_temperament_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -22,10 +23,12 @@ final class TimewebAppRuntime {
     http.Client? transport,
     DateTime Function()? clock,
     TimewebProfileEditJournal? profileEditJournal,
+    TimewebTemperamentJournal? temperamentJournal,
     TimewebChatJournal? chatJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
     this.currentOwnProfileEnabled = false,
+    this.currentTemperamentEnabled = false,
     this.emailLifecycleEnabled = false,
     this.registrationEnabled = false,
     Duration waitTimeout = const Duration(seconds: 20),
@@ -38,6 +41,7 @@ final class TimewebAppRuntime {
     _rememberStore = _RememberingTokenStore(secureStore);
     _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
     _chatJournal = chatJournal ?? TimewebChatJournal();
+    _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
     _profileEditorEnabled =
         profileEditorEnabled ??
         (configuration.runtimeWritesEnabled &&
@@ -60,8 +64,11 @@ final class TimewebAppRuntime {
   late final _RememberingTokenStore _rememberStore;
   late final TimewebProfileEditJournal _profileEditJournal;
   late final TimewebChatJournal _chatJournal;
+  late final TimewebTemperamentJournal _temperamentJournal;
   late final bool _profileEditorEnabled;
-  final bool currentChatsEnabled, currentOwnProfileEnabled;
+  final bool currentChatsEnabled,
+      currentOwnProfileEnabled,
+      currentTemperamentEnabled;
   final String deviceId, expectedSourceSnapshot;
   final bool emailLifecycleEnabled, registrationEnabled;
   late final AppSession session;
@@ -149,6 +156,26 @@ final class TimewebAppRuntime {
       })
       .timeout(session.waitTimeout);
 
+  bool get temperamentEnabled => currentTemperamentEnabled && ownProfileEnabled;
+
+  Future<TimewebTemperamentFlow> openTemperament(
+    TimewebCurrentOwnProfile snapshot,
+  ) => session
+      .runAuthenticated((lease) {
+        if (!temperamentEnabled) {
+          throw StateError('Current temperament test is unavailable.');
+        }
+        snapshot.requireCurrent();
+        return TimewebTemperamentFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _temperamentJournal,
+          snapshot: snapshot,
+        );
+      })
+      .timeout(session.waitTimeout);
+
   Future<TimewebCurrentReadPage> readChats({
     TimewebCurrentReadCursor? cursor,
   }) => session
@@ -214,6 +241,7 @@ final class TimewebAppRuntime {
     }
     await _profileEditJournal.drain();
     await _chatJournal.drain();
+    await _temperamentJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

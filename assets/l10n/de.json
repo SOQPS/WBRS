@@ -896,5 +896,12 @@
   "Код из письма": "Code aus der E-Mail",
   "Введите шестизначный код": "Geben Sie den sechsstelligen Code ein",
   "Подтвердить email": "E-Mail bestätigen",
-  "Получить код": "Code anfordern"
+  "Получить код": "Code anfordern",
+  "Анкета не создана": "Profil noch nicht erstellt",
+  "Анкета заполнена частично": "Profil teilweise ausgefüllt",
+  "Тест ещё не завершён": "Test noch nicht abgeschlossen",
+  "Город": "Stadt",
+  "Не указано": "Nicht angegeben",
+  "Код страны": "Ländercode",
+  "Дополнительная группа": "Zusätzliche Gruppe"
 }

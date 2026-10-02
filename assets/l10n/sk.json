@@ -910,5 +910,12 @@
   "Код из письма": "Kód z e-mailu",
   "Введите шестизначный код": "Zadajte šesťmiestny kód",
   "Подтвердить email": "Potvrdiť e-mail",
-  "Получить код": "Získať kód"
+  "Получить код": "Získať kód",
+  "Анкета не создана": "Profil nebol vytvorený",
+  "Анкета заполнена частично": "Profil je vyplnený čiastočne",
+  "Тест ещё не завершён": "Test ešte nie je dokončený",
+  "Город": "Mesto",
+  "Не указано": "Neuvedené",
+  "Код страны": "Kód krajiny",
+  "Дополнительная группа": "Doplnková skupina"
 }

@@ -4,7 +4,7 @@ const _mutationOperation = TimewebAuthOperation.mutation;
 const _mutationMaximumBytes = 65536;
 const _mutationMax63 = 9223372036854775807;
 
-enum TimewebMutationKind { sendMessage, markRead, editProfile }
+enum TimewebMutationKind { sendMessage, markRead, editProfile, completeTest }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
 
@@ -19,6 +19,8 @@ enum TimewebMutationFailure {
   quoteUnavailable,
   sequenceAhead,
   profileChanged,
+  testAlreadyCompleted,
+  profileIncomplete,
 }
 
 /// Only the reviewed editable fields. Original strings are preserved for the
@@ -75,6 +77,31 @@ final class TimewebProfileChanges {
   late final Map<String, dynamic> _fields;
   @override
   String toString() => 'TimewebProfileChanges(<redacted>)';
+}
+
+/// Counts from the existing 80-question test; the server assigns the group.
+final class TimewebTemperamentScores {
+  TimewebTemperamentScores({
+    required int brown,
+    required int red,
+    required int blue,
+    required int white,
+  }) {
+    final values = [brown, red, blue, white];
+    if (values.any((v) => v < 0 || v > 20) ||
+        values.fold<int>(0, (a, b) => a + b) < 20) {
+      throw ArgumentError('Select at least 20 of the 80 statements.');
+    }
+    _values = Map.unmodifiable({
+      'brown': brown,
+      'red': red,
+      'blue': blue,
+      'white': white,
+    });
+  }
+  late final Map<String, int> _values;
+  @override
+  String toString() => 'TimewebTemperamentScores(<redacted>)';
 }
 
 /// The caller supplies and durably retains its UUID and exact input before a
@@ -153,6 +180,24 @@ final class TimewebMutationRequest {
       ['v1', 'runtime', 'me', 'profile'],
     );
   }
+  factory TimewebMutationRequest.completeOwnTemperament({
+    required String operationId,
+    required String expectedUpdatedAt,
+    required TimewebTemperamentScores scores,
+  }) {
+    if (!_mutationStamp(expectedUpdatedAt)) {
+      throw ArgumentError('Invalid profile revision.');
+    }
+    return TimewebMutationRequest._(
+      TimewebMutationKind.completeTest,
+      operationId,
+      Map.unmodifiable({
+        'expectedUpdatedAt': expectedUpdatedAt,
+        'scores': scores._values,
+      }),
+      ['v1', 'runtime', 'me', 'temperament'],
+    );
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
@@ -162,6 +207,7 @@ final class TimewebMutationRequest {
     TimewebMutationKind.sendMessage => 'chat.send-text.v1',
     TimewebMutationKind.markRead => 'chat.mark-read.v1',
     TimewebMutationKind.editProfile => 'profile.edit.v1',
+    TimewebMutationKind.completeTest => 'profile.complete-test.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -229,6 +275,7 @@ final class TimewebMutationResult {
     TimewebSentMessageReceipt? message,
     TimewebMarkReadReceipt? read,
     TimewebProfileEditReceipt? profile,
+    TimewebCompletedTemperamentReceipt? temperament,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -239,6 +286,7 @@ final class TimewebMutationResult {
        _message = message,
        _read = read,
        _profile = profile,
+       _temperament = temperament,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -252,6 +300,7 @@ final class TimewebMutationResult {
   final TimewebSentMessageReceipt? _message;
   final TimewebMarkReadReceipt? _read;
   final TimewebProfileEditReceipt? _profile;
+  final TimewebCompletedTemperamentReceipt? _temperament;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -323,8 +372,52 @@ final class TimewebMutationResult {
     return _profile;
   }
 
+  TimewebCompletedTemperamentReceipt? get completedTemperament {
+    requireCurrent();
+    return _temperament;
+  }
+
   @override
   String toString() => 'TimewebMutationResult(<redacted>)';
+}
+
+final class TimewebCompletedTemperamentReceipt {
+  TimewebCompletedTemperamentReceipt._(this._data, this._check);
+  final Map<String, dynamic> _data;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  String get uid {
+    _check();
+    return _data['uid'];
+  }
+
+  String get primaryGroup {
+    _check();
+    return _data['primaryGroup'];
+  }
+
+  String get updatedAt {
+    _check();
+    return _data['updatedAt'];
+  }
+
+  bool get isRegistrationEnd {
+    _check();
+    return true;
+  }
+
+  TimewebOnboarding get onboarding {
+    _check();
+    return TimewebOnboarding.search;
+  }
+
+  String get profileAuthority {
+    _check();
+    return 'canonical-current-v1';
+  }
+
+  @override
+  String toString() => 'TimewebCompletedTemperamentReceipt(<redacted>)';
 }
 
 final class TimewebQuotedMessage {
@@ -1049,7 +1142,10 @@ TimewebMutationResult _decodeMutationReply(
   final replayed = body['replayed'] as bool;
   final revision = body['entityRevision'] as int?;
   if (const [404, 409].contains(reply.status)) {
-    final profileChanged = result['error'] == 'profile_changed';
+    final profileChanged = const {
+      'profile_changed',
+      'test_already_completed',
+    }.contains(result['error']);
     if (!_mutationExact(
           result,
           profileChanged ? {'error', 'updatedAt'} : {'error'},
@@ -1065,14 +1161,27 @@ TimewebMutationResult _decodeMutationReply(
       (409, 'quote_unavailable') => TimewebMutationFailure.quoteUnavailable,
       (409, 'sequence_ahead') => TimewebMutationFailure.sequenceAhead,
       (409, 'profile_changed') => TimewebMutationFailure.profileChanged,
+      (409, 'test_already_completed') =>
+        TimewebMutationFailure.testAlreadyCompleted,
+      (409, 'profile_incomplete') => TimewebMutationFailure.profileIncomplete,
       _ => null,
     };
     final profileFailure =
         failure == TimewebMutationFailure.profileChanged ||
+        failure == TimewebMutationFailure.testAlreadyCompleted ||
+        failure == TimewebMutationFailure.profileIncomplete ||
         result['error'] == 'profile_not_found';
     if (failure == null ||
         profileFailure !=
-            (ref._request.kind == TimewebMutationKind.editProfile) ||
+            (const {
+              TimewebMutationKind.editProfile,
+              TimewebMutationKind.completeTest,
+            }.contains(ref._request.kind)) ||
+        (const {
+              TimewebMutationFailure.testAlreadyCompleted,
+              TimewebMutationFailure.profileIncomplete,
+            }.contains(failure) &&
+            ref._request.kind != TimewebMutationKind.completeTest) ||
         (failure == TimewebMutationFailure.quoteUnavailable &&
             ref._request.kind != TimewebMutationKind.sendMessage) ||
         (failure == TimewebMutationFailure.sequenceAhead &&
@@ -1171,6 +1280,34 @@ TimewebMutationResult _decodeMutationReply(
       replayed: replayed,
       revision: revision,
       read: TimewebMarkReadReceipt._(frozen, check),
+      receiptConfirmed: true,
+    );
+  }
+  if (request.kind == TimewebMutationKind.completeTest) {
+    if (reply.status != 200 ||
+        revision != null ||
+        !_mutationExact(result, {
+          'uid',
+          'primaryGroup',
+          'isRegistrationEnd',
+          'onboarding',
+          'updatedAt',
+          'profileAuthority',
+        }) ||
+        result['uid'] != ref._uid ||
+        result['isRegistrationEnd'] != true ||
+        result['onboarding'] != 'search' ||
+        result['profileAuthority'] != 'canonical-current-v1' ||
+        !_mutationStamp(result['updatedAt']) ||
+        !_ownProfileGroups.contains(result['primaryGroup'])) {
+      _mutationInvalidReply();
+    }
+    return TimewebMutationResult._(
+      ref,
+      TimewebMutationState.confirmed,
+      200,
+      replayed: replayed,
+      temperament: TimewebCompletedTemperamentReceipt._(frozen, check),
       receiptConfirmed: true,
     );
   }

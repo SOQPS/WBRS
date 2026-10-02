@@ -896,5 +896,12 @@
   "Код из письма": "Kod från mejlet",
   "Введите шестизначный код": "Ange den sexsiffriga koden",
   "Подтвердить email": "Bekräfta e-postadress",
-  "Получить код": "Hämta kod"
+  "Получить код": "Hämta kod",
+  "Анкета не создана": "Profilen har inte skapats",
+  "Анкета заполнена частично": "Profilen är delvis ifylld",
+  "Тест ещё не завершён": "Testet är inte slutfört ännu",
+  "Город": "Stad",
+  "Не указано": "Inte angivet",
+  "Код страны": "Landskod",
+  "Дополнительная группа": "Ytterligare grupp"
 }

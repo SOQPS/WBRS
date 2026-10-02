@@ -903,5 +903,12 @@
   "Код из письма": "Codul din e-mail",
   "Введите шестизначный код": "Introdu codul din șase cifre",
   "Подтвердить email": "Confirmă e-mailul",
-  "Получить код": "Obține codul"
+  "Получить код": "Obține codul",
+  "Анкета не создана": "Profilul nu a fost creat",
+  "Анкета заполнена частично": "Profilul este completat parțial",
+  "Тест ещё не завершён": "Testul nu a fost încă finalizat",
+  "Город": "Oraș",
+  "Не указано": "Nespecificat",
+  "Код страны": "Codul țării",
+  "Дополнительная группа": "Grup suplimentar"
 }

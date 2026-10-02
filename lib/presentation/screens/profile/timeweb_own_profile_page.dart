@@ -8,6 +8,8 @@ import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
+import 'package:wbrs/service/timeweb_temperament_flow.dart';
+import 'package:wbrs/presentation/screens/test/timeweb_temperament_page.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/group_badge.dart';
@@ -35,6 +37,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
   StreamSubscription<AppSessionState>? _subscription;
   TimewebCurrentOwnProfile? _profile;
   TimewebProfileEditFlow? _editor;
+  TimewebTemperamentFlow? _temperament;
   late final int _epoch;
   int _generation = 0;
   bool _loading = false, _opening = false, _error = false, _invalidated = false;
@@ -46,6 +49,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _epoch = widget.runtime.session.state.epoch;
     _profile = widget.initialProfile;
     _error = widget.initialError;
+    unawaited(_prepareTemperament());
     _subscription = widget.runtime.session.states.listen((_) {
       if (!_current) _invalidate();
     });
@@ -74,6 +78,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _profile = null;
     _editor?.close();
     _editor = null;
+    _temperament?.close();
+    _temperament = null;
     _notice = null;
     _loading = false;
     _opening = false;
@@ -92,6 +98,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     final generation = ++_generation;
     setState(() {
       _profile = null;
+      _temperament?.close();
+      _temperament = null;
       _loading = true;
       _error = false;
       _notice = null;
@@ -101,12 +109,75 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       if (!_current || generation != _generation) return;
       profile.requireCurrent();
       setState(() => _profile = profile);
+      await _prepareTemperament();
     } catch (_) {
       if (_current && generation == _generation) setState(() => _error = true);
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  Future<void> _prepareTemperament() async {
+    final snapshot = _profile;
+    if (!_current ||
+        !widget.runtime.temperamentEnabled ||
+        snapshot == null ||
+        snapshot.profile == null ||
+        snapshot.onboarding == TimewebOnboarding.registration) {
+      return;
+    }
+    final generation = _generation;
+    try {
+      // A committed lost ACK can already make the current profile 'search'.
+      // Recovery still exposes the original journal as lookup-only.
+      final flow = await widget.runtime.openTemperament(snapshot);
+      if (!mounted ||
+          !_current ||
+          generation != _generation ||
+          !identical(_profile, snapshot)) {
+        flow.close();
+        return;
+      }
+      flow.requireCurrent();
+      setState(() => _temperament = flow);
+    } on TimewebNoPendingTemperament {
+      // A completed profile without a pending operation needs no recovery.
+    } catch (_) {
+      if (_current && generation == _generation) {
+        setState(() => _notice = 'Сервис пока недоступен. Попробуйте позднее.');
+      }
+    }
+  }
+
+  Future<void> _openTemperament() async {
+    if (!_current || _loading || _opening) return;
+    final flow = _temperament;
+    if (flow == null) return;
+    try {
+      flow.requireCurrent();
+    } catch (_) {
+      return;
+    }
+    setState(() {
+      _opening = true;
+      _notice = null;
+    });
+    try {
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: timewebTemperamentRoute),
+          builder: (_) => TimewebTemperamentPage(flow: flow),
+        ),
+      );
+      _temperament = null;
+      if (_current) {
+        setState(() => _opening = false);
+        await _reload();
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
     }
   }
 
@@ -145,7 +216,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       flow?.close();
       if (_current) {
         setState(
-          () => _notice = 'Не удалось открыть редактор. Попробуйте ещё раз.',
+          () => _notice = 'Не удалось открыть профиль. Попробуйте ещё раз.',
         );
       }
     } finally {
@@ -175,7 +246,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     } catch (_) {
       if (_current) {
         setState(
-          () => _notice = 'Не удалось загрузить чаты. Попробуйте ещё раз.',
+          () => _notice = 'Не удалось загрузить чаты. Проверьте подключение.',
         );
       }
     } finally {
@@ -189,6 +260,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _profile = null;
     _editor?.close();
     _editor = null;
+    _temperament?.close();
+    _temperament = null;
     unawaited(_subscription?.cancel());
     super.dispose();
   }
@@ -202,6 +275,15 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     final snapshot = current ? _profile : null;
     final profile = snapshot?.profile;
     final stage = snapshot?.onboarding;
+    TimewebTemperamentFlow? temperament;
+    if (current) {
+      try {
+        _temperament?.requireCurrent();
+        temperament = _temperament;
+      } catch (_) {
+        /* Never render a stale or closed questionnaire lease. */
+      }
+    }
     return ClrsScaffold(
       key: const ValueKey('timeweb-current-own-profile'),
       extendBodyBehindAppBar: true,
@@ -251,6 +333,21 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                         icon: const Icon(Icons.edit_outlined),
                         label: Text(context.tr('Редактировать профиль')),
                       ),
+                    if (temperament != null)
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-temperament'),
+                        onPressed: current && !_loading && !_opening
+                            ? _openTemperament
+                            : null,
+                        icon: const Icon(Icons.assignment_outlined),
+                        label: Text(
+                          context.tr(
+                            temperament.needsCheck
+                                ? 'Проверить результат'
+                                : 'Пройти тест',
+                          ),
+                        ),
+                      ),
                     if (widget.runtime.chatsEnabled)
                       ElevatedButton.icon(
                         key: const ValueKey('timeweb-open-chats'),
@@ -297,26 +394,31 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                   _section(
                     'Профиль',
                     Text(
-                      context.tr(
-                        'Анкета пока не создана. Создание анкеты пока недоступно.',
-                      ),
+                      "${context.tr('Анкета не создана')}. "
+                      "${context.tr('Сервис пока недоступен. Попробуйте позднее.')}",
                     ),
                   ),
                 if (profile != null && stage != TimewebOnboarding.search)
                   _section(
                     'Профиль',
                     Text(
-                      context.tr(
-                        stage == TimewebOnboarding.test
-                            ? 'Для завершения анкеты нужен тест. Прохождение теста пока недоступно.'
-                            : 'Анкета заполнена частично. Завершение регистрации пока недоступно.',
-                      ),
+                      stage == TimewebOnboarding.test
+                          ? widget.runtime.temperamentEnabled
+                                ? context.tr(
+                                    'Пройти тест для определения группы',
+                                  )
+                                : "${context.tr('Тест ещё не завершён')}. "
+                                      "${context.tr('Сервис пока недоступен. Попробуйте позднее.')}"
+                          : "${context.tr('Анкета заполнена частично')}. "
+                                "${context.tr('Сервис пока недоступен. Попробуйте позднее.')}",
                     ),
                   ),
                 if (profile != null) ...[
                   _section(
                     'Фотографии',
-                    Text(context.tr('Фотографии пока недоступны')),
+                    Text(
+                      context.tr('Сервис пока недоступен. Попробуйте позднее.'),
+                    ),
                   ),
                   _section('Обо мне', _facts(profile)),
                   _section('Интересы и увлечения', Text(_text(profile.hobbi))),
@@ -363,15 +465,13 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
           const SizedBox(height: 16),
           Center(
             child: Text(
-              context.tr('Фото пока недоступно'),
+              context.tr('Фото профиля'),
               style: const TextStyle(color: LrsTheme.muted),
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            profile == null
-                ? context.tr('Мой профиль')
-                : _text(profile.fullName),
+            profile == null ? context.tr('Профиль') : _text(profile.fullName),
             key: const ValueKey('timeweb-own-profile-name'),
             style: const TextStyle(
               fontSize: 27,

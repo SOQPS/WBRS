@@ -896,5 +896,12 @@
   "Код из письма": "Sähköpostin koodi",
   "Введите шестизначный код": "Anna kuusinumeroinen koodi",
   "Подтвердить email": "Vahvista sähköpostiosoite",
-  "Получить код": "Pyydä koodi"
+  "Получить код": "Pyydä koodi",
+  "Анкета не создана": "Profiilia ei ole luotu",
+  "Анкета заполнена частично": "Profiili on täytetty osittain",
+  "Тест ещё не завершён": "Testiä ei ole vielä suoritettu",
+  "Город": "Kaupunki",
+  "Не указано": "Ei ilmoitettu",
+  "Код страны": "Maakoodi",
+  "Дополнительная группа": "Lisäryhmä"
 }
