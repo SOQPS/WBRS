@@ -157,7 +157,18 @@ class _ShopPageState extends State<ShopPage> with TickerProviderStateMixin {
                     ),
                     Padding(
                       padding: EdgeInsets.only(top: 15),
-                      child: ClrsMotto(size: 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ClrsMotto(size: 16),
+                          SizedBox(height: 3),
+                          Icon(
+                            Icons.favorite_border,
+                            size: 18,
+                            color: LrsTheme.peach,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

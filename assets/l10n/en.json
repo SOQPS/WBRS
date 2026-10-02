@@ -903,5 +903,9 @@
   "Город": "City",
   "Не указано": "Not specified",
   "Код страны": "Country code",
-  "Дополнительная группа": "Additional group"
+  "Дополнительная группа": "Additional group",
+  "Создать": "Create",
+  "Люди. Общение. Настоящие отношения.": "People. Conversation. Real relationships.",
+  "Когда кто-то присоединится, организатор получит уведомление.": "When someone joins, the organizer receives a notification.",
+  "Ближе к настоящему": "Closer to something real"
 }
