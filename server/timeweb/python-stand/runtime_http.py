@@ -14,7 +14,7 @@ from native_sessions import NativeIdentity
 from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest,
     RuntimeRejected, RuntimeConflict, RuntimeUnavailable, RuntimeCommitUnknown)
 from runtime_chat import RuntimeChatService
-from runtime_personal_chat import RuntimePersonalChatService
+from runtime_personal_chat import RuntimePersonalChatService, PersonalChatAccessRejected
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_read_http import RuntimeReadHttp
 
@@ -203,6 +203,8 @@ class RuntimeMutationHttp:
             return RuntimeHttpReply(status, outcome.payload)
         except (RuntimeInvalidRequest, ProfileEditInvalid):
             return RuntimeHttpReply("400 Bad Request", {"error": "invalid_request"})
+        except PersonalChatAccessRejected:
+            return RuntimeHttpReply("404 Not Found", {"error": "person_unavailable"})
         except (NativeRejected, RuntimeRejected):
             return RuntimeHttpReply("401 Unauthorized", {"error": "unauthorized"}, authenticate=True)
         except RuntimeConflict:

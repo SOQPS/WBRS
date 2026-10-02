@@ -9,7 +9,7 @@ from runtime_chat import RuntimeChatService
 from runtime_http import RuntimeMutationHttp
 from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest, RuntimeRejected,
     RuntimeUnavailable, RuntimeConflict, RuntimeCommitUnknown, request_digest)
-from runtime_personal_chat import (RuntimePersonalChatService, OPEN_OPERATION, personal_pair,
+from runtime_personal_chat import (RuntimePersonalChatService, PersonalChatAccessRejected, OPEN_OPERATION, personal_pair,
                                   _INDEX_PARTS)
 from test_runtime_mutations import FakeDatabase, FakeCursor, ENV, NOW, STAMP, grants
 from test_runtime_http import Native, Services, env, OP, ENV as HTTP_ENV, ForbiddenInput
@@ -232,6 +232,18 @@ class PersonalTests(unittest.TestCase):
                 self.assertEqual(len(db.state["chats"]), int(did_commit))
                 self.assertTrue(db.connections[-1].readonly)
 
+    def test_declared_target_failure_is_retained_without_invalidating_session(self):
+        db = PersonalDatabase(); store, service = db.services()
+        db.state["profiles"]["peer"]["invisible"] = "2030-01-01T00:00:00Z"
+        first = self.open(db, service)
+        found = store.lookup(db.identity, OPEN_OPERATION, "open",
+            payload={"targetUid": "peer"}, access_token=db.access)
+        self.assertEqual((first.status, found.status), (404, 404))
+        self.assertEqual(first.payload["result"], {"error": "person_unavailable"})
+        self.assertEqual(found.payload["result"], first.payload["result"])
+        self.assertTrue(found.payload["replayed"])
+        self.assertEqual(len(db.state["chats"]), 0)
+
     def test_receipt_rechecks_current_visibility_disable_and_membership(self):
         for change in (lambda db: db.state["profiles"]["peer"].__setitem__("invisible", "2030-01-01T00:00:00Z"),
                        lambda db: db.state["profiles"]["actor"].__setitem__("complete", 0),
@@ -239,9 +251,9 @@ class PersonalTests(unittest.TestCase):
                        lambda db: db.state["members"].pop(next(key for key in db.state["members"] if key[1] == "peer"))):
             db = PersonalDatabase(); store, service = db.services(); self.open(db, service); change(db)
             before = copy.deepcopy(db.state)
-            with self.assertRaises(RuntimeRejected):
+            with self.assertRaises(PersonalChatAccessRejected):
                 self.open(db, service)
-            with self.assertRaises(RuntimeRejected):
+            with self.assertRaises(PersonalChatAccessRejected):
                 store.lookup(db.identity, OPEN_OPERATION, "open", payload={"targetUid": "peer"}, access_token=db.access)
             self.assertEqual(db.state, before)
         db = PersonalDatabase(); store, service = db.services(); self.open(db, service)
@@ -295,6 +307,19 @@ class PersonalHttpTests(unittest.TestCase):
 
     def request(self, request):
         return self.http.dispatch(request, native_service=self.native, native_configured=True)
+
+    def test_target_denial_is_404_without_authentication_challenge(self):
+        def refused(*args, **kwargs):
+            raise PersonalChatAccessRejected()
+        self.services.open_personal = refused
+        self.services.lookup = refused
+        for request in (env("/v1/runtime/personal-chats", {"operationId": OP, "targetUid": "peer"}),
+            env("/v1/runtime/operations/" + OPEN_OPERATION + "/" + OP,
+                REQUEST_METHOD="GET", QUERY_STRING="requestHash=" + request_digest({"targetUid": "peer"}).hex())):
+            reply = self.request(request)
+            self.assertEqual(reply.status, "404 Not Found")
+            self.assertEqual(reply.payload, {"error": "person_unavailable"})
+            self.assertFalse(reply.authenticate)
 
     def test_exact_route_body_token_and_reconciliation(self):
         reply = self.request(env("/v1/runtime/personal-chats", {"operationId": OP, "targetUid": "peer"}))

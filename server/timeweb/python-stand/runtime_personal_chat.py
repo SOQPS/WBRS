@@ -220,6 +220,10 @@ def personal_action(target_uid, *, allow_create=False, clock=time.time):
     return action
 
 
+class PersonalChatAccessRejected(RuntimeRejected):
+    """The session remains valid; current access to this target is unavailable."""
+
+
 class RuntimePersonalChatService:
     def __init__(self, store, *, clock=time.time):
         if store is None or not callable(clock):
@@ -241,6 +245,10 @@ class RuntimePersonalChatService:
         if set(response) == {"error"}:
             if response["error"] not in {"person_unavailable", "chat_unavailable"}:
                 raise RuntimeUnavailable()
+            # The store still checks the actor's current session/account. An
+            # error-only receipt exposes no target data and must remain a
+            # declared failure, rather than turn into an unknown operation.
+            return
         elif (set(response) != {"chatId", "peerUid", "created", "chatRevision"}
                 or type(response["chatId"]) is not str or response["peerUid"] != target_uid
                 or type(response["created"]) is not bool
@@ -259,7 +267,7 @@ class RuntimePersonalChatService:
         except _PersonalFailure:
             # A receipt is never an authorization bypass after profile hiding,
             # disable, removal, or malformed current source/membership.
-            raise RuntimeRejected() from None
+            raise PersonalChatAccessRejected() from None
 
     def open_personal(self, identity, target_uid, operation_id, *, access_token):
         target_uid = _uid(target_uid)
