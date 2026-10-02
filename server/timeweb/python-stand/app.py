@@ -21,6 +21,7 @@ from legacy_private_media_http import LegacyPrivateMediaHttp, MediaHttpReply
 from runtime_http import RuntimeMutationHttp
 from native_auth_lifecycle_http import NativeAuthLifecycleHttp
 from runtime_profile_photos_http import RuntimeProfilePhotoMediaReply, RuntimeProfilePhotosHttpReply
+from runtime_profile_photos_factory import create_profile_photos_http
 
 
 def _reply(start_response, status, payload, *, head=False, authenticate=False, retry=False):
@@ -99,7 +100,8 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                media_http_factory=LegacyPrivateMediaHttp,
                runtime_http_factory=RuntimeMutationHttp,
                lifecycle_http_factory=NativeAuthLifecycleHttp,
-               profile_photos_http=None):
+               profile_photos_http=None,
+               profile_photos_http_factory=create_profile_photos_http):
     """Construct WSGI app with injectable dependencies for offline tests."""
     if env is None:
         env = os.environ
@@ -124,13 +126,15 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
     native_configured = (env.get("CLRS_NATIVE_AUTH_ENABLED") == "1"
                          and env.get("CLRS_NATIVE_AUTH_WRITES_ENABLED") == "1")
     def initialize():
-        nonlocal native_service, legacy_http, media_http, runtime_http, lifecycle_http, initialized
+        nonlocal native_service, legacy_http, media_http, runtime_http, lifecycle_http, profile_photos_http, initialized
         with init_lock:
             if initialized:
                 return
             legacy_http = legacy_http_factory(env)
             media_http = media_http_factory(env)
             runtime_http = runtime_http_factory(env)
+            if profile_photos_http is None:
+                profile_photos_http = profile_photos_http_factory(env)
             if native_configured:
                 try:
                     native_service = native_service_factory(env)
