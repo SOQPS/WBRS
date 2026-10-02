@@ -72,3 +72,46 @@ These checks use synthetic HTTP with a real temporary private journal. They do
 not establish a deployed Timeweb service or device acceptance. Geography,
 photos, registration completion, test/group, backend activation and the
 three-photo requirement for a new registration are outside this change.
+
+## Optional current-geography navigation hook
+
+`TimewebProfileEditPage` accepts an optional
+`Future<bool?> Function(BuildContext context)? onEditLocation` callback. When
+supplied, an existing localized `Выберите страну и регион.` button appears after
+height and before children, at the existing editor's geography position. The
+default constructor continues to show no geography control.
+
+The button is disabled while the editor is busy, pending reconciliation,
+requires a reread, has a stale session, or has any unsaved name, age, height,
+description, interests or children change. Draft comparison uses original raw
+numeric text without parsing invalid input or discarding it. Source comparisons
+are short-circuited for a pending/revoked flow. Text controller changes update
+the button immediately.
+
+The editor invokes the original callback once and blocks its other controls
+through its lifetime. The interactive route has no selection timeout; the
+geography page/flow owns network deadlines. A false/null result keeps this same
+editor and its values. A true result means a geography save was confirmed and
+closes the editor with `pop(true)` so its caller can reread the new profile
+revision instead of continuing with stale CAS. Disposal, route/session checks
+prevent adopting a result into a different owner or route. Callback errors use
+the existing localized unavailable-section message.
+
+One new 360-pixel widget check passed: default absence, all five text/numeric
+drafts and children disabling navigation, null/false cancellation preserving
+the form, busy controls after 30 seconds of selection, and confirmed closure
+without a profile POST. Existing six field/regression checks were not rerun for
+this navigation-only follow-up. Scoped analysis of the changed editor and test
+reported `No issues found!`.
+
+```sh
+../toolchains/flutter-3.32.5/bin/flutter test --no-pub --reporter expanded \
+  test/timeweb_profile_fields_test.dart --plain-name \
+  '360px location hook hides by default, blocks drafts, preserves cancel and closes on confirmed save'
+../toolchains/flutter-3.32.5/bin/cache/dart-sdk/bin/dart analyze \
+  lib/presentation/screens/edit_profile/timeweb_profile_edit_page.dart \
+  test/timeweb_profile_fields_test.dart
+```
+
+This hook does not implement the geography transport or enable its production
+configuration. Its callback must return true only after confirmed native save.

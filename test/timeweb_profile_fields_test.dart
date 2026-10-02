@@ -565,4 +565,177 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    '360px location hook hides by default, blocks drafts, preserves cancel and closes on confirmed save',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final directory = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('clrs-location-hook-'),
+      ))!;
+      final wire = _Wire((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/v1/runtime/me/profile');
+        return _reply(_view());
+      });
+      final runtime = _runtime(_Store(), wire, directory);
+      final pendingChoice = Completer<bool?>();
+      var supplied = false;
+      var calls = 0;
+      bool? routeResult;
+      Future<bool?> chooseLocation(BuildContext editorContext) async {
+        expect(editorContext.mounted, isTrue);
+        expect(ModalRoute.of(editorContext)?.isCurrent, isTrue);
+        calls++;
+        return switch (calls) {
+          1 => null,
+          2 => false,
+          _ => pendingChoice.future,
+        };
+      }
+
+      final location = find.byKey(const ValueKey('timeweb-profile-location'));
+      Future<void> openEditor() async {
+        await tester.tap(find.text('Open editor'));
+        await _waitFor(
+          tester,
+          () => find.byType(TimewebProfileEditPage).evaluate().isNotEmpty,
+        );
+        await tester.pumpAndSettle();
+      }
+
+      try {
+        await tester.runAsync(() => runtime.start(remember: true));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: LrsTheme.theme,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () async {
+                    final flow = await runtime.openProfileEditor();
+                    if (!context.mounted) return;
+                    routeResult = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => TimewebProfileEditPage(
+                          flow: flow,
+                          onEditLocation: supplied ? chooseLocation : null,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open editor'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await openEditor();
+        expect(location, findsNothing);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+
+        supplied = true;
+        await openEditor();
+        expect(location, findsOneWidget);
+        expect(tester.widget<TextButton>(location).onPressed, isNotNull);
+        for (final field in [
+          ('timeweb-profile-name', 'Current A'),
+          ('timeweb-profile-age', '0'),
+          ('timeweb-profile-height', ''),
+          ('timeweb-profile-about', 'old'),
+          ('timeweb-profile-interests', ''),
+        ]) {
+          final finder = find.byKey(ValueKey(field.$1));
+          // Invalid numeric drafts must disable navigation without parsing or
+          // rewriting the text, just like a valid but unsaved text change.
+          await tester.enterText(finder, 'bad');
+          await tester.pump();
+          expect(tester.widget<TextButton>(location).onPressed, isNull);
+          expect(tester.widget<TextFormField>(finder).controller!.text, 'bad');
+          await tester.enterText(finder, field.$2);
+          await tester.pump();
+          expect(tester.widget<TextButton>(location).onPressed, isNotNull);
+        }
+        final children = find.byKey(const ValueKey('timeweb-profile-children'));
+        await tester.ensureVisible(children);
+        await tester.tap(children);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Нет').last);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextButton>(location).onPressed, isNull);
+        expect(calls, 0);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+
+        await openEditor();
+        await tester.ensureVisible(location);
+        await tester.tap(location);
+        await tester.pumpAndSettle();
+        expect(calls, 1);
+        expect(find.byType(TimewebProfileEditPage), findsOneWidget);
+        expect(tester.widget<TextButton>(location).onPressed, isNotNull);
+        expect(find.text('Current A'), findsOneWidget);
+        await tester.tap(location);
+        await tester.pumpAndSettle();
+        expect(calls, 2);
+        expect(find.byType(TimewebProfileEditPage), findsOneWidget);
+        expect(tester.widget<TextButton>(location).onPressed, isNotNull);
+        await tester.tap(location);
+        await tester.pump();
+        expect(calls, 3);
+        expect(tester.widget<TextButton>(location).onPressed, isNull);
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey('timeweb-profile-name')),
+              )
+              .enabled,
+          isFalse,
+        );
+        expect(
+          tester.widget<DropdownButtonFormField<bool>>(children).onChanged,
+          isNull,
+        );
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.byKey(const ValueKey('timeweb-profile-save')),
+              )
+              .onPressed,
+          isNull,
+        );
+        // Interactive route lifetime is not the network request deadline.
+        await tester.pump(const Duration(seconds: 30));
+        expect(tester.widget<TextButton>(location).onPressed, isNull);
+        expect(
+          find.text(
+            'Результат пока не подтверждён. Нажмите «Проверить результат».',
+          ),
+          findsNothing,
+        );
+        pendingChoice.complete(true);
+        await _waitFor(tester, () => routeResult == true);
+        await tester.pumpAndSettle();
+        expect(find.byType(TimewebProfileEditPage), findsNothing);
+        expect(calls, 3);
+        expect(
+          wire.calls.where((request) => request.method == 'POST'),
+          isEmpty,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        if (!pendingChoice.isCompleted) pendingChoice.complete(null);
+        await tester.pumpWidget(const SizedBox.shrink());
+        var stopped = false;
+        final stopping = runtime.stop().then((_) => stopped = true);
+        await _waitFor(tester, () => stopped);
+        await stopping;
+        await tester.runAsync(() => directory.delete(recursive: true));
+      }
+    },
+  );
 }

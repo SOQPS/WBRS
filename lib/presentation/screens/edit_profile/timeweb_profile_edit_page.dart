@@ -9,8 +9,16 @@ import 'package:wbrs/shared/clrs_screen.dart';
 /// Existing CLRS form treatment over the real native current-profile API.
 /// This editor cannot finish onboarding or navigate into Firebase destinations.
 class TimewebProfileEditPage extends StatefulWidget {
-  const TimewebProfileEditPage({super.key, required this.flow});
+  const TimewebProfileEditPage({
+    super.key,
+    required this.flow,
+    this.onEditLocation,
+  });
   final TimewebProfileEditFlow flow;
+
+  /// True means a separate geography save was confirmed. That changes the
+  /// profile revision, so this editor must close and let its caller reread.
+  final Future<bool?> Function(BuildContext context)? onEditLocation;
   @override
   State<TimewebProfileEditPage> createState() => _TimewebProfileEditPageState();
 }
@@ -46,6 +54,9 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     } catch (_) {
       _invalidated = true;
     }
+    for (final controller in [_name, _age, _height, _about, _interests]) {
+      controller.addListener(_draftChanged);
+    }
     _subscription = widget.flow.sessionStates.listen((_) {
       if (!_current) _invalidate();
     });
@@ -58,6 +69,53 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  void _draftChanged() {
+    if (mounted && !_invalidated) setState(() {});
+  }
+
+  bool get _hasUnsavedChanges =>
+      _name.text != widget.flow.fullName ||
+      _age.text != (widget.flow.age?.toString() ?? '') ||
+      _height.text != (widget.flow.rost?.toString() ?? '') ||
+      _about.text != widget.flow.about ||
+      _interests.text != widget.flow.hobbi ||
+      _children != widget.flow.deti;
+
+  Future<void> _editLocation() async {
+    final callback = widget.onEditLocation;
+    // Short-circuit before reading draft/source values on an unresolved,
+    // reloaded or revoked flow. Raw numeric text also counts as a dirty draft.
+    if (callback == null ||
+        _busy ||
+        !_current ||
+        widget.flow.needsCheck ||
+        widget.flow.requiresReload ||
+        _hasUnsavedChanges) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    try {
+      // The interactive route owns its network deadlines. User selection has
+      // no timeout and is observed through this one original callback only.
+      final confirmed = await callback(context);
+      if (!mounted || !_current || ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      if (confirmed == true) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (_current) {
+        setState(
+          () => _notice = 'Не удалось открыть раздел. Проверьте подключение.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -206,6 +264,8 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     final current = _current;
     final pending = current && widget.flow.needsCheck;
     final reload = current && widget.flow.requiresReload;
+    final canEditLocation =
+        current && !_busy && !pending && !reload && !_hasUnsavedChanges;
     return ClrsScaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -256,6 +316,17 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
                           validator: (v) => _validateNumber('rost', v),
                         ),
                         const SizedBox(height: 12),
+                        if (widget.onEditLocation != null) ...[
+                          TextButton.icon(
+                            key: const ValueKey('timeweb-profile-location'),
+                            onPressed: canEditLocation ? _editLocation : null,
+                            icon: const Icon(Icons.location_on_outlined),
+                            label: Text(
+                              context.tr('Выберите страну и регион.'),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         DropdownButtonFormField<bool>(
                           key: const ValueKey('timeweb-profile-children'),
                           value: _children,
