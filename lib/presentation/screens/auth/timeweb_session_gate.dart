@@ -5,8 +5,10 @@ import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
+import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/presentation/screens/edit_profile/timeweb_profile_edit_page.dart';
+import 'package:wbrs/presentation/screens/chat_screen/timeweb_chats_page.dart';
 
 import 'login_screen/login_page.dart';
 
@@ -24,6 +26,7 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
   StreamSubscription<AppSessionState>? _subscription;
   TimewebSessionProfile? _profile;
   TimewebProfileEditFlow? _editor;
+  TimewebCurrentReadPage? _chats;
   int? _loadedEpoch;
   int _generation = 0;
   bool _loading = false;
@@ -56,6 +59,7 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       _profile = null;
       _editor?.close();
       _editor = null;
+      _chats = null;
       _loading = false;
       _error = false;
       _loadedEpoch = state.epoch;
@@ -79,18 +83,40 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
       _profile = null;
       _editor?.close();
       _editor = null;
+      _chats = null;
     });
     try {
-      if (widget.runtime.profileEditorEnabled) {
-        final editor = await widget.runtime.openProfileEditor();
+      if (widget.runtime.profileEditorEnabled || widget.runtime.chatsEnabled) {
+        TimewebProfileEditFlow? editor;
+        TimewebCurrentReadPage? chats;
+        var error = false;
+        if (widget.runtime.chatsEnabled) {
+          try {
+            chats = await widget.runtime.readChats();
+          } catch (_) {
+            error = true;
+          }
+        }
+        if (widget.runtime.profileEditorEnabled) {
+          try {
+            editor = await widget.runtime.openProfileEditor();
+          } catch (_) {
+            error = true;
+          }
+        }
         if (!mounted ||
             generation != _generation ||
             widget.runtime.session.state.epoch != epoch) {
-          editor.close();
+          editor?.close();
           return;
         }
-        editor.requireCurrent();
-        setState(() => _editor = editor);
+        editor?.requireCurrent();
+        chats?.requireCurrent();
+        setState(() {
+          _editor = editor;
+          _chats = chats;
+          _error = error;
+        });
         return;
       }
       final profile = await widget.runtime.readGateProfile();
@@ -139,10 +165,13 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
     }
     String? stage;
     TimewebProfileEditFlow? editor;
+    TimewebCurrentReadPage? chats;
     try {
       stage = _profile?.onboarding.name;
       _editor?.requireCurrent();
       if (!terminal) editor = _editor;
+      _chats?.requireCurrent();
+      if (!terminal) chats = _chats;
     } catch (_) {
       // A queued rebuild must not render an old A snapshot after a B intent.
     }
@@ -158,9 +187,11 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
                 children: [
                   Text(
                     context.tr(
-                      editor == null
-                          ? 'Профиль недоступен'
-                          : 'Редактировать профиль',
+                      editor != null
+                          ? 'Редактировать профиль'
+                          : chats != null
+                          ? 'Чаты'
+                          : 'Профиль недоступен',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -173,6 +204,32 @@ class _TimewebSessionGateState extends State<TimewebSessionGate> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
+                  if (chats != null)
+                    ElevatedButton(
+                      key: const ValueKey('timeweb-open-chats'),
+                      onPressed: () async {
+                        final current = chats!;
+                        final epoch = state.epoch;
+                        current.requireCurrent();
+                        await Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            settings: const RouteSettings(
+                              name: timewebChatsRoute,
+                            ),
+                            builder: (_) => TimewebChatsPage(
+                              runtime: widget.runtime,
+                              initialPage: current,
+                            ),
+                          ),
+                        );
+                        if (mounted &&
+                            widget.runtime.session.state.authenticated &&
+                            widget.runtime.session.state.epoch == epoch) {
+                          await _load();
+                        }
+                      },
+                      child: Text(context.tr('Чаты')),
+                    ),
                   if (editor != null)
                     ElevatedButton(
                       key: const ValueKey('timeweb-open-profile-editor'),

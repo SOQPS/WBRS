@@ -26,6 +26,9 @@ class AppBackend {
   static const timewebProfileEditorEnabled = bool.fromEnvironment(
     'CLRS_TIMEWEB_PROFILE_EDITOR_ENABLED',
   );
+  static const timewebChatsEnabled = bool.fromEnvironment(
+    'CLRS_TIMEWEB_CHATS_ENABLED',
+  );
   static const timewebSourceSnapshot = String.fromEnvironment(
     'CLRS_TIMEWEB_SOURCE_SNAPSHOT',
   );
@@ -108,7 +111,8 @@ class AppBackend {
     final configuration = TimewebAuthConfiguration(
       endpoint: Uri.parse(timewebApiOrigin),
       enabled: true,
-      runtimeWritesEnabled: timewebProfileEditorEnabled,
+      runtimeWritesEnabled: timewebProfileEditorEnabled || timewebChatsEnabled,
+      currentReadsEnabled: timewebChatsEnabled,
     );
     final store = createAndroidTimewebTokenStore();
     final preferences = await SharedPreferences.getInstance();
@@ -121,6 +125,8 @@ class AppBackend {
       clearLocal: SessionService.clearLocal,
       emailLifecycleEnabled: timewebEmailLifecycleEnabled,
       registrationEnabled: timewebRegistrationEnabled,
+      profileEditorEnabled: timewebProfileEditorEnabled,
+      currentChatsEnabled: timewebChatsEnabled,
     );
     _timewebRuntime = runtime;
     bindEmailLifecycleSession(runtime.session);

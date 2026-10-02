@@ -7,6 +7,7 @@ import 'app_session.dart';
 import 'timeweb_auth_client.dart';
 import 'timeweb_auth_lifecycle.dart';
 import 'timeweb_profile_edit_flow.dart';
+import 'timeweb_chat_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -21,6 +22,9 @@ final class TimewebAppRuntime {
     http.Client? transport,
     DateTime Function()? clock,
     TimewebProfileEditJournal? profileEditJournal,
+    TimewebChatJournal? chatJournal,
+    bool? profileEditorEnabled,
+    this.currentChatsEnabled = false,
     this.emailLifecycleEnabled = false,
     this.registrationEnabled = false,
     Duration waitTimeout = const Duration(seconds: 20),
@@ -32,6 +36,10 @@ final class TimewebAppRuntime {
     }
     _rememberStore = _RememberingTokenStore(secureStore);
     _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
+    _chatJournal = chatJournal ?? TimewebChatJournal();
+    _profileEditorEnabled =
+        profileEditorEnabled ??
+        (configuration.runtimeWritesEnabled && !currentChatsEnabled);
     client = TimewebAuthClient(
       configuration: configuration,
       secureStore: _rememberStore,
@@ -48,6 +56,9 @@ final class TimewebAppRuntime {
   late final TimewebAuthClient client;
   late final _RememberingTokenStore _rememberStore;
   late final TimewebProfileEditJournal _profileEditJournal;
+  late final TimewebChatJournal _chatJournal;
+  late final bool _profileEditorEnabled;
+  final bool currentChatsEnabled;
   final String deviceId, expectedSourceSnapshot;
   final bool emailLifecycleEnabled, registrationEnabled;
   late final AppSession session;
@@ -111,7 +122,39 @@ final class TimewebAppRuntime {
         return TimewebSessionProfile._(lease, profile);
       });
 
-  bool get profileEditorEnabled => client.configuration.runtimeWritesEnabled;
+  bool get profileEditorEnabled =>
+      _profileEditorEnabled && client.configuration.runtimeWritesEnabled;
+  bool get chatsEnabled =>
+      currentChatsEnabled &&
+      client.configuration.currentReadsEnabled &&
+      client.configuration.runtimeWritesEnabled;
+
+  Future<TimewebCurrentReadPage> readChats({
+    TimewebCurrentReadCursor? cursor,
+  }) => session
+      .runAuthenticated((lease) async {
+        if (!chatsEnabled) throw StateError('Current chats are unavailable.');
+        final page = await client.readCurrent(
+          TimewebCurrentReadRequest.chats(cursor: cursor),
+        );
+        lease.requireCurrent();
+        page.requireCurrent();
+        return page;
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebChatFlow> openChat(TimewebCurrentChat chat) => session
+      .runAuthenticated((lease) {
+        if (!chatsEnabled) throw StateError('Current chats are unavailable.');
+        return TimewebChatFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _chatJournal,
+          chat: chat,
+        );
+      })
+      .timeout(session.waitTimeout);
 
   Future<TimewebProfileEditFlow> openProfileEditor() => session
       .runAuthenticated(
@@ -150,6 +193,7 @@ final class TimewebAppRuntime {
       result = await result.settled!;
     }
     await _profileEditJournal.drain();
+    await _chatJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

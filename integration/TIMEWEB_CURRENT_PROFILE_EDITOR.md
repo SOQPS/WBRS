@@ -7,8 +7,10 @@ profile from the immutable legacy snapshot.
 
 Activation requires the existing explicit native startup/auth configuration
 plus `CLRS_TIMEWEB_PROFILE_EDITOR_ENABLED=true`. This new flag defaults to false
-and sets the existing native client's `runtimeWritesEnabled` configuration. No
-release flag was enabled and no APK was built for this change.
+and sets the existing native client's `runtimeWritesEnabled` configuration.
+Review APK `CLRS-1.0.25-43.apk` includes this source at commit `5481858`, with
+Firebase selected and the native editor flag disabled. It does not establish
+Timeweb cutover or deployed editing.
 
 When this editor is enabled, the native gate reads only the authenticated
 `GET /v1/runtime/me/profile`. The edit button appears after a successful typed
