@@ -14,6 +14,7 @@ import 'timeweb_geography_flow.dart';
 import 'timeweb_personal_chat_flow.dart';
 import 'timeweb_meeting_create_flow.dart';
 import 'timeweb_meeting_join_flow.dart';
+import 'timeweb_meeting_chat_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -34,6 +35,7 @@ final class TimewebAppRuntime {
     TimewebPersonalChatJournal? personalChatJournal,
     TimewebMeetingCreateJournal? meetingCreateJournal,
     TimewebMeetingJoinJournal? meetingJoinJournal,
+    TimewebMeetingChatJournal? meetingChatJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
     this.currentOwnProfileEnabled = false,
@@ -53,6 +55,7 @@ final class TimewebAppRuntime {
     _personalChatJournal = personalChatJournal ?? TimewebPersonalChatJournal();
     _meetingCreateJournal = meetingCreateJournal ?? TimewebMeetingCreateJournal();
     _meetingJoinJournal = meetingJoinJournal ?? TimewebMeetingJoinJournal();
+    _meetingChatJournal = meetingChatJournal ?? TimewebMeetingChatJournal();
     _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
     _geographyJournal = geographyJournal ?? TimewebGeographyJournal();
     _profileEditorEnabled =
@@ -80,6 +83,7 @@ final class TimewebAppRuntime {
   late final TimewebPersonalChatJournal _personalChatJournal;
   late final TimewebMeetingCreateJournal _meetingCreateJournal;
   late final TimewebMeetingJoinJournal _meetingJoinJournal;
+  late final TimewebMeetingChatJournal _meetingChatJournal;
   late final TimewebTemperamentJournal _temperamentJournal;
   late final TimewebGeographyJournal _geographyJournal;
   late final bool _profileEditorEnabled;
@@ -197,6 +201,22 @@ final class TimewebAppRuntime {
         if (!meetingsEnabled) throw StateError('Current meeting join is unavailable.');
         return TimewebMeetingJoinFlow.open(client: client, session: session,
           lease: lease, journal: _meetingJoinJournal, meetingId: meetingId);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingChatFlow> openMeetingConversation(String meetingId) => session
+      .runAuthenticated((lease) {
+        if (!meetingsEnabled) throw StateError('Current meeting conversation is unavailable.');
+        return TimewebMeetingChatFlow.open(client: client, session: session,
+          lease: lease, journal: _meetingChatJournal, meetingId: meetingId);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingMessagePage> readMeetingMessages(String meetingId, {int limit = 30, TimewebMeetingCursor? cursor}) => session
+      .runAuthenticated((lease) async {
+        if (!meetingsEnabled) throw StateError('Current meeting messages are unavailable.');
+        final page = await client.readMeetingMessages(meetingId, limit: limit, cursor: cursor);
+        lease.requireCurrent(); page.requireCurrent(); return page.bindSessionGuard(lease.requireCurrent);
       })
       .timeout(session.waitTimeout);
 
@@ -473,6 +493,7 @@ final class TimewebAppRuntime {
     await _personalChatJournal.drain();
     await _meetingCreateJournal.drain();
     await _meetingJoinJournal.drain();
+    await _meetingChatJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

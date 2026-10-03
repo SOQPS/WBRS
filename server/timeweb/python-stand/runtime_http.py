@@ -18,10 +18,11 @@ from runtime_personal_chat import RuntimePersonalChatService, PersonalChatAccess
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_meeting_create import RuntimeMeetingCreateService, MeetingAccessRejected
 from runtime_meeting_join import RuntimeMeetingJoinService
+from runtime_meeting_chat import RuntimeMeetingChatService
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -54,6 +55,12 @@ def _route(path):
         return "meeting.create.v1", None, None
     if path == "/v1/runtime/personal-chats":
         return "chat.open-personal.v1", None, None
+    match = re.fullmatch(r"/v1/runtime/meetings/([^/]{1,191})/messages", path)
+    if match:
+        resource = match[1]
+        if any(ord(c) < 32 or ord(c) == 127 for c in resource):
+            return None
+        return "meeting.send-text.v1", resource, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
     if match:
         resource, suffix = match.groups()
@@ -85,7 +92,7 @@ def _body(environ):
 
 def _create(env):
     store = RuntimeMutationStore.from_env(env)
-    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store)
+    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store), RuntimeMeetingChatService(store)
 
 
 class RuntimeMutationHttp:
@@ -112,7 +119,9 @@ class RuntimeMutationHttp:
     def dispatch(self, environ, *, native_service=None, native_configured=False):
         meeting_mutation = (environ.get("PATH_INFO") == "/v1/runtime/meetings/join"
             or (environ.get("PATH_INFO") == "/v1/runtime/meetings"
-                and environ.get("REQUEST_METHOD") == "POST"))
+                and environ.get("REQUEST_METHOD") == "POST")
+            or (environ.get("REQUEST_METHOD") == "POST"
+                and re.fullmatch(r"/v1/runtime/meetings/[^/]{1,191}/messages", environ.get("PATH_INFO", "")) is not None))
         read_reply = None if meeting_mutation else self._reads.dispatch(
             environ, native_service=native_service, native_configured=native_configured)
         if read_reply is not None:
@@ -177,6 +186,13 @@ class RuntimeMutationHttp:
                         raise RuntimeUnavailable()
                     outcome = self._services[3].open_personal(identity, body["targetUid"],
                         operation_id, access_token=token)
+                elif operation == "meeting.send-text.v1":
+                    if set(body) != {"operationId", "text"}:
+                        raise RuntimeInvalidRequest()
+                    if len(self._services) < 7:
+                        raise RuntimeUnavailable()
+                    outcome = self._services[6].send_text(identity, resource, operation_id,
+                        body["text"], access_token=token)
                 elif operation == "meeting.join.v1":
                     if set(body) != {"operationId", "meetingId"}:
                         raise RuntimeInvalidRequest()

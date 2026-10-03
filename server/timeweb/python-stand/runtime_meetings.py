@@ -350,6 +350,10 @@ class RuntimeMeetingsService:
     def _fits(page):
         return len(canonical_json(page, max_bytes=4 * 1024 * 1024)) <= MAX_PUBLIC_BYTES
 
+    def messages(self, identity, meeting_id, *, limit=30, cursor=None, access_token):
+        from runtime_meeting_chat import read_messages
+        return read_messages(self, identity, meeting_id, limit=limit, cursor=cursor, access_token=access_token)
+
     def meetings(self, identity, *, access_token, scope="group", limit=30, cursor=None,
                  country_code=None, region=None):
         self._limit(limit)

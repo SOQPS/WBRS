@@ -1,13 +1,13 @@
 # Native meetings on Timeweb
 
 The integration branch includes native meeting creation, self-only joining,
-list/detail/participants reads and their Flutter routes. The server is deployed
+list/detail/participants and member-only text discussion with their Flutter routes. The server is deployed
 to existing Timeweb stand 5179, GitLab commit
-`fd8bf47922fe7727839ac8aa3048d50257d52a88`.
+`b93116683ed626eb08ca63dff7bb5f645ed99df6`.
 The operator preview guard remains enabled; the main app deployment is stopped.
-The deployed join route returns404 without the operator proof and401 with proof
+The deployed message route returns404 without the operator proof and401 with proof
 but without a native bearer. These refusals are deployment/guard evidence,
-not a successful real-user creation, join, old-password login or full cutover.
+not a successful real-user creation, join, message, old-password login or full cutover.
 Native release flags remain false. Permissions, schema and imported rows were
 not changed by these patches.
 
@@ -128,9 +128,44 @@ hero, logo/slogan with heart, title/Create in one row,75% transparent Create,
 horizontal geography filters, metadata/roster panels on the left two-thirds.
 The same approved meeting guide is reused with legacy navigation disabled;
 its dialogs stay inside the owned native navigator. The participants link is
-`Участники встречи`. No unsupported chat button or fabricated meeting image is
-shown. Meeting messages, leave/kick actions, push and imported-meeting serving
-remain separate cutover work.
+`Участники встречи`. Discussion opens only after a fresh member-authorized
+message read; no fabricated meeting image is shown. Leave/kick actions, push and
+imported-meeting serving remain separate cutover work.
+
+## Current member-only text discussion
+
+`GET/POST /v1/runtime/meetings/{meetingId}/messages` use the same reviewed native
+meeting, current profile and active trusted self-membership checks. An invitation
+alone grants no message access. Imported meetings remain excluded. Pages contain
+whole messages in descending sequence order, with a maximum of 30 items/64KiB.
+The opaque cursor binds the UID, meeting, limit, initial sequence/revision and
+original 300-second expiry; later messages do not change its page boundary.
+
+The POST body is exactly `{operationId,text}`. Operation `meeting.send-text.v1`
+hashes the original `{meetingId,text}`. A 201 receipt contains
+`meetingId,messageId,sequence,senderUid,text,createdAt,chatRevision`;
+`entityRevision=chatRevision`. Text is limited to 4096 code points/16384 UTF-8
+bytes and remains unchanged. Message IDs derive from the meeting, actor and
+original UUID; timestamps are explicit server UTC with six fractional digits.
+Under the meeting lock, the indexed message tail allocates the next sequence,
+and the message, shared meeting revision and receipt commit atomically. A later
+message may increase the revision without invalidating an earlier exact receipt.
+
+The Flutter flow persists its original UUID/hash/text before the single POST.
+Restart and unknown COMMIT use lookup only. It acknowledges the exact durable
+intent before confirmation, then obtains displayed messages through a current
+GET. Short errors cannot acknowledge an unresolved send. Target denial clears
+RAM and held message authority while retaining the pending journal and healthy
+account session. The shared four-request budget and account leases are reused.
+
+The discussion uses the approved family-back background, left two-thirds metadata
+and native participant navigation. Available roster names and honest initials
+are used; photos, presence and participant totals are not invented. Translation
+is manual through a scoped ML Kit service tied to the native UID/epoch, with no
+Firebase singleton, literal shortcut or remote fallback. Unsupported/device
+failure keeps the original. Real SDK translation and phone acceptance are not
+proven by the injected local widget fixture. Quotes, media, push and read markers
+remain unsupported by this message contract.
 
 ## Focused evidence and limits
 
@@ -143,9 +178,18 @@ Client evidence:9 transport cases, one creation flow case,2 creation/read widget
 cases,4 join client/flow cases and one join widget case. Scoped analyzers report
 No issues. These cover exact receipt identity/status/fields, sparse continuation,
 original-only lookup, A-to-B cleanup, cancellation/drain, no Firebase init in the
-native form and ACK before detail/roster reads. A360px local native-list render
-was compared with the supplied concept; this is not a screenshot from a user's
-phone. Root changed only the participants link text after frozen UI verification.
+native form and ACK before detail/roster reads. Text discussion adds 4 focused
+server cases, 6 client/flow cases and one focused widget scenario. Earlier suites
+were not repeated. The widget covers preserving an oversized draft before POST,
+original-only checking after an unknown send, ACK before readback, denied-target
+cleanup, late translation after an actor change and quiet stale first opening.
+The 360px native-list and discussion renders were compared with Dmitry's concepts;
+these are local fixture images, not screenshots from a user's phone. Discussion
+metadata and message bubbles occupy at most the left/right two-thirds; names and
+honest initials sit outside bubbles, manual translation below, and the composer
+is full width. Real avatar, notification, attachment and bottom-navigation
+readiness is not claimed. Root changed only the earlier participants link text
+after frozen join UI verification.
 
 Frozen patches were independently reviewed, applied in order and matched their
 source manifests. Credentials remain outside source/APK. Full source hashes,

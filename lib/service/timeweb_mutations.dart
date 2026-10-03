@@ -13,6 +13,7 @@ enum TimewebMutationKind {
   openPersonalChat,
   createMeeting,
   joinMeeting,
+  sendMeetingText,
 }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
@@ -257,6 +258,11 @@ final class TimewebMutationRequest {
     return TimewebMutationRequest._(TimewebMutationKind.joinMeeting, operationId,
       Map.unmodifiable({'meetingId': meetingId}), ['v1', 'runtime', 'meetings', 'join']);
   }
+  factory TimewebMutationRequest.sendMeetingText({required String operationId, required String meetingId, required String text}) {
+    TimewebMeetingTextRequest(meetingId: meetingId, text: text);
+    return TimewebMutationRequest._(TimewebMutationKind.sendMeetingText, operationId,
+      Map.unmodifiable({'meetingId': meetingId, 'text': text}), ['v1', 'runtime', 'meetings', meetingId, 'messages']);
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
@@ -272,11 +278,12 @@ final class TimewebMutationRequest {
     TimewebMutationKind.openPersonalChat => 'chat.open-personal.v1',
     TimewebMutationKind.createMeeting => 'meeting.create.v1',
     TimewebMutationKind.joinMeeting => 'meeting.join.v1',
+    TimewebMutationKind.sendMeetingText => 'meeting.send-text.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
     for (final entry in _payload.entries)
-      if (entry.key != 'chatId') entry.key: entry.value,
+      if (entry.key != 'chatId' && !(kind == TimewebMutationKind.sendMeetingText && entry.key == 'meetingId')) entry.key: entry.value,
   };
   @override
   String toString() => 'TimewebMutationRequest(<redacted>)';
@@ -344,6 +351,7 @@ final class TimewebMutationResult {
     TimewebOpenedPersonalChatReceipt? personalChat,
     TimewebMeetingCreateReceipt? meeting,
     TimewebMeetingJoinReceipt? joinedMeeting,
+    TimewebSentMeetingMessageReceipt? meetingMessage,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -359,6 +367,7 @@ final class TimewebMutationResult {
        _personalChat = personalChat,
        _meeting = meeting,
        _joinedMeeting = joinedMeeting,
+       _meetingMessage = meetingMessage,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -377,6 +386,7 @@ final class TimewebMutationResult {
   final TimewebOpenedPersonalChatReceipt? _personalChat;
   final TimewebMeetingCreateReceipt? _meeting;
   final TimewebMeetingJoinReceipt? _joinedMeeting;
+  final TimewebSentMeetingMessageReceipt? _meetingMessage;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -471,6 +481,11 @@ final class TimewebMutationResult {
   TimewebMeetingJoinReceipt? get joinedMeeting {
     requireCurrent();
     return _joinedMeeting;
+  }
+
+  TimewebSentMeetingMessageReceipt? get sentMeetingMessage {
+    requireCurrent();
+    return _meetingMessage;
   }
 
   @override
@@ -797,7 +812,8 @@ TimewebMutationResult _retainMutationOutcome(
   if (confirmed?._acknowledgeable == true &&
       !result._receiptConfirmed &&
       !const {TimewebMutationKind.openPersonalChat,
-        TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(reference._request.kind)) {
+        TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting,
+        TimewebMutationKind.sendMeetingText}.contains(reference._request.kind)) {
     return confirmed!;
   }
   reference._settledResult = result;
@@ -1191,7 +1207,7 @@ TimewebMutationResult _decodeMutationReply(
 }) {
   ref.requireCurrent();
   if (reply.status == 401) {
-    if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(ref._request.kind)) {
+    if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
       return TimewebMutationResult._(ref, TimewebMutationState.unknown, 401,
         failure: TimewebMutationFailure.unauthorized,
         unknownReason: TimewebAuthError.unauthorized);
@@ -1239,14 +1255,14 @@ TimewebMutationResult _decodeMutationReply(
         unknownReason: TimewebAuthError.unavailable,
       );
     }
-    if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(ref._request.kind)) {
+    if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
       // Every short refusal lacks the original operation/hash receipt. Only a
       // matching committed envelope below can retire this durable create intent.
       final failure = switch ((reply.status, body['error'])) {
         (400, 'invalid_request') => TimewebMutationFailure.invalidRequest,
         (404, 'not_found') => TimewebMutationFailure.notFound,
         (404, 'meeting_unavailable') when lookup => TimewebMutationFailure.meetingUnavailable,
-        (404, 'meeting_not_found') when ref._request.kind == TimewebMutationKind.joinMeeting => TimewebMutationFailure.meetingNotFound,
+        (404, 'meeting_not_found') when const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind) => TimewebMutationFailure.meetingNotFound,
         (409, 'operation_conflict') => TimewebMutationFailure.conflict,
         (429, 'rate_limited') => TimewebMutationFailure.rateLimited,
         _ => null,
@@ -1315,7 +1331,7 @@ TimewebMutationResult _decodeMutationReply(
   final replayed = body['replayed'] as bool;
   final revision = body['entityRevision'] as int?;
   if (const [404, 409].contains(reply.status)) {
-    if (ref._request.kind == TimewebMutationKind.joinMeeting) {
+    if (const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
       final failure = switch ((reply.status, result['error'])) {
         (404, 'meeting_not_found') => TimewebMutationFailure.meetingNotFound,
         (404, 'profile_not_found') => TimewebMutationFailure.notFound,
@@ -1412,6 +1428,9 @@ TimewebMutationResult _decodeMutationReply(
   final frozen = _immutableJson(result) as Map<String, dynamic>;
   final request = ref._request;
   final check = ref.requireCurrent;
+  if (request.kind == TimewebMutationKind.sendMeetingText) {
+    return _decodeSentMeetingMessage(ref, reply.status, frozen, revision, replayed);
+  }
   if (request.kind == TimewebMutationKind.joinMeeting) {
     return _decodeJoinedMeeting(ref, reply.status, frozen, revision, replayed);
   }

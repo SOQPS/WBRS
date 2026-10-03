@@ -90,11 +90,13 @@ final class TimewebMeetingFilters {
 }
 
 final class TimewebMeetingCursor {
-  TimewebMeetingCursor._(this._value, this._owner, this._scope, this._check, this._expiry);
+  TimewebMeetingCursor._(this._value, this._owner, this._scope, this._check, this._expiry,
+    {int? capSequence, int? beforeSequence, int? revision}) : _capSequence = capSequence, _beforeSequence = beforeSequence, _revision = revision;
   final String _value, _scope;
   final TimewebAuthClient _owner;
   final void Function() _check;
   final DateTime _expiry;
+  final int? _capSequence, _beforeSequence, _revision;
   void requireCurrent() { _check(); if (!_owner._clock().isBefore(_expiry)) throw const TimewebAuthException(TimewebAuthOperation.currentRead, TimewebAuthError.invalidRequest); }
   @override
   String toString() => 'TimewebMeetingCursor(<redacted>)';
@@ -115,7 +117,8 @@ final class TimewebMeetingPage<T> {
     return TimewebMeetingPage<T>._(List.unmodifiable(_items.map((item) =>
       (item is TimewebMeeting ? item.bindSessionGuard(guard) : (item as TimewebMeetingParticipant).bindSessionGuard(guard)) as T)),
       cursor == null ? null : TimewebMeetingCursor._(cursor._value, cursor._owner, cursor._scope,
-        () { cursor.requireCurrent(); guard(); }, cursor._expiry), check);
+        () { cursor.requireCurrent(); guard(); }, cursor._expiry,
+        capSequence: cursor._capSequence, beforeSequence: cursor._beforeSequence, revision: cursor._revision), check);
   }
   @override
   String toString() => 'TimewebMeetingPage(<redacted>)';
@@ -165,6 +168,99 @@ final class TimewebMeetingParticipant {
   String toString() => 'TimewebMeetingParticipant(<redacted>)';
 }
 
+final class TimewebMeetingTextRequest {
+  TimewebMeetingTextRequest({required this.meetingId, required this.text}) {
+    if (!_meetingIdentifier(meetingId) || !_mutationText(text)) throw ArgumentError('Invalid meeting text.');
+  }
+  final String meetingId, text;
+  @override
+  String toString() => 'TimewebMeetingTextRequest(<redacted>)';
+}
+final class TimewebMeetingMessage {
+  TimewebMeetingMessage._(this._data, this._check);
+  final Map<String, dynamic> _data;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  TimewebMeetingMessage bindSessionGuard(void Function() guard) => TimewebMeetingMessage._(_data, () { requireCurrent(); guard(); });
+  T _read<T>(String key) { _check(); return _data[key] as T; }
+  String get meetingId => _read('meetingId');
+  String get messageId => _read('messageId');
+  int get sequence => _read('sequence');
+  String get senderUid => _read('senderUid');
+  String get text => _read('text');
+  String get createdAt => _read('createdAt');
+  @override
+  String toString() => 'TimewebMeetingMessage(<redacted>)';
+}
+final class TimewebSentMeetingMessageReceipt extends TimewebMeetingMessage {
+  TimewebSentMeetingMessageReceipt._(Map<String, dynamic> data, void Function() check) : super._(data, check);
+  int get chatRevision => _read('chatRevision');
+  @override
+  TimewebSentMeetingMessageReceipt bindSessionGuard(void Function() guard) => TimewebSentMeetingMessageReceipt._(_data, () { requireCurrent(); guard(); });
+  @override
+  String toString() => 'TimewebSentMeetingMessageReceipt(<redacted>)';
+}
+final class TimewebMeetingMessagePage {
+  TimewebMeetingMessagePage._(this._items, this._cursor, this._meetingId, this._revision, this._check);
+  final List<TimewebMeetingMessage> _items;
+  final TimewebMeetingCursor? _cursor;
+  final int _revision;
+  final String _meetingId;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  List<TimewebMeetingMessage> get items { _check(); return _items; }
+  TimewebMeetingCursor? get nextCursor { _check(); return _cursor; }
+  int get chatRevision { _check(); return _revision; }
+  String get meetingId { _check(); return _meetingId; }
+  bool get mediaReady { _check(); return false; }
+  TimewebMeetingMessagePage bindSessionGuard(void Function() guard) {
+    void check() { requireCurrent(); guard(); }
+    final cursor = _cursor;
+    return TimewebMeetingMessagePage._(List.unmodifiable(_items.map((v) => v.bindSessionGuard(guard))),
+      cursor == null ? null : TimewebMeetingCursor._(cursor._value, cursor._owner, cursor._scope,
+        () { cursor.requireCurrent(); guard(); }, cursor._expiry, capSequence: cursor._capSequence,
+        beforeSequence: cursor._beforeSequence, revision: cursor._revision), _meetingId, _revision, check);
+  }
+  @override
+  String toString() => 'TimewebMeetingMessagePage(<redacted>)';
+}
+
+bool _meetingMessageFields(Map<String, dynamic> value, String id) => value['meetingId'] == id &&
+  value['messageId'] is String && RegExp(r'^tw-meet-msg-[a-f0-9]{64}$').hasMatch(value['messageId']) &&
+  _mutationInteger(value['sequence'], positive: true) && _currentIdentifier(value['senderUid']) &&
+  _mutationText(value['text']) && _mutationStamp(value['createdAt']);
+
+TimewebMeetingMessagePage _decodeMeetingMessages(_PeopleFlight f, Map<String, dynamic> body, Map<String, String> query,
+  String id, TimewebMeetingCursor? cursor, String scope) {
+  if (!_mutationExact(body, {'kind','meetingId','chatRevision','ordering','items','nextCursor','mediaReady'}) ||
+      body['kind'] != 'canonical-current' || body['meetingId'] != id || body['ordering'] != 'sequence_desc' ||
+      body['mediaReady'] != false || !_mutationInteger(body['chatRevision']) || body['items'] is! List ||
+      (body['items'] as List).length > int.parse(query['limit']!) || cursor != null && body['chatRevision'] < cursor._revision!) _peopleInvalid();
+  final next = body['nextCursor'], raw = body['items'] as List;
+  if (next != null && (!_validReadCursor(next is String ? next : '') || next == cursor?._value || raw.isEmpty)) _peopleInvalid();
+  final rows = <TimewebMeetingMessage>[], ids = <String>{}; int? previous = cursor?._beforeSequence;
+  for (final value in raw) {
+    if (value is! Map<String, dynamic> || !_mutationExact(value, {'meetingId','messageId','sequence','senderUid','text','createdAt'}) ||
+        !_meetingMessageFields(value, id) || value['sequence'] > body['chatRevision'] ||
+        cursor != null && value['sequence'] > cursor._capSequence! || previous != null && value['sequence'] >= previous || !ids.add(value['messageId'])) _peopleInvalid();
+    previous = value['sequence']; rows.add(TimewebMeetingMessage._(Map.unmodifiable(value), f.checkSession));
+  }
+  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, f.checkSession,
+    cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)), capSequence: cursor?._capSequence ?? rows.first.sequence,
+    beforeSequence: rows.last.sequence, revision: cursor?._revision ?? body['chatRevision']);
+  return TimewebMeetingMessagePage._(List.unmodifiable(rows), continuation, id, body['chatRevision'], f.checkSession);
+}
+
+TimewebMutationResult _decodeSentMeetingMessage(TimewebMutationReference ref, int status, Map<String, dynamic> result, int? revision, bool replayed) {
+  final input = ref._request._payload;
+  final expected = 'tw-meet-msg-${crypto.sha256.convert(utf8.encode('clrs-native-meeting-message-v1\u0000${_mutationCanonical([input['meetingId'], ref._uid, ref._request.operationId])}'))}';
+  if (status != 201 || !_mutationExact(result, {'meetingId','messageId','sequence','senderUid','text','createdAt','chatRevision'}) ||
+      !_meetingMessageFields(result, input['meetingId']) || result['messageId'] != expected || result['senderUid'] != ref._uid ||
+      result['text'] != input['text'] || !_mutationInteger(result['chatRevision']) || revision != result['chatRevision'] || revision! < result['sequence']) _mutationInvalidReply();
+  return TimewebMutationResult._(ref, TimewebMutationState.confirmed, status, replayed: replayed, revision: revision,
+    meetingMessage: TimewebSentMeetingMessageReceipt._(result, ref.requireCurrent), receiptConfirmed: true);
+}
+
 final class TimewebMeetingNotFound implements Exception {
   const TimewebMeetingNotFound();
   @override
@@ -172,6 +268,10 @@ final class TimewebMeetingNotFound implements Exception {
 }
 
 extension TimewebMeetingsClient on TimewebAuthClient {
+  Future<TimewebMeetingMessagePage> readMeetingMessages(String meetingId, {int limit = 30, TimewebMeetingCursor? cursor}) {
+    if (limit < 1 || limit > 30) return Future.error(ArgumentError('Invalid meeting message limit.'));
+    return _meetingRead(this, {'limit': '$limit'}, meetingId, cursor, messages: true).then((v) => v as TimewebMeetingMessagePage);
+  }
   Future<TimewebMeetingPage<TimewebMeeting>> readMeetings(TimewebMeetingFilters filters, {TimewebMeetingCursor? cursor}) =>
       _meetingRead(this, filters._query, null, cursor).then((v) => v as TimewebMeetingPage<TimewebMeeting>);
   Future<TimewebMeeting> readMeeting(String meetingId) => _meetingRead(this, const {}, meetingId, null).then((v) => v as TimewebMeeting);
@@ -181,14 +281,14 @@ extension TimewebMeetingsClient on TimewebAuthClient {
   }
 }
 
-Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, String? id, TimewebMeetingCursor? cursor) {
+Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, {bool messages = false}) {
   try {
     owner._checkEnabled(_peopleOperation);
     if (!owner.configuration.currentReadsEnabled || !owner.configuration.runtimeWritesEnabled) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.disabled);
     final session = owner._session;
     if (session == null || owner._secureStoreUnsafe) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.notAuthenticated);
     if (id != null && !_meetingIdentifier(id)) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.invalidRequest);
-    final scope = 'meetings:$id:${jsonEncode(query)}';
+    final scope = '${messages ? 'meeting-messages' : 'meetings'}:$id:${jsonEncode(query)}';
     if (cursor != null) {
       if (!identical(cursor._owner, owner) || cursor._scope != scope) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.invalidRequest);
       cursor.requireCurrent();
@@ -199,15 +299,15 @@ Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, 
     if (owner._peopleFlights.length >= 4) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.unavailable);
     final flight = _PeopleFlight(owner, null, null, null, owner._epoch, session.uid, key);
     owner._peopleFlights[key] = flight;
-    unawaited(_executeMeetingRead(flight, query, id, cursor, scope));
+    unawaited(_executeMeetingRead(flight, query, id, cursor, scope, messages));
     return flight.result.future;
   } catch (error) { return Future.error(error); }
 }
 
-Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, String scope) async {
+Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, String scope, bool messages) async {
   final owner = f.owner;
   final uri = owner.configuration.endpoint.replace(pathSegments: ['v1', 'runtime', 'meetings',
-    if (id != null) id, if (id != null && query.isNotEmpty) 'participants'],
+    if (id != null) id, if (id != null && query.isNotEmpty) messages ? 'messages' : 'participants'],
     queryParameters: query.isEmpty ? null : {...query, if (cursor != null) 'cursor': cursor._value});
   try {
     f.check(); var session = owner._session!;
@@ -222,8 +322,9 @@ Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, Str
       if (reply.status == 404 && id != null) throw const TimewebMeetingNotFound();
       throw owner._statusError(_peopleOperation, reply.status);
     }
-    final catalog = await _pinnedGeographyCatalog(); f.check();
-    final value = _decodeMeetingRead(f, reply.body!, query, id, cursor, scope, catalog); f.check();
+    final catalog = messages ? const <String, dynamic>{} : await _pinnedGeographyCatalog(); f.check();
+    final value = messages ? _decodeMeetingMessages(f, reply.body!, query, id!, cursor, scope)
+      : _decodeMeetingRead(f, reply.body!, query, id, cursor, scope, catalog); f.check();
     if (!f.result.isCompleted) f.result.complete(value);
   } catch (error) {
     if (!f.result.isCompleted) {

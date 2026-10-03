@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/list_of_users/timeweb_people_page.dart';
 import 'package:wbrs/presentation/screens/list_of_meets/meetings.dart';
+import 'package:wbrs/presentation/screens/list_of_meets/timeweb_meeting_chat_page.dart';
 import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
@@ -180,6 +181,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
   TimewebMeetingJoinFlow? _joinFlow;
   bool _joining = false, _joinUnavailable = false;
   String? _joinNotice;
+  String? _chatNotice;
   bool _loading = false, _error = false, _invalidated = false;
   int _generation = 0;
 
@@ -227,6 +229,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
+    _chatNotice = null;
     _page = null;
     _participants = null;
     _meeting = null;
@@ -357,6 +360,28 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     }
   }
 
+  Future<void> _openConversation() async {
+    final meeting = _meeting;
+    if (!_current || _loading || _joining || meeting == null) return;
+    setState(() { _loading = true; _chatNotice = null; });
+    var participantsRequested = false;
+    try {
+      final flow = await _runtime.openMeetingConversation(meeting.meetingId);
+      if (!mounted || !_current || !identical(_meeting, meeting)) { flow.close(); return; }
+      try {
+        final roster = _participants ?? await _runtime.readMeetingParticipants(meeting.meetingId);
+        if (!mounted || !_current || !identical(_meeting, meeting)) { flow.close(); return; }
+        roster.requireCurrent(); flow.requireCurrent();
+        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => TimewebMeetingChatPageView(
+          runtime: _runtime, meeting: meeting, flow: flow, participants: roster.items,
+          onParticipants: () => participantsRequested = true)));
+      } finally { flow.close(); }
+    } catch (_) {
+      if (_current) setState(() => _chatNotice = 'Обсуждение пока недоступно.');
+    } finally { if (_current) setState(() => _loading = false); }
+    if (_current && participantsRequested) await _load(roster: true);
+  }
+
   Future<void> _selectScope() async {
     if (!_current || _loading) return;
     final overlay = _fieldsNavigator.currentState?.overlay;
@@ -384,6 +409,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
+    _chatNotice = null;
     _page = null;
     _meeting = null;
     _participants = null;
@@ -510,6 +536,12 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         if (_joinNotice != null) _left(ClrsPanel(child: Text(context.tr(_joinNotice!)))),
         if (_joinUnavailable) _left(Text(context.tr('Присоединение пока недоступно.'))),
         if (_joining) const Center(child: CircularProgressIndicator()),
+        _left(TextButton(
+          key: const ValueKey('native-meeting-discussion'),
+          onPressed: _loading || _joining ? null : _openConversation,
+          child: Text(context.tr('Обсуждение встречи')),
+        )),
+        if (_chatNotice != null) _left(Text(context.tr(_chatNotice!))),
         TextButton(
           key: const ValueKey('native-meeting-participants'),
           onPressed: _loading || _joining ? null : () => _load(roster: true),
