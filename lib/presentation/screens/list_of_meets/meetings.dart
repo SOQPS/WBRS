@@ -653,7 +653,8 @@ class _MeetingMotto extends StatelessWidget {
 }
 
 class MeetingGuidePage extends StatelessWidget {
-  const MeetingGuidePage({super.key});
+  const MeetingGuidePage({super.key, this.showLegacyNavigation = true});
+  final bool showLegacyNavigation;
   static const _steps = [
     'Хотите пригласить кого-то? Укажите, куда идёте и что планируете.',
     'Собираете компанию? Кратко опишите идею и кого ждёте.',
@@ -685,6 +686,7 @@ class MeetingGuidePage extends StatelessWidget {
   ];
   void _showDetail(BuildContext context, int index) => showDialog<void>(
     context: context,
+    useRootNavigator: showLegacyNavigation,
     builder: (dialogContext) => AlertDialog(
       title: Text(context.tr(_stepTitles[index])),
       content: SingleChildScrollView(
@@ -734,7 +736,7 @@ class MeetingGuidePage extends StatelessWidget {
         ],
       ),
     ),
-    bottomNavigationBar: const MyBottomNavigationBar(),
+    bottomNavigationBar: showLegacyNavigation ? const MyBottomNavigationBar() : null,
     body: SafeArea(
       top: false,
       child: LayoutBuilder(

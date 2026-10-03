@@ -11,6 +11,8 @@ enum TimewebMutationKind {
   completeTest,
   editGeography,
   openPersonalChat,
+  createMeeting,
+  joinMeeting,
 }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
@@ -30,6 +32,8 @@ enum TimewebMutationFailure {
   testAlreadyCompleted,
   profileIncomplete,
   profileNotReady,
+  meetingUnavailable,
+  meetingNotFound,
 }
 
 /// Only the reviewed editable fields. Original strings are preserved for the
@@ -241,6 +245,18 @@ final class TimewebMutationRequest {
       ['v1', 'runtime', 'personal-chats'],
     );
   }
+  factory TimewebMutationRequest.createMeeting({
+    required String operationId,
+    required TimewebMeetingCreateRequest request,
+  }) => TimewebMutationRequest._(
+    TimewebMutationKind.createMeeting, operationId, request.fields,
+    ['v1', 'runtime', 'meetings'],
+  );
+  factory TimewebMutationRequest.joinMeeting({required String operationId, required String meetingId}) {
+    TimewebMeetingJoinRequest(meetingId: meetingId);
+    return TimewebMutationRequest._(TimewebMutationKind.joinMeeting, operationId,
+      Map.unmodifiable({'meetingId': meetingId}), ['v1', 'runtime', 'meetings', 'join']);
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
@@ -254,6 +270,8 @@ final class TimewebMutationRequest {
     TimewebMutationKind.completeTest => 'profile.complete-test.v1',
     TimewebMutationKind.editGeography => 'profile.edit-geography.v1',
     TimewebMutationKind.openPersonalChat => 'chat.open-personal.v1',
+    TimewebMutationKind.createMeeting => 'meeting.create.v1',
+    TimewebMutationKind.joinMeeting => 'meeting.join.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -324,6 +342,8 @@ final class TimewebMutationResult {
     TimewebCompletedTemperamentReceipt? temperament,
     TimewebGeographyReceipt? geography,
     TimewebOpenedPersonalChatReceipt? personalChat,
+    TimewebMeetingCreateReceipt? meeting,
+    TimewebMeetingJoinReceipt? joinedMeeting,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -337,6 +357,8 @@ final class TimewebMutationResult {
        _temperament = temperament,
        _geography = geography,
        _personalChat = personalChat,
+       _meeting = meeting,
+       _joinedMeeting = joinedMeeting,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -353,6 +375,8 @@ final class TimewebMutationResult {
   final TimewebCompletedTemperamentReceipt? _temperament;
   final TimewebGeographyReceipt? _geography;
   final TimewebOpenedPersonalChatReceipt? _personalChat;
+  final TimewebMeetingCreateReceipt? _meeting;
+  final TimewebMeetingJoinReceipt? _joinedMeeting;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -437,6 +461,16 @@ final class TimewebMutationResult {
   TimewebOpenedPersonalChatReceipt? get openedPersonalChat {
     requireCurrent();
     return _personalChat;
+  }
+
+  TimewebMeetingCreateReceipt? get createdMeeting {
+    requireCurrent();
+    return _meeting;
+  }
+
+  TimewebMeetingJoinReceipt? get joinedMeeting {
+    requireCurrent();
+    return _joinedMeeting;
   }
 
   @override
@@ -762,7 +796,8 @@ TimewebMutationResult _retainMutationOutcome(
   // transport failure cannot fall back to an earlier route's cached receipt.
   if (confirmed?._acknowledgeable == true &&
       !result._receiptConfirmed &&
-      reference._request.kind != TimewebMutationKind.openPersonalChat) {
+      !const {TimewebMutationKind.openPersonalChat,
+        TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(reference._request.kind)) {
     return confirmed!;
   }
   reference._settledResult = result;
@@ -1156,6 +1191,11 @@ TimewebMutationResult _decodeMutationReply(
 }) {
   ref.requireCurrent();
   if (reply.status == 401) {
+    if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(ref._request.kind)) {
+      return TimewebMutationResult._(ref, TimewebMutationState.unknown, 401,
+        failure: TimewebMutationFailure.unauthorized,
+        unknownReason: TimewebAuthError.unauthorized);
+    }
     if (lookup) {
       throw const TimewebAuthException(
         _mutationOperation,
@@ -1198,6 +1238,22 @@ TimewebMutationResult _decodeMutationReply(
         failure: TimewebMutationFailure.personUnavailable,
         unknownReason: TimewebAuthError.unavailable,
       );
+    }
+    if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting}.contains(ref._request.kind)) {
+      // Every short refusal lacks the original operation/hash receipt. Only a
+      // matching committed envelope below can retire this durable create intent.
+      final failure = switch ((reply.status, body['error'])) {
+        (400, 'invalid_request') => TimewebMutationFailure.invalidRequest,
+        (404, 'not_found') => TimewebMutationFailure.notFound,
+        (404, 'meeting_unavailable') when lookup => TimewebMutationFailure.meetingUnavailable,
+        (404, 'meeting_not_found') when ref._request.kind == TimewebMutationKind.joinMeeting => TimewebMutationFailure.meetingNotFound,
+        (409, 'operation_conflict') => TimewebMutationFailure.conflict,
+        (429, 'rate_limited') => TimewebMutationFailure.rateLimited,
+        _ => null,
+      };
+      return TimewebMutationResult._(ref, TimewebMutationState.unknown, reply.status,
+        failure: failure, unknownReason: failure == null
+          ? TimewebAuthError.invalidResponse : TimewebAuthError.unavailable);
     }
     final failure = switch ((reply.status, body['error'])) {
       (400, 'invalid_request') => TimewebMutationFailure.invalidRequest,
@@ -1259,6 +1315,30 @@ TimewebMutationResult _decodeMutationReply(
   final replayed = body['replayed'] as bool;
   final revision = body['entityRevision'] as int?;
   if (const [404, 409].contains(reply.status)) {
+    if (ref._request.kind == TimewebMutationKind.joinMeeting) {
+      final failure = switch ((reply.status, result['error'])) {
+        (404, 'meeting_not_found') => TimewebMutationFailure.meetingNotFound,
+        (404, 'profile_not_found') => TimewebMutationFailure.notFound,
+        (409, 'meeting_unavailable') => TimewebMutationFailure.meetingUnavailable,
+        (409, 'profile_not_ready') => TimewebMutationFailure.profileNotReady,
+        _ => null,
+      };
+      if (!_mutationExact(result, {'error'}) || revision != null || failure == null) _mutationInvalidReply();
+      return TimewebMutationResult._(ref, TimewebMutationState.declaredFailure, reply.status,
+        failure: failure, replayed: replayed, receiptConfirmed: true);
+    }
+    if (ref._request.kind == TimewebMutationKind.createMeeting) {
+      final failure = switch ((reply.status, result['error'])) {
+        (404, 'profile_not_found') => TimewebMutationFailure.notFound,
+        (409, 'profile_not_ready') => TimewebMutationFailure.profileNotReady,
+        (404, 'person_unavailable') when ref._request._payload['type'] == 'индивидуальная'
+          => TimewebMutationFailure.personUnavailable,
+        _ => null,
+      };
+      if (!_mutationExact(result, {'error'}) || revision != null || failure == null) _mutationInvalidReply();
+      return TimewebMutationResult._(ref, TimewebMutationState.declaredFailure, reply.status,
+        failure: failure, replayed: replayed, receiptConfirmed: true);
+    }
     final profileChanged = const {
       'profile_changed',
       'test_already_completed',
@@ -1332,6 +1412,12 @@ TimewebMutationResult _decodeMutationReply(
   final frozen = _immutableJson(result) as Map<String, dynamic>;
   final request = ref._request;
   final check = ref.requireCurrent;
+  if (request.kind == TimewebMutationKind.joinMeeting) {
+    return _decodeJoinedMeeting(ref, reply.status, frozen, revision, replayed);
+  }
+  if (request.kind == TimewebMutationKind.createMeeting) {
+    return _decodeCreatedMeeting(ref, reply.status, frozen, revision, replayed);
+  }
   if (request.kind == TimewebMutationKind.openPersonalChat) {
     return _decodeOpenedPersonalChat(
       ref,

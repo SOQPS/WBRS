@@ -12,6 +12,8 @@ import 'timeweb_chat_flow.dart';
 import 'timeweb_temperament_flow.dart';
 import 'timeweb_geography_flow.dart';
 import 'timeweb_personal_chat_flow.dart';
+import 'timeweb_meeting_create_flow.dart';
+import 'timeweb_meeting_join_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -30,6 +32,8 @@ final class TimewebAppRuntime {
     TimewebGeographyJournal? geographyJournal,
     TimewebChatJournal? chatJournal,
     TimewebPersonalChatJournal? personalChatJournal,
+    TimewebMeetingCreateJournal? meetingCreateJournal,
+    TimewebMeetingJoinJournal? meetingJoinJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
     this.currentOwnProfileEnabled = false,
@@ -47,6 +51,8 @@ final class TimewebAppRuntime {
     _profileEditJournal = profileEditJournal ?? TimewebProfileEditJournal();
     _chatJournal = chatJournal ?? TimewebChatJournal();
     _personalChatJournal = personalChatJournal ?? TimewebPersonalChatJournal();
+    _meetingCreateJournal = meetingCreateJournal ?? TimewebMeetingCreateJournal();
+    _meetingJoinJournal = meetingJoinJournal ?? TimewebMeetingJoinJournal();
     _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
     _geographyJournal = geographyJournal ?? TimewebGeographyJournal();
     _profileEditorEnabled =
@@ -72,6 +78,8 @@ final class TimewebAppRuntime {
   late final TimewebProfileEditJournal _profileEditJournal;
   late final TimewebChatJournal _chatJournal;
   late final TimewebPersonalChatJournal _personalChatJournal;
+  late final TimewebMeetingCreateJournal _meetingCreateJournal;
+  late final TimewebMeetingJoinJournal _meetingJoinJournal;
   late final TimewebTemperamentJournal _temperamentJournal;
   late final TimewebGeographyJournal _geographyJournal;
   late final bool _profileEditorEnabled;
@@ -168,6 +176,66 @@ final class TimewebAppRuntime {
       .timeout(session.waitTimeout);
 
   bool get peopleEnabled => ownProfileEnabled;
+
+  bool get meetingsEnabled => ownProfileEnabled;
+  bool get meetingCreationEnabled => meetingsEnabled;
+
+  Future<TimewebMeetingCreateFlow> openMeetingCreation() => session
+      .runAuthenticated((lease) {
+        if (!meetingCreationEnabled) throw StateError('Current meeting creation is unavailable.');
+        return TimewebMeetingCreateFlow.open(
+          client: client,
+          session: session,
+          lease: lease,
+          journal: _meetingCreateJournal,
+        );
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingJoinFlow> openMeetingJoin(String meetingId) => session
+      .runAuthenticated((lease) {
+        if (!meetingsEnabled) throw StateError('Current meeting join is unavailable.');
+        return TimewebMeetingJoinFlow.open(client: client, session: session,
+          lease: lease, journal: _meetingJoinJournal, meetingId: meetingId);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingPage<TimewebMeeting>> readMeetings(
+    TimewebMeetingFilters filters, {
+    TimewebMeetingCursor? cursor,
+  }) => session
+      .runAuthenticated((lease) async {
+        if (!meetingsEnabled) throw StateError('Current meetings are unavailable.');
+        final page = await client.readMeetings(filters, cursor: cursor);
+        lease.requireCurrent();
+        page.requireCurrent();
+        return page.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeeting> readMeeting(String meetingId) => session
+      .runAuthenticated((lease) async {
+        if (!meetingsEnabled) throw StateError('Current meeting is unavailable.');
+        final meeting = await client.readMeeting(meetingId);
+        lease.requireCurrent();
+        meeting.requireCurrent();
+        return meeting.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingPage<TimewebMeetingParticipant>> readMeetingParticipants(
+    String meetingId, {
+    int limit = 30,
+    TimewebMeetingCursor? cursor,
+  }) => session
+      .runAuthenticated((lease) async {
+        if (!meetingsEnabled) throw StateError('Current meeting participants are unavailable.');
+        final page = await client.readMeetingParticipants(meetingId, limit: limit, cursor: cursor);
+        lease.requireCurrent();
+        page.requireCurrent();
+        return page.bindSessionGuard(lease.requireCurrent);
+      })
+      .timeout(session.waitTimeout);
 
   bool get profilePhotosEnabled => ownProfileEnabled;
 
@@ -403,6 +471,8 @@ final class TimewebAppRuntime {
     await _temperamentJournal.drain();
     await _geographyJournal.drain();
     await _personalChatJournal.drain();
+    await _meetingCreateJournal.drain();
+    await _meetingJoinJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }
 

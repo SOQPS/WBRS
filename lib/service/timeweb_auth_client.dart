@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 part 'timeweb_own_profile.dart';
 part 'timeweb_private_media.dart';
 part 'timeweb_mutations.dart';
+part 'timeweb_meetings.dart';
 part 'timeweb_current_reads.dart';
 part 'timeweb_profile_editor.dart';
 part 'timeweb_current_own_profile.dart';

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/chat_screen/timeweb_chats_page.dart';
+import 'package:wbrs/presentation/screens/list_of_meets/timeweb_meetings_page.dart';
 import 'package:wbrs/presentation/screens/profile/timeweb_own_profile_page.dart';
 import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
@@ -24,9 +25,11 @@ class TimewebPeoplePageView extends StatefulWidget {
     super.key,
     required this.runtime,
     this.initialOwnProfile,
+    this.onSelected,
   });
   final TimewebAppRuntime runtime;
   final TimewebCurrentOwnProfile? initialOwnProfile;
+  final ValueChanged<TimewebPublicPerson>? onSelected;
   @override
   State<TimewebPeoplePageView> createState() => _TimewebPeoplePageViewState();
 }
@@ -180,6 +183,10 @@ class _TimewebPeoplePageViewState extends State<TimewebPeoplePageView> {
       return;
     }
     person.requireCurrent();
+    if (widget.onSelected != null) {
+      if (person.uid != widget.runtime.session.state.identity?.uid) widget.onSelected!(person);
+      return;
+    }
     final uid = person.uid;
     setState(() => _opening = true);
     try {
@@ -319,7 +326,7 @@ class _TimewebPeoplePageViewState extends State<TimewebPeoplePageView> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    context.tr('Люди'),
+                    context.tr(widget.onSelected == null ? 'Люди' : 'Выберите получателя'),
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.w700,
@@ -332,19 +339,25 @@ class _TimewebPeoplePageViewState extends State<TimewebPeoplePageView> {
                   Wrap(
                     spacing: 8,
                     children: [
-                      ElevatedButton.icon(
+                      if (widget.onSelected == null) ElevatedButton.icon(
                         key: const ValueKey('timeweb-people-own-profile'),
                         onPressed: _busy ? null : _openOwnProfile,
                         icon: const Icon(Icons.person_outline),
                         label: Text(context.tr('Профиль')),
                       ),
-                      if (widget.runtime.chatsEnabled)
+                      if (widget.onSelected == null && widget.runtime.chatsEnabled)
                         ElevatedButton.icon(
                           key: const ValueKey('timeweb-people-chats'),
                           onPressed: _busy ? null : _openChats,
                           icon: const Icon(Icons.chat_bubble_outline),
                           label: Text(context.tr('Чаты')),
                         ),
+                      if (widget.onSelected == null && widget.runtime.meetingsEnabled)
+                        ElevatedButton.icon(key: const ValueKey('timeweb-people-meetings'),
+                          onPressed: _busy ? null : () => Navigator.of(context).push<void>(
+                            MaterialPageRoute(settings: const RouteSettings(name: timewebMeetingsRoute),
+                              builder: (_) => TimewebMeetingsPageView(runtime: widget.runtime))),
+                          icon: const Icon(Icons.groups_outlined), label: Text(context.tr('Встречи'))),
                       TextButton.icon(
                         key: const ValueKey('timeweb-people-filters'),
                         onPressed: _busy
