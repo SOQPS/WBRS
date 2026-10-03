@@ -129,9 +129,16 @@ Synthetic writer injection is test evidence, not production S3 acceptance.
 describes conditional `If-None-Match:*` and checksums. Root's review of the
 [Timeweb S3 guide](https://timeweb.cloud/docs/s3-storage/manage-storage/s3-guide)
 did not explicitly establish that both work on the chosen provider endpoint.
-Support and lack of support are both unproved; production stays closed until
-controlled authenticated endpoint/bucket-bound conditional/checksum/privacy
-evidence exists. A separately frozen bounded real raster-decoder port is now
+The first controlled Timeweb pilot actually observed PUT200, duplicate PUT412,
+and incorrect-checksum PUT200. Its v1 producer refused and issued no proof;
+the intent and both synthetic objects were retained without automatic replay.
+The separately signed v2 contract records `checksum_validation:false` with
+`checksum_not_enforced`, original and incorrect-header object byte readback
+hashes, and an explicit different sent checksum. V1 retains its strict previous
+shape/domain and BadDigest requirement. Neither version replaces the complete
+server size/SHA/MIME/raster and private pre/post checks before READY. Production
+stays closed until genuine endpoint/bucket-bound provider and final source/config
+release evidence exists. A separately frozen bounded real raster-decoder port is now
 available and exercised in the integrated synthetic scenario below. No ObjectLock,
 versioning, ACL/public bucket or broad credential workaround is included.
 

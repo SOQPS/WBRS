@@ -28,6 +28,7 @@ PREFIX = "clrs-native-profile/"
 MAX_BYTES = 5 * 1024 * 1024
 MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
 PROOF_DOMAIN = b"clrs-native-upload-provider-proof-v1\0"
+PROOF_V2_DOMAIN = b"clrs-native-upload-provider-proof-v2\0"
 RELEASE_DOMAIN = b"clrs-native-upload-release-v1\0"
 
 
@@ -71,9 +72,12 @@ class _Verified:
 class NativePhotoUploadS3:
     """Writer-only credentials. Proof loader returns (authenticated JSON bytes, HMAC hex).
 
-    The proof uses PROOF_DOMAIN + raw bytes and a separate >=32-byte operator key.
+    The proof uses its versioned PROOF_DOMAIN/PROOF_V2_DOMAIN + raw bytes and a
+    separate >=32-byte operator key.
     It binds this endpoint/bucket/region/owner/writer to observed conditional PUT,
-    bad-checksum rejection, original readback and owner-only ACL/private policy.
+    original readback and owner-only ACL/private policy. V1 proves bad-checksum
+    rejection; separately signed v2 records whether the provider enforces it.
+    Provider checksum validation never replaces full server byte/raster checks.
     Absence/expiry/alteration denies both operations before any HTTPS call.
     Ready additionally needs a trusted full-raster decoder port: decode_verified
     (private <=5MiB seekable spool, record, deadline/cancel) + require_verified.
@@ -121,22 +125,41 @@ class NativePhotoUploadS3:
             else:
                 raw, mac = loaded
             if (type(raw) is not bytes or not 1 <= len(raw) <= 4096 or not isinstance(mac, str)
-                    or not re.fullmatch(r"[a-f0-9]{64}", mac)
-                    or not hmac.compare_digest(hmac.digest(self._proof_key, PROOF_DOMAIN + raw, "sha256").hex(), mac)):
+                    or not re.fullmatch(r"[a-f0-9]{64}", mac)):
                 raise PrivateMediaUnavailable()
             value = json.loads(raw, object_pairs_hook=_json_pairs)
+            version = value.get("version") if type(value) is dict else None
+            if type(version) is not int or version not in (1, 2): raise PrivateMediaUnavailable()
+            domain = PROOF_DOMAIN if version == 1 else PROOF_V2_DOMAIN
+            if not hmac.compare_digest(hmac.digest(self._proof_key, domain + raw, "sha256").hex(), mac):
+                raise PrivateMediaUnavailable()
             names = {"version", "endpoint", "bucket", "region", "owner", "writer_sha256", "checked_at", "probe_key",
                 "original_sha256", "readback_sha256", "put_status", "duplicate_status", "duplicate_error",
                 "checksum_status", "checksum_error", "object_acl", "bucket_acl", "bucket_type", "bucket_policy"}
-            if (not isinstance(value, dict) or set(value) != names or value["version"] != 1
-                    or type(value["version"]) is not int or value["endpoint"] != ENDPOINT
+            if version == 2: names |= {"checksum_validation", "checksum_observation",
+                "checksum_body_sha256", "checksum_sent_sha256", "checksum_readback_sha256"}
+            if set(value) != names: raise PrivateMediaUnavailable()
+            checksum = value["checksum_status"] == 400 and value["checksum_error"] == "BadDigest"
+            if version == 2:
+                capability = value["checksum_validation"]
+                checksum = (type(capability) is bool and type(value["checksum_status"]) is int and
+                    value["checksum_body_sha256"] == value["original_sha256"] and
+                    isinstance(value["checksum_sent_sha256"], str) and
+                    re.fullmatch(r"[a-f0-9]{64}", value["checksum_sent_sha256"]) is not None and
+                    value["checksum_sent_sha256"] != value["checksum_body_sha256"] and
+                    ((capability and checksum and value["checksum_readback_sha256"] is None
+                      and value["checksum_observation"] == "bad_digest_rejected") or
+                     (not capability and value["checksum_status"] == 200 and value["checksum_error"] is None
+                      and value["checksum_readback_sha256"] == value["checksum_body_sha256"]
+                      and value["checksum_observation"] == "checksum_not_enforced")))
+            if (value["endpoint"] != ENDPOINT
                     or value["bucket"] != self._private._bucket or value["region"] != self._transport._region
                     or value["owner"] != self._private._owner or value["writer_sha256"] != self._writer_hash
                     or not isinstance(value["probe_key"], str) or not re.fullmatch(PREFIX + r"[a-f0-9]{64}", value["probe_key"])
                     or not isinstance(value["original_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["original_sha256"])
                     or value["original_sha256"] != value["readback_sha256"] or value["put_status"] != 200
                     or value["duplicate_status"] != 412 or value["duplicate_error"] != "PreconditionFailed"
-                    or value["checksum_status"] != 400 or value["checksum_error"] != "BadDigest"
+                    or not checksum
                     or value["bucket_type"] != "private"
                     or value["bucket_policy"] not in (None, {"Version": "2012-10-17", "Statement": []})):
                 raise PrivateMediaUnavailable()

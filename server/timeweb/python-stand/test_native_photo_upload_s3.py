@@ -47,6 +47,16 @@ def signed_proof(**changes):
     return raw, hmac.digest(PROOF_KEY, upload.PROOF_DOMAIN + raw, "sha256").hex()
 
 
+def signed_proof_v2(**changes):
+    value = json.loads(signed_proof()[0])
+    value.update(version=2, checksum_validation=False, checksum_observation="checksum_not_enforced",
+        checksum_status=200, checksum_error=None, checksum_body_sha256=value["original_sha256"],
+        checksum_sent_sha256="0" * 64, checksum_readback_sha256=value["original_sha256"])
+    value.update(changes)
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return raw, hmac.digest(PROOF_KEY, upload.PROOF_V2_DOMAIN + raw, "sha256").hex()
+
+
 class Response:
     def __init__(self, body, *, status=200, mime="application/xml", headers=None):
         self.status = status; self.body = io.BytesIO(body); self.closed = False; self.amounts = []
@@ -177,6 +187,47 @@ class NativeUploadPortTests(unittest.TestCase):
         self.assertTrue(all(conn.closed for conn in self.stub.connections))
         self.assertTrue(all(reply.closed for reply in self.stub.replies))
         self.assertTrue(all(spool.closed for spool, *_ in self.image.calls))
+
+    def test_v2_observed_checksum_capability_never_replaces_actual_byte_verification(self):
+        for changes in ({}, {"checksum_validation": True, "checksum_observation": "bad_digest_rejected",
+                "checksum_status": 400, "checksum_error": "BadDigest", "checksum_readback_sha256": None}):
+            with self.subTest(capability=changes.get("checksum_validation", False)):
+                self.proof = signed_proof_v2(**changes)
+                lease = self.port.prepare_put(record(), deadline=105, cancel=self.cancel)
+                self.assertTrue(verify_signature(lease))
+                self.assertEqual(lease["headers"]["If-None-Match"], "*")
+                self.assertEqual(base64.b64decode(lease["headers"]["x-amz-checksum-sha256"]), hashlib.sha256(BODY).digest())
+                evidence = self.port.verify_ready(record(), deadline=160, cancel=self.cancel)
+                self.port.require_verified(evidence, record())
+                with self.assertRaises(PrivateMediaUnavailable):
+                    self.port.require_verified(object(), record())
+                self.stub.body = b"x" * len(BODY)  # Same MIME/size, different actual bytes.
+                with self.assertRaises(PhotoUploadVerificationFailed):
+                    self.port.verify_ready(record(), deadline=160, cancel=self.cancel)
+                self.stub.body = BODY
+        calls = len(self.stub.calls)
+        bad_pairs = ({"checksum_status": 400, "checksum_error": "BadDigest"},
+            {"checksum_error": "BadDigest"}, {"checksum_validation": True},
+            {"checksum_validation": 0}, {"checksum_observation": "unknown"},
+            {"checksum_body_sha256": "1" * 64}, {"checksum_sent_sha256": hashlib.sha256(b"synthetic-probe").hexdigest()},
+            {"checksum_readback_sha256": None}, {"checksum_readback_sha256": "f" * 64},
+            {"checksum_validation": True, "checksum_observation": "bad_digest_rejected",
+                "checksum_status": 400, "checksum_error": "BadDigest"})
+        for changes in bad_pairs:
+            self.proof = signed_proof_v2(**changes)
+            with self.subTest(changes=changes), self.assertRaises(PrivateMediaUnavailable): self.port._proof()
+        raw, mac = signed_proof_v2()
+        for bad in ((raw, "0" * 64),
+                (raw, hmac.digest(PROOF_KEY, upload.PROOF_DOMAIN + raw, "sha256").hex())):
+            self.proof = bad
+            with self.assertRaises(PrivateMediaUnavailable): self.port._proof()
+        self.proof = signed_proof_v2(); self.wall += dt.timedelta(seconds=300)
+        with self.assertRaises(PrivateMediaUnavailable): self.port._proof()
+        self.wall = WALL; self.proof = signed_proof()  # Existing exact v1 shape/domain remains supported.
+        self.port._proof()
+        self.proof = signed_proof(checksum_status=200, checksum_error=None)
+        with self.assertRaises(PrivateMediaUnavailable): self.port._proof()
+        self.assertEqual(len(self.stub.calls), calls)
 
     def test_closed_missing_tampered_expired_foreign_or_false_provider_proof(self):
         for port in (self.make_port(provider_proof=None), self.make_port(provider_proof=True), self.make_port(proof_key=None)):
