@@ -17,6 +17,8 @@ import 'timeweb_meeting_join_flow.dart';
 import 'timeweb_meeting_chat_flow.dart';
 import 'timeweb_meeting_membership_flow.dart';
 import 'timeweb_meeting_archive_flow.dart';
+import 'timeweb_photo_upload_flow.dart';
+import 'timeweb_initial_profile_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -39,6 +41,8 @@ final class TimewebAppRuntime {
     TimewebMeetingJoinJournal? meetingJoinJournal,
     TimewebMeetingChatJournal? meetingChatJournal,
     TimewebMeetingMembershipJournal? meetingMembershipJournal,
+    TimewebPhotoUploadJournal? photoUploadJournal,
+    TimewebInitialProfileJournal? initialProfileJournal,
     bool? profileEditorEnabled,
     this.currentChatsEnabled = false,
     this.currentOwnProfileEnabled = false,
@@ -60,6 +64,8 @@ final class TimewebAppRuntime {
     _meetingJoinJournal = meetingJoinJournal ?? TimewebMeetingJoinJournal();
     _meetingChatJournal = meetingChatJournal ?? TimewebMeetingChatJournal();
     _meetingMembershipJournal = meetingMembershipJournal ?? TimewebMeetingMembershipJournal();
+    _photoUploadJournal = photoUploadJournal ?? TimewebPhotoUploadJournal();
+    _initialProfileJournal = initialProfileJournal ?? TimewebInitialProfileJournal();
     _temperamentJournal = temperamentJournal ?? TimewebTemperamentJournal();
     _geographyJournal = geographyJournal ?? TimewebGeographyJournal();
     _profileEditorEnabled =
@@ -89,6 +95,8 @@ final class TimewebAppRuntime {
   late final TimewebMeetingJoinJournal _meetingJoinJournal;
   late final TimewebMeetingChatJournal _meetingChatJournal;
   late final TimewebMeetingMembershipJournal _meetingMembershipJournal;
+  late final TimewebPhotoUploadJournal _photoUploadJournal;
+  late final TimewebInitialProfileJournal _initialProfileJournal;
   late final TimewebTemperamentJournal _temperamentJournal;
   late final TimewebGeographyJournal _geographyJournal;
   late final bool _profileEditorEnabled;
@@ -285,6 +293,16 @@ final class TimewebAppRuntime {
         return page.bindSessionGuard(lease.requireCurrent);
       })
       .timeout(session.waitTimeout);
+
+  Future<TimewebInitialProfileFlow> openInitialProfile() => session.runAuthenticated((lease) {
+    if(!ownProfileEnabled){throw StateError('Initial profile is unavailable.');}
+    return TimewebInitialProfileFlow.open(client:client,session:session,lease:lease,journal:_initialProfileJournal);
+  }).timeout(session.waitTimeout);
+
+  Future<TimewebPhotoUploadFlow> openPhotoUpload({Future<void> Function(TimewebCommittedPhotoReceipt)? onReady}) => session.runAuthenticated((lease) {
+    if (!ownProfileEnabled) { throw StateError('Current photo upload is unavailable.'); }
+    return TimewebPhotoUploadFlow.open(client: client,session: session,lease: lease,journal: _photoUploadJournal,onReady:onReady);
+  }).timeout(session.waitTimeout);
 
   bool get profilePhotosEnabled => ownProfileEnabled;
 
@@ -523,6 +541,8 @@ final class TimewebAppRuntime {
     await _meetingCreateJournal.drain();
     await _meetingJoinJournal.drain();
     await _meetingChatJournal.drain();
+    await _photoUploadJournal.drain();
+    await _initialProfileJournal.drain();
     await _meetingMembershipJournal.drain();
     return result.confirmed && !_policyUnsafe;
   }

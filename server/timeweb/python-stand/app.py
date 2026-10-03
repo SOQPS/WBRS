@@ -23,6 +23,7 @@ from runtime_meetings import RuntimeMeetingsService, TRUSTED_POLICY
 from native_auth_lifecycle_http import NativeAuthLifecycleHttp
 from runtime_profile_photos_http import RuntimeProfilePhotoMediaReply, RuntimeProfilePhotosHttpReply
 from runtime_profile_photos_factory import create_profile_photos_http
+from native_profile_photo_factory import create_native_profile_photos_http
 
 
 def _reply(start_response, status, payload, *, head=False, authenticate=False, retry=False):
@@ -142,6 +143,7 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
             runtime_http = runtime_http_factory(env)
             if profile_photos_http is None:
                 profile_photos_http = profile_photos_http_factory(env)
+            profile_photos_http = create_native_profile_photos_http(env, profile_photos_http)
             if native_configured:
                 try:
                     native_service = native_service_factory(env)

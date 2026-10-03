@@ -16,6 +16,9 @@ enum TimewebMutationKind {
   sendMeetingText,
   leaveMeeting,
   kickMeetingParticipant,
+  prepareProfilePhoto,
+  commitProfilePhoto,
+  finishInitialProfile,
 }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
@@ -40,6 +43,13 @@ enum TimewebMutationFailure {
   participantNotFound,
   organizerRequired,
   cannotKickSelf,
+  photoLimitReached,
+  photoNotFound,
+  photoVerificationFailed,
+  photoUnavailable,
+  photoNotReady,
+  registrationAlreadySaved,
+  registrationAlreadyCompleted,
 }
 
 /// Only the reviewed editable fields. Original strings are preserved for the
@@ -132,7 +142,8 @@ final class TimewebMutationRequest {
     this._payload,
     this._segments, {
     TimewebGeographyChanges? geography,
-  }) : _geography = geography {
+    TimewebInitialProfileRequest? initialProfile,
+  }) : _geography = geography, _initialProfile = initialProfile {
     if (!RegExp(
       r'^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
     ).hasMatch(operationId)) {
@@ -278,11 +289,19 @@ final class TimewebMutationRequest {
     return TimewebMutationRequest._(TimewebMutationKind.kickMeetingParticipant, operationId,
       Map.unmodifiable({'meetingId': meetingId, 'targetUid': targetUid}), ['v1', 'runtime', 'meetings', 'kick']);
   }
+  factory TimewebMutationRequest.finishInitialProfile({required String operationId,required TimewebInitialProfileRequest request}) => TimewebMutationRequest._(TimewebMutationKind.finishInitialProfile,operationId,request.fields,['v1','runtime','me','registration'],initialProfile:request);
+  factory TimewebMutationRequest.prepareProfilePhoto({required String operationId, required TimewebPhotoMetadata metadata}) =>
+    TimewebMutationRequest._(TimewebMutationKind.prepareProfilePhoto,operationId,metadata.fields,['v1','runtime','profile','photos','prepare']);
+  factory TimewebMutationRequest.commitProfilePhoto({required String operationId,required String prepareOperationId,required String mediaId}) {
+    if(!_uploadUuid(prepareOperationId)||!_uploadMid(mediaId)) { throw ArgumentError('Invalid original photo.'); }
+    return TimewebMutationRequest._(TimewebMutationKind.commitProfilePhoto,operationId,Map.unmodifiable({'prepareOperationId':prepareOperationId,'mediaId':mediaId}),['v1','runtime','profile','photos','commit']);
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
   final List<String> _segments;
   final TimewebGeographyChanges? _geography;
+  final TimewebInitialProfileRequest? _initialProfile;
   late final String requestHash;
   String get operation => switch (kind) {
     TimewebMutationKind.sendMessage => 'chat.send-text.v1',
@@ -296,6 +315,9 @@ final class TimewebMutationRequest {
     TimewebMutationKind.sendMeetingText => 'meeting.send-text.v1',
     TimewebMutationKind.leaveMeeting => 'meeting.leave.v1',
     TimewebMutationKind.kickMeetingParticipant => 'meeting.kick.v1',
+    TimewebMutationKind.prepareProfilePhoto => 'profile.photo.prepare.v1',
+    TimewebMutationKind.commitProfilePhoto => 'profile.photo.commit.v1',
+    TimewebMutationKind.finishInitialProfile => 'profile.finish-registration.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -371,6 +393,9 @@ final class TimewebMutationResult {
     TimewebSentMeetingMessageReceipt? meetingMessage,
     TimewebMeetingLeaveReceipt? leftMeeting,
     TimewebMeetingKickReceipt? kickedParticipant,
+    TimewebInitialProfileReceipt? initialProfile,
+    TimewebPreparedPhotoReceipt? preparedPhoto,
+    TimewebCommittedPhotoReceipt? committedPhoto,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -389,6 +414,9 @@ final class TimewebMutationResult {
        _meetingMessage = meetingMessage,
        _leftMeeting = leftMeeting,
        _kickedParticipant = kickedParticipant,
+       _initialProfile = initialProfile,
+       _preparedPhoto = preparedPhoto,
+       _committedPhoto = committedPhoto,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -410,6 +438,9 @@ final class TimewebMutationResult {
   final TimewebSentMeetingMessageReceipt? _meetingMessage;
   final TimewebMeetingLeaveReceipt? _leftMeeting;
   final TimewebMeetingKickReceipt? _kickedParticipant;
+  final TimewebInitialProfileReceipt? _initialProfile;
+  final TimewebPreparedPhotoReceipt? _preparedPhoto;
+  final TimewebCommittedPhotoReceipt? _committedPhoto;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -513,6 +544,10 @@ final class TimewebMutationResult {
 
   TimewebMeetingLeaveReceipt? get leftMeeting { requireCurrent(); return _leftMeeting; }
   TimewebMeetingKickReceipt? get kickedParticipant { requireCurrent(); return _kickedParticipant; }
+
+  TimewebInitialProfileReceipt? get initialProfile { requireCurrent(); return _initialProfile; }
+  TimewebPreparedPhotoReceipt? get preparedPhoto { requireCurrent(); return _preparedPhoto; }
+  TimewebCommittedPhotoReceipt? get committedPhoto { requireCurrent(); return _committedPhoto; }
 
   @override
   String toString() => 'TimewebMutationResult(<redacted>)';
@@ -759,6 +794,7 @@ TimewebMutationReference _bindMutation(
       TimewebAuthError.staleSession,
     );
   }
+  request._initialProfile?.requireOwner(owner, expectedOwnerUid);
   final key = '${request.operation}\u0000${request.operationId}';
   final prior = owner._mutationReferences[key];
   if (prior != null) {
@@ -843,7 +879,7 @@ TimewebMutationResult _retainMutationOutcome(
       !const {TimewebMutationKind.openPersonalChat,
         TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting,
         TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
-        TimewebMutationKind.kickMeetingParticipant}.contains(reference._request.kind)) {
+        TimewebMutationKind.kickMeetingParticipant, TimewebMutationKind.prepareProfilePhoto, TimewebMutationKind.commitProfilePhoto, TimewebMutationKind.finishInitialProfile}.contains(reference._request.kind)) {
     return confirmed!;
   }
   reference._settledResult = result;
@@ -1238,7 +1274,7 @@ TimewebMutationResult _decodeMutationReply(
   ref.requireCurrent();
   if (reply.status == 401) {
     if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
-        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
+        TimewebMutationKind.kickMeetingParticipant, TimewebMutationKind.prepareProfilePhoto, TimewebMutationKind.commitProfilePhoto, TimewebMutationKind.finishInitialProfile}.contains(ref._request.kind)) {
       return TimewebMutationResult._(ref, TimewebMutationState.unknown, 401,
         failure: TimewebMutationFailure.unauthorized,
         unknownReason: TimewebAuthError.unauthorized);
@@ -1287,7 +1323,7 @@ TimewebMutationResult _decodeMutationReply(
       );
     }
     if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
-        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
+        TimewebMutationKind.kickMeetingParticipant, TimewebMutationKind.prepareProfilePhoto, TimewebMutationKind.commitProfilePhoto, TimewebMutationKind.finishInitialProfile}.contains(ref._request.kind)) {
       // Every short refusal lacks the original operation/hash receipt. Only a
       // matching committed envelope below can retire this durable create intent.
       final failure = switch ((reply.status, body['error'])) {
@@ -1295,7 +1331,7 @@ TimewebMutationResult _decodeMutationReply(
         (404, 'not_found') => TimewebMutationFailure.notFound,
         (404, 'meeting_unavailable') when lookup => TimewebMutationFailure.meetingUnavailable,
         (404, 'meeting_not_found') when const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
-        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind) => TimewebMutationFailure.meetingNotFound,
+        TimewebMutationKind.kickMeetingParticipant, TimewebMutationKind.prepareProfilePhoto, TimewebMutationKind.commitProfilePhoto, TimewebMutationKind.finishInitialProfile}.contains(ref._request.kind) => TimewebMutationFailure.meetingNotFound,
         (409, 'operation_conflict') => TimewebMutationFailure.conflict,
         (429, 'rate_limited') => TimewebMutationFailure.rateLimited,
         _ => null,
@@ -1364,8 +1400,35 @@ TimewebMutationResult _decodeMutationReply(
   final replayed = body['replayed'] as bool;
   final revision = body['entityRevision'] as int?;
   if (const [404, 409].contains(reply.status)) {
+    if(ref._request.kind==TimewebMutationKind.finishInitialProfile) {
+      final stamped=const {'profile_changed','registration_already_saved','registration_already_completed'}.contains(result['error']);
+      final failure=switch((reply.status,result['error'])) {
+        (404,'profile_not_found')=>TimewebMutationFailure.notFound,
+        (404,'photo_not_found')=>TimewebMutationFailure.photoNotFound,
+        (409,'photo_not_ready')=>TimewebMutationFailure.photoNotReady,
+        (409,'profile_changed')=>TimewebMutationFailure.profileChanged,
+        (409,'registration_already_saved')=>TimewebMutationFailure.registrationAlreadySaved,
+        (409,'registration_already_completed')=>TimewebMutationFailure.registrationAlreadyCompleted,
+        _=>null,
+      };
+      if(!_mutationExact(result,stamped?{'error','updatedAt'}:{'error'})||revision!=null||failure==null||stamped&&!_mutationStamp(result['updatedAt'])){_mutationInvalidReply();}
+      return TimewebMutationResult._(ref,TimewebMutationState.declaredFailure,reply.status,failure:failure,replayed:replayed,receiptConfirmed:true,updatedAt:stamped?result['updatedAt']:null);
+    }
+    if (_photoMutationKind(ref._request.kind)) {
+      final commit=ref._request.kind==TimewebMutationKind.commitProfilePhoto;
+      final failure=switch((reply.status,result['error'])) {
+        (404,'profile_not_found')=>TimewebMutationFailure.notFound,
+        (409,'photo_limit_reached')=>TimewebMutationFailure.photoLimitReached,
+        (404,'photo_not_found') when commit=>TimewebMutationFailure.photoNotFound,
+        (409,'photo_verification_failed') when commit=>TimewebMutationFailure.photoVerificationFailed,
+        (409,'photo_unavailable') when commit=>TimewebMutationFailure.photoUnavailable,
+        _=>null,
+      };
+      if(!_mutationExact(result,{'error'})||revision!=null||failure==null){_mutationInvalidReply();}
+      return TimewebMutationResult._(ref,TimewebMutationState.declaredFailure,reply.status,failure:failure,replayed:replayed,receiptConfirmed:true);
+    }
     if (const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
-        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
+        TimewebMutationKind.kickMeetingParticipant, TimewebMutationKind.prepareProfilePhoto, TimewebMutationKind.commitProfilePhoto, TimewebMutationKind.finishInitialProfile}.contains(ref._request.kind)) {
       final failure = switch ((reply.status, result['error'])) {
         (404, 'meeting_not_found') => TimewebMutationFailure.meetingNotFound,
         (404, 'profile_not_found') => TimewebMutationFailure.notFound,
@@ -1465,6 +1528,11 @@ TimewebMutationResult _decodeMutationReply(
   final frozen = _immutableJson(result) as Map<String, dynamic>;
   final request = ref._request;
   final check = ref.requireCurrent;
+  if(request.kind==TimewebMutationKind.finishInitialProfile) {
+    if(reply.status!=200||revision!=null||!_mutationExact(frozen,{'uid','profileDetailsSaved','onboarding','updatedAt','profileAuthority'})||frozen['uid']!=ref._uid||frozen['profileDetailsSaved']!=true||frozen['onboarding']!='test'||frozen['profileAuthority']!='canonical-current-v1'||!_mutationStamp(frozen['updatedAt'])||DateTime.parse(frozen['updatedAt']).compareTo(DateTime.parse(request._payload['expectedUpdatedAt']))<=0){_mutationInvalidReply();}
+    return TimewebMutationResult._(ref,TimewebMutationState.confirmed,reply.status,replayed:replayed,initialProfile:TimewebInitialProfileReceipt._(frozen,ref.requireCurrent),receiptConfirmed:true);
+  }
+  if (_photoMutationKind(request.kind)) { return _decodePhotoMutation(ref,reply.status,frozen,revision,replayed); }
   if (_meetingMembershipKind(request.kind)) {
     return _decodeMeetingMembership(ref, reply.status, frozen, revision, replayed);
   }

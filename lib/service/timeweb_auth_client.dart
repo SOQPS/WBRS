@@ -18,6 +18,8 @@ part 'timeweb_people.dart';
 part 'timeweb_personal_chat.dart';
 part 'timeweb_admin_users.dart';
 part 'timeweb_profile_photos.dart';
+part 'timeweb_profile_photo_uploads.dart';
+part 'timeweb_initial_profile.dart';
 
 /// Public routing only. This is intentionally not wired to AppBackend or UI.
 class TimewebAuthConfiguration {
@@ -471,6 +473,7 @@ class TimewebAuthClient {
   final Map<int, _ProfileEditorFlight> _profileEditorFlights = {};
   final Map<int, _CurrentOwnProfileFlight> _currentOwnProfileFlights = {};
   final Map<String, _PeopleFlight> _peopleFlights = {};
+  final Set<_PhotoPutFlight> _profilePhotoUploadFlights = {};
   final Map<String, _AdminUsersFlight> _adminUsersFlights = {};
   final Map<String, _ProfilePhotoFlight> _profilePhotoFlights = {};
   int _profilePhotoReaderSequence = 0;
@@ -546,6 +549,7 @@ class TimewebAuthClient {
     unawaited(_cancelPeopleReads(this));
     unawaited(_cancelAdminUsersReads(this));
     unawaited(_cancelPhotoFlights(this));
+    unawaited(_cancelPhotoUploadFlights(this));
     _session = null;
     _refreshFlight = null;
     _restoreFlight = null;
@@ -1235,6 +1239,7 @@ class TimewebAuthClient {
     final peopleDrain = _cancelPeopleReads(this);
     final adminUsersDrain = _cancelAdminUsersReads(this);
     final photosDrain = _cancelPhotoFlights(this);
+    final uploadsDrain = _cancelPhotoUploadFlights(this);
     final mutationDrain = _cancelMutationTransfers(this);
     _mutationReferences.clear();
     return _stopFlight = (() async {
@@ -1245,6 +1250,7 @@ class TimewebAuthClient {
       await peopleDrain;
       await adminUsersDrain;
       await photosDrain;
+      await uploadsDrain;
       await mutationDrain;
       _newEpoch();
       _closed = true;

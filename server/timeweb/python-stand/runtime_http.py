@@ -21,9 +21,11 @@ from runtime_meeting_join import RuntimeMeetingJoinService
 from runtime_meeting_membership import RuntimeMeetingMembershipService
 from runtime_meeting_chat import RuntimeMeetingChatService
 from runtime_read_http import RuntimeReadHttp
+from runtime_initial_profile import RuntimeInitialProfileService, InitialProfileAccessRejected
+from runtime_profile_photo_uploads import RuntimeProfilePhotoUploadsService
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.leave.v1", "meeting.kick.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+_OPERATIONS = frozenset({"profile.finish-registration.v1", "chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.leave.v1", "meeting.kick.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -42,6 +44,8 @@ def _route(path):
         path = path.encode("latin-1").decode("utf-8")
     except UnicodeError:
         return None
+    if path == "/v1/runtime/me/registration":
+        return "profile.finish-registration.v1", None, None
     if path == "/v1/runtime/me/profile":
         return "profile.edit.v1", None, None
     if path == "/v1/runtime/me/full-profile":
@@ -97,7 +101,17 @@ def _body(environ):
 
 def _create(env):
     store = RuntimeMutationStore.from_env(env)
-    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store), RuntimeMeetingChatService(store), RuntimeMeetingMembershipService(store)
+    from native_profile_photo_factory import create_native_photo_writer
+    from runtime_profile_photo_uploads_http import RuntimeProfilePhotoUploadsHttp
+    # The initial-profile and upload routes share this exact store/photo core.
+    initial = photos = writer = None
+    if env.get("CLRS_RUNTIME_PERMISSION_MODEL") == "provider-database-v1":
+        writer = create_native_photo_writer(env)
+        photos = RuntimeProfilePhotoUploadsService(store, writer=writer)
+        initial = RuntimeInitialProfileService(store, photos=photos)
+    uploads = (RuntimeProfilePhotoUploadsHttp(env, service=photos if writer is not None else None)
+               if env.get("CLRS_RUNTIME_NATIVE_PHOTO_UPLOADS_ENABLED") == "1" else None)
+    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store), RuntimeMeetingChatService(store), RuntimeMeetingMembershipService(store), initial, uploads
 
 
 class RuntimeMutationHttp:
@@ -122,6 +136,11 @@ class RuntimeMutationHttp:
             self._services = None
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
+        if self._services is not None and len(self._services) > 9 and self._services[9] is not None:
+            upload_reply = self._services[9].dispatch(
+                environ, native_service=native_service, native_configured=native_configured)
+            if upload_reply is not None:
+                return upload_reply
         meeting_mutation = (environ.get("PATH_INFO") in {"/v1/runtime/meetings/join", "/v1/runtime/meetings/leave", "/v1/runtime/meetings/kick"}
             or (environ.get("PATH_INFO") == "/v1/runtime/meetings"
                 and environ.get("REQUEST_METHOD") == "POST")
@@ -230,6 +249,11 @@ class RuntimeMutationHttp:
                         raise RuntimeInvalidRequest()
                     outcome = chat.mark_read(identity, resource, operation_id,
                         body["throughSequence"], access_token=token)
+                elif operation == "profile.finish-registration.v1":
+                    if len(self._services) < 9 or self._services[8] is None:
+                        raise RuntimeUnavailable()
+                    outcome = self._services[8].finish(identity, operation_id,
+                        {key: value for key, value in body.items() if key != "operationId"}, access_token=token)
                 elif operation == "profile.complete-test.v1":
                     if set(body) != {"operationId", "expectedUpdatedAt", "scores"}:
                         raise RuntimeInvalidRequest()
@@ -255,6 +279,8 @@ class RuntimeMutationHttp:
             return RuntimeHttpReply(status, outcome.payload)
         except (RuntimeInvalidRequest, ProfileEditInvalid):
             return RuntimeHttpReply("400 Bad Request", {"error": "invalid_request"})
+        except InitialProfileAccessRejected:
+            return RuntimeHttpReply("404 Not Found", {"error": "registration_unavailable"})
         except MeetingAccessRejected:
             return RuntimeHttpReply("404 Not Found", {"error": "meeting_unavailable"})
         except PersonalChatAccessRejected:

@@ -13,6 +13,7 @@ import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_profile_edit_flow.dart';
 import 'package:wbrs/service/timeweb_temperament_flow.dart';
+import 'package:wbrs/service/timeweb_initial_profile_flow.dart';
 import 'package:wbrs/service/timeweb_geography_flow.dart';
 import 'package:wbrs/presentation/screens/edit_profile/timeweb_geography_page.dart';
 import 'package:wbrs/presentation/screens/test/timeweb_temperament_page.dart';
@@ -21,6 +22,7 @@ import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/group_badge.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 import 'package:wbrs/presentation/widgets/timeweb_profile_photos_view.dart';
+import 'package:wbrs/presentation/screens/auth/writing_profile_page/timeweb_initial_profile_page.dart';
 
 const timewebOwnProfileRoute = '/timeweb/own-profile';
 
@@ -53,6 +55,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
   bool _loading = false, _opening = false, _error = false, _invalidated = false;
   String? _notice;
   bool _adminAllowed = false;
+  bool _initialPending = false, _initialChecked = false;
 
   @override
   void initState() {
@@ -60,7 +63,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _epoch = widget.runtime.session.state.epoch;
     _profile = widget.initialProfile;
     _error = widget.initialError;
-    unawaited(_prepareTemperament());
+    unawaited(_prepareInitialAndTemperament());
     unawaited(_probeAdmin());
     _subscription = widget.runtime.session.states.listen((_) {
       if (!_current) _invalidate();
@@ -96,6 +99,8 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     _geography = null;
     _notice = null;
     _adminAllowed = false;
+    _initialPending = false;
+    _initialChecked = false;
     _loading = false;
     _opening = false;
     setState(() {});
@@ -142,6 +147,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       _temperament?.close();
       _temperament = null;
       _loading = true;
+      _initialChecked = false;
       _error = false;
       _notice = null;
     });
@@ -150,7 +156,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
       if (!_current || generation != _generation) return;
       profile.requireCurrent();
       setState(() => _profile = profile);
-      await _prepareTemperament();
+      await _prepareInitialAndTemperament();
     } catch (_) {
       if (_current && generation == _generation) {
         setState(() => _error = true);
@@ -160,6 +166,26 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
         setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _prepareInitialAndTemperament() async {
+    if (!_current) return;
+    if (!widget.runtime.profileEditorEnabled) { await _prepareTemperament(); return; }
+    final generation = _generation;
+    TimewebInitialProfileFlow? flow;
+    try {
+      // A lost finish ACK can already produce saved=true. This entry restores
+      // only that original intent; fresh submission still requires flags 0/0.
+      flow = await widget.runtime.openInitialProfile();
+      if (!_current || generation != _generation) return;
+      setState(() {
+        _initialPending = flow!.pendingRequest != null && flow.needsCheck;
+        _initialChecked = true;
+      });
+    } catch (_) {
+      if (_current && generation == _generation) setState(() => _initialPending = false);
+    } finally { flow?.close(); }
+    if (_current && !_initialPending) await _prepareTemperament();
   }
 
   Future<void> _prepareTemperament() async {
@@ -226,8 +252,39 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     }
   }
 
+  Future<void> _initialRegistration() async {
+    if (!_current || _loading || _opening || !widget.runtime.profileEditorEnabled) return;
+    setState(() { _opening = true; _notice = null; });
+    try {
+      final snapshot = await widget.runtime.readCurrentOwnProfile();
+      if (!_current || !mounted) return;
+      snapshot.requireCurrent();
+      final profile = snapshot.profile;
+      final eligible = profile?.profileDetailsSaved == false && profile?.isRegistrationEnd == false &&
+          snapshot.onboarding != TimewebOnboarding.search;
+      if (!eligible && !_initialPending) return;
+      await Navigator.of(context).push<bool>(MaterialPageRoute(
+        settings: const RouteSettings(name: timewebInitialProfileRoute),
+        builder: (_) => TimewebInitialProfilePage(runtime: widget.runtime, initialProfile: snapshot),
+      ));
+      if (_current) {
+        setState(() => _opening = false);
+        await _reload();
+      }
+    } catch (_) {
+      if (_current) setState(() => _notice = 'Сервис пока недоступен. Попробуйте позднее.');
+    } finally { if (mounted) setState(() => _opening = false); }
+  }
+
+  bool get _initialRequired {
+    final profile = _profile?.profile;
+    return profile?.profileDetailsSaved == false && profile?.isRegistrationEnd == false &&
+        _profile?.onboarding != TimewebOnboarding.search;
+  }
+
   Future<void> _edit() async {
     if (!_current ||
+        !_initialChecked || _initialPending || _initialRequired ||
         _loading ||
         _opening ||
         !widget.runtime.profileEditorEnabled ||
@@ -395,6 +452,7 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
     final snapshot = current ? _profile : null;
     final profile = snapshot?.profile;
     final stage = snapshot?.onboarding;
+    final initialRequired = current && _initialRequired;
     TimewebTemperamentFlow? temperament;
     if (current) {
       try {
@@ -444,7 +502,16 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    if (profile != null && widget.runtime.profileEditorEnabled)
+                    if (current && widget.runtime.profileEditorEnabled &&
+                        (_initialPending || initialRequired))
+                      ElevatedButton.icon(
+                        key: const ValueKey('timeweb-open-initial-profile'),
+                        onPressed: _loading || _opening ? null : _initialRegistration,
+                        icon: const Icon(Icons.assignment_outlined),
+                        label: Text(context.tr(_initialPending ? 'Проверить результат' : 'Регистрация')),
+                      ),
+                    if (profile != null && widget.runtime.profileEditorEnabled &&
+                        _initialChecked && !_initialPending && !initialRequired)
                       ElevatedButton.icon(
                         key: const ValueKey('timeweb-open-profile-editor'),
                         onPressed: current && !_loading && !_opening

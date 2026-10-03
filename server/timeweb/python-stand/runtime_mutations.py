@@ -51,7 +51,7 @@ class MutationOutcome:
 MAX_INTEGER = 2 ** 63 - 1
 MAX_JSON_BYTES = 65536
 MAX_RECEIPT_BYTES = 131072
-OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.leave.v1", "meeting.kick.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+OPERATIONS = frozenset({"profile.finish-registration.v1", "profile.photo.prepare.v1", "profile.photo.commit.v1", "chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.leave.v1", "meeting.kick.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 RECEIPT_QUERY = """SELECT request_hash, state, response_status, result, entity_revision,
  completed_at FROM clrs_staging.idempotency_receipts
  WHERE actor_uid = %s AND operation = %s AND idempotency_key = %s LIMIT 1"""
