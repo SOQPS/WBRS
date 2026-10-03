@@ -1,7 +1,7 @@
 """One native upload module, real bounded store/HTTP, synthetic SQL/S3 only."""
 import base64
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import unittest
@@ -39,7 +39,7 @@ class PhotoCursor(FakeCursor):
             if uid in state["profiles"]:
                 initial = state.get("initial_profiles", {}).get(uid)
                 values = (initial["profileDetailsSaved"], initial["isRegistrationEnd"]) if initial is not None else state["flags"][uid]
-                self.rows = [tuple(values)]
+                self.rows = [(*values, state.get("native_origin", {}).get(uid, 1))]
         elif sql.startswith("SELECT p.media_id, p.ordinal, p.is_primary"):
             assert params[0] == params[1]
             for photo in sorted(state["photos"].get(params[0], []), key=lambda row: row[1]):
@@ -77,7 +77,9 @@ class PhotoCursor(FakeCursor):
             assert not self.c.readonly
             uid, exact_uid, expected = params; assert uid == exact_uid
             if state["profiles"].get(uid) == expected.replace(" ", "T") + "Z":
-                state["profiles"][uid] = NEW_STAMP; self.rowcount = 1
+                previous = datetime.strptime(state["profiles"][uid], "%Y-%m-%dT%H:%M:%S.%fZ")
+                state["profiles"][uid] = (previous + timedelta(microseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                self.rowcount = 1
         else: raise AssertionError("unexpected photo SQL")
         return self.rowcount
 
@@ -179,6 +181,71 @@ class NativePhotoUploadTests(unittest.TestCase):
         self.assertEqual(sum(sql.startswith("INSERT INTO clrs_staging.profile_photos") for sql, _ in db.calls), 1)
         missing = self.lookup(call, COMMIT_OPERATION, THIRD, {"prepareOperationId": OP, "mediaId": mid})
         self.assertEqual(missing.payload["state"], "not_found"); self.assertEqual(writer.verifies, 1)
+
+    def test_finished_native_profile_append_lost_ack_retains_original_and_primary(self):
+        db, store, service, writer, call = self.setup_service()
+        for index in range(3):
+            prep = f"12345678-1234-4234-8234-{100 + index:012d}"
+            commit = f"12345678-1234-4234-8234-{200 + index:012d}"
+            mid = self.prepare(call, prep)
+            writer.objects[db.state["media"][mid][3]] = (DATA, "image/png")
+            self.assertEqual(self.commit(call, mid, commit, prep).status, "200 OK")
+        original_gallery = copy.deepcopy(db.state["photos"]["actor"])
+        db.state["flags"]["actor"] = [1, 1]
+        availability = call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET")
+        self.assertEqual((availability.status, availability.payload), ("200 OK", {
+            "canAppend": True, "photoCount": 3, "photoLimit": 20,
+            "profileAuthority": "canonical-current-v1"}))
+        mid = self.prepare(call)
+        lease = call(f"/v1/runtime/profile/photos/uploads/{mid}/lease", REQUEST_METHOD="GET", QUERY_STRING="prepareOperationId=" + OP)
+        self.assertEqual(lease.status, "200 OK")
+        writer.objects[db.state["media"][mid][3]] = (DATA, "image/png")
+        db.commit_unknown_once = True
+        self.assertEqual(self.commit(call, mid).payload, {"error": "outcome_unknown"})
+        found = self.lookup(call, COMMIT_OPERATION, SECOND, {"prepareOperationId": OP, "mediaId": mid})
+        self.assertTrue(found.payload["result"]["ready"])
+        self.assertEqual(found.payload["result"]["ordinal"], 3)
+        self.assertFalse(found.payload["result"]["isPrimary"])
+        self.assertEqual(db.state["photos"]["actor"], original_gallery + [[mid, 3, 0]])
+        self.assertEqual(writer.verifies, 4)
+        self.assertEqual(self.commit(call, mid).payload["result"], found.payload["result"])
+        self.assertEqual(writer.verifies, 4)
+        self.assertEqual(db.state["flags"]["actor"], [1, 1])
+
+    def test_append_availability_current_target_and_session_are_not_cached(self):
+        db, store, service, writer, call = self.setup_service()
+        for flags in ([0, 0], [1, 0], [0, 1], [True, 1]):
+            db.state["flags"]["actor"] = flags
+            self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "404 Not Found")
+        db.state["flags"]["actor"] = [1, 1]
+        self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "404 Not Found")
+        db.state["flags"]["actor"] = [0, 0]
+        for index in range(3):
+            prep = f"12345678-1234-4234-8234-{300 + index:012d}"
+            commit = f"12345678-1234-4234-8234-{400 + index:012d}"
+            seed_mid = self.prepare(call, prep)
+            writer.objects[db.state["media"][seed_mid][3]] = (DATA, "image/png")
+            self.assertEqual(self.commit(call, seed_mid, commit, prep).status, "200 OK")
+        db.state["flags"]["actor"] = [1, 1]
+        self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "200 OK")
+        db.state["native_origin"] = {"actor": 0}
+        self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "404 Not Found")
+        db.state["native_origin"]["actor"] = 1
+        original_photos = copy.deepcopy(db.state["photos"]["actor"])
+        imported_mid, _ = photo_identity("actor", THIRD)
+        db.state["media"][imported_mid] = [imported_mid, "actor", "profile", "clrs-import-quarantine/imported-original",
+            PAYLOAD["mimeType"], PAYLOAD["byteSize"], PAYLOAD["sha256"], "ready", 0, 1, 1]
+        db.state["photos"]["actor"] = [[imported_mid, 0, 1]]
+        self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "404 Not Found")
+        db.state["photos"]["actor"] = original_photos; db.state["media"].pop(imported_mid)
+        mid = self.prepare(call)
+        writer.after_sign = lambda: db.state["flags"].update(actor=[1, 0])
+        self.assertEqual(call(f"/v1/runtime/profile/photos/uploads/{mid}/lease", REQUEST_METHOD="GET", QUERY_STRING="prepareOperationId=" + OP).status, "404 Not Found")
+        self.assertEqual(db.state["media"][mid][7], "pending")
+        self.assertEqual(db.state["photos"]["actor"], original_photos)
+        db.state["flags"]["actor"] = [1, 1]
+        db.state["sessions"][db.identity.session_id]["revoked_at"] = STAMP
+        self.assertEqual(call("/v1/runtime/profile/photos/upload-availability", REQUEST_METHOD="GET").status, "401 Unauthorized")
 
     def test_owner_session_revocation_and_current_post_sign_authority(self):
         db, store, service, writer, call = self.setup_service(); mid = self.prepare(call)

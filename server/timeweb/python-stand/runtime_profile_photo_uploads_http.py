@@ -23,9 +23,10 @@ class RuntimeProfilePhotoUploadsHttp:
             "/v1/runtime/profile/photos/commit": COMMIT_OPERATION}.get(path)
         lease = re.fullmatch(r"/v1/runtime/profile/photos/uploads/(tw-profile-photo-[0-9a-f]{64})/lease", path)
         lookup = re.fullmatch(r"/v1/runtime/operations/(profile\.photo\.(?:prepare|commit)\.v1)/([^/]{36})", path)
-        if operation is None and not lease and not lookup: return None
+        availability = path == "/v1/runtime/profile/photos/upload-availability"
+        if operation is None and not lease and not lookup and not availability: return None
         if not self._enabled: return RuntimeHttpReply("404 Not Found", {"error": "not_found"})
-        method = "GET" if lease or lookup else "POST"
+        method = "GET" if lease or lookup or availability else "POST"
         if environ.get("REQUEST_METHOD") != method: return RuntimeHttpReply("405 Method Not Allowed", {"error": "method_not_allowed"})
         try:
             if (not isinstance(query, str) or len(query) > 200 or method == "GET" and
@@ -42,6 +43,8 @@ class RuntimeProfilePhotoUploadsHttp:
             if native_service is None or self._service is None: raise NativeUnavailable()
             token = header[7:]; identity = native_service.authorize(token, peer=environ.get("REMOTE_ADDR", ""))
             if type(identity) is not NativeIdentity: raise NativeUnavailable()
+            if availability:
+                return RuntimeHttpReply("200 OK", self._service.upload_availability(identity, access_token=token))
             if lease:
                 result = self._service.upload_lease(identity, lease[1], query[19:], access_token=token)
                 return RuntimeHttpReply("200 OK", result)

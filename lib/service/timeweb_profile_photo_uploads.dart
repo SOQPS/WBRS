@@ -260,9 +260,46 @@ final class TimewebPhotoUploadLease {
   String toString() => 'TimewebPhotoUploadLease(<redacted>)';
 }
 
+/// Fresh current-server eligibility only; never a durable upload permission.
+final class TimewebPhotoUploadAvailability {
+  TimewebPhotoUploadAvailability._(this._canAppend, this._count, this._guard);
+  final bool _canAppend;
+  final int _count;
+  final void Function() _guard;
+  void requireCurrent() => _guard();
+  bool get canAppend { requireCurrent(); return _canAppend; }
+  int get photoCount { requireCurrent(); return _count; }
+  int get photoLimit { requireCurrent(); return 20; }
+  TimewebPhotoUploadAvailability bindSessionGuard(void Function() guard) =>
+      TimewebPhotoUploadAvailability._(_canAppend, _count, () { requireCurrent(); guard(); });
+}
+
 enum TimewebPhotoPutOutcome { acknowledged, unknown }
 
 extension TimewebProfilePhotoUploadsClient on TimewebAuthClient {
+  Future<TimewebPhotoUploadAvailability> readPhotoUploadAvailability() {
+    try {
+      _checkEnabled(_photoOperation);
+      if (!configuration.currentReadsEnabled || !configuration.runtimeWritesEnabled) {
+        throw const TimewebAuthException(_photoOperation, TimewebAuthError.disabled);
+      }
+      final session = _session;
+      if (session == null || _secureStoreUnsafe) {
+        throw const TimewebAuthException(_photoOperation, TimewebAuthError.notAuthenticated);
+      }
+      final key = 'photo-upload-availability:$_epoch';
+      final previous = _peopleFlights[key];
+      if (previous != null) return previous.result.future.then((v) => v as TimewebPhotoUploadAvailability);
+      if (_peopleFlights.length >= 4) {
+        throw const TimewebAuthException(_photoOperation, TimewebAuthError.unavailable);
+      }
+      final flight = _PeopleFlight(this, null, null, null, _epoch, session.uid, key);
+      _peopleFlights[key] = flight;
+      unawaited(_executeUploadLease(flight, null));
+      return flight.result.future.then((v) => v as TimewebPhotoUploadAvailability);
+    } catch (error) { return Future.error(error); }
+  }
+
   Future<void> cancelProfilePhotoUpload(TimewebProfilePhotoSource source) =>
       _cancelPhotoUploadFlights(this, source: source);
   Future<TimewebPhotoUploadLease> leaseProfilePhotoUpload(
@@ -345,20 +382,14 @@ Future<TimewebPhotoUploadLease> _startUploadLease(
 
 Future<void> _executeUploadLease(
   _PeopleFlight f,
-  TimewebPreparedPhotoReceipt prepared,
+  TimewebPreparedPhotoReceipt? prepared,
 ) async {
   final owner = f.owner,
       uri = f.owner.configuration.endpoint.replace(
-        pathSegments: [
-          'v1',
-          'runtime',
-          'profile',
-          'photos',
-          'uploads',
-          prepared.mediaId,
-          'lease',
-        ],
-        queryParameters: {'prepareOperationId': prepared.prepareOperationId},
+        pathSegments: prepared == null
+            ? ['v1', 'runtime', 'profile', 'photos', 'upload-availability']
+            : ['v1', 'runtime', 'profile', 'photos', 'uploads', prepared.mediaId, 'lease'],
+        queryParameters: prepared == null ? const {} : {'prepareOperationId': prepared.prepareOperationId},
       );
   try {
     f.check();
@@ -386,13 +417,22 @@ Future<void> _executeUploadLease(
           owner._session?.accessToken == session.accessToken) {
         await owner._invalidate(f.epoch);
       }
+      if (prepared == null && reply.status == 404) {
+        if (reply.body == null || !_mutationExact(reply.body!, {'error'}) ||
+            reply.body!['error'] != 'photo_unavailable') {
+          throw const TimewebAuthException(_photoOperation, TimewebAuthError.invalidResponse);
+        }
+        throw const TimewebProfilePhotoUnavailable();
+      }
       if (const [400, 403, 404, 409].contains(reply.status)) {
         throw const TimewebProfilePhotoUnavailable();
       }
       throw owner._statusError(_photoOperation, reply.status);
     }
-    prepared.requireCurrent();
-    final lease = _decodeUploadLease(f, prepared, reply.body!);
+    prepared?.requireCurrent();
+    final lease = prepared == null
+        ? _decodeUploadAvailability(f, reply.body!)
+        : _decodeUploadLease(f, prepared, reply.body!);
     f.check();
     if (!f.result.isCompleted) {
       f.result.complete(lease);
@@ -415,6 +455,16 @@ Future<void> _executeUploadLease(
     }
     f.settled.complete();
   }
+}
+
+TimewebPhotoUploadAvailability _decodeUploadAvailability(_PeopleFlight flight, Map<String, dynamic> body) {
+  if (!_mutationExact(body, {'canAppend', 'photoCount', 'photoLimit', 'profileAuthority'}) ||
+      body['canAppend'] is! bool || body['photoCount'] is! int || body['photoCount'] < 3 ||
+      body['photoCount'] > 20 || body['photoLimit'] != 20 || body['photoLimit'] is! int ||
+      body['profileAuthority'] != 'canonical-current-v1' || body['photoCount'] == 20 && body['canAppend'] == true) {
+    throw const TimewebAuthException(_photoOperation, TimewebAuthError.invalidResponse);
+  }
+  return TimewebPhotoUploadAvailability._(body['canAppend'], body['photoCount'], flight.checkSession);
 }
 
 TimewebPhotoUploadLease _decodeUploadLease(

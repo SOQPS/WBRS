@@ -91,6 +91,11 @@ final class TimewebPhotoUploadFlow {
         _intent != null && (_prepared == null || _intent!.commit != null);
   }
 
+  bool get sourceAttached {
+    requireCurrent();
+    return _source != null;
+  }
+
   TimewebPhotoMetadata? get metadata {
     requireCurrent();
     return _intent?.metadata;

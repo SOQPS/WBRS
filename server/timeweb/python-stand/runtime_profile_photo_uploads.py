@@ -59,7 +59,8 @@ NATIVE_GALLERY_SQL = """SELECT p.media_id, p.ordinal, p.is_primary, p.firebase_i
  ON m.media_id = p.media_id AND CAST(m.media_id AS BINARY) = CAST(p.media_id AS BINARY)
  WHERE p.uid = %s AND CAST(p.uid AS BINARY) = CAST(%s AS BINARY)
  ORDER BY p.ordinal LIMIT 21 FOR SHARE OF p, m"""
-_INITIAL = """SELECT profile_details_saved, registration_complete FROM clrs_staging.profiles
+_INITIAL = """SELECT profile_details_saved, registration_complete,
+ JSON_TYPE(legacy_raw) = 'OBJECT' AND JSON_LENGTH(legacy_raw) = 0 FROM clrs_staging.profiles
  WHERE uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1 FOR SHARE"""
 _ERRORS = {"profile_not_found": 404, "photo_not_found": 404, "photo_limit_reached": 409,
     "photo_verification_failed": 409, "photo_unavailable": 409}
@@ -171,14 +172,29 @@ class RuntimeProfilePhotoUploadsService:
             raise RuntimeUnavailable()
         return [list(row) for row in rows]
 
-    def _require_initial(self, cursor, execute, uid, write=False):
+    def _upload_target(self, cursor, execute, uid, write=False, *, completed_only=False):
         execute(_INITIAL.replace("FOR SHARE", "FOR UPDATE") if write else _INITIAL, (uid, uid))
         row = cursor.fetchone()
-        if row is None or len(row) != 2 or any(type(value) is not int or value != 0 for value in row):
+        # A finished native gallery remains writable. Transitional flags and
+        # imported/mixed galleries have no append authority in this adapter.
+        if (row is None or len(row) != 3 or any(type(value) is not int for value in row)
+                or row[2] != 1 or tuple(row[:2]) not in ((0, 0), (1, 1))
+                or completed_only and tuple(row[:2]) != (1, 1)):
             raise PhotoUploadTargetRejected()
         sql = NATIVE_GALLERY_SQL.replace("FOR SHARE OF p, m", "FOR UPDATE OF p, m") if write else NATIVE_GALLERY_SQL
         execute(sql, (uid, uid)); rows = native_gallery(cursor.fetchall(), uid)
         if [row[:3] for row in rows] != self._photos(cursor, execute, uid, write): raise PhotoUploadTargetRejected()
+        if tuple(row[:2]) == (1, 1) and len(rows) < 3: raise PhotoUploadTargetRejected()
+        return rows
+
+    def upload_availability(self, identity, *, access_token):
+        if self._writer is None: raise RuntimeUnavailable()
+        def action(cursor, execute, uid):
+            if self._profile(cursor, execute, uid) is None: raise PhotoUploadTargetRejected()
+            photos = self._upload_target(cursor, execute, uid, completed_only=True)
+            return {"canAppend": len(photos) < MAX_PHOTOS, "photoCount": len(photos),
+                "photoLimit": MAX_PHOTOS, "profileAuthority": AUTHORITY}
+        return self._store.read_authenticated(identity, action, access_token=access_token)
 
     def _context(self, cursor, execute, uid, payload, write=False):
         stamp = self._profile(cursor, execute, uid, write)
@@ -216,7 +232,7 @@ class RuntimeProfilePhotoUploadsService:
     def prepare(self, identity, operation_id, payload, *, access_token):
         _uuid(operation_id); request = validate_prepare(payload)
         def action(cursor, execute, uid):
-            self._require_initial(cursor, execute, uid, True)
+            self._upload_target(cursor, execute, uid, True)
             if self._profile(cursor, execute, uid, True) is None: return 404, {"error": "profile_not_found"}, None
             if len(self._photos(cursor, execute, uid, True)) >= MAX_PHOTOS: return 409, {"error": "photo_limit_reached"}, None
             mid, key = photo_identity(uid, operation_id)
@@ -232,15 +248,15 @@ class RuntimeProfilePhotoUploadsService:
             return 201, _prepared(mid, request), None
         return self._store.mutate(identity, PREPARE_OPERATION, operation_id, request, action, access_token=access_token)
 
-    def _read(self, identity, request, token, *, initial=False):
+    def _read(self, identity, request, token, *, upload_target=False):
         def action(cursor, execute, uid):
-            if initial: self._require_initial(cursor, execute, uid)
+            if upload_target: self._upload_target(cursor, execute, uid)
             return self._context(cursor, execute, uid, request)
         return self._store.read_authenticated(identity, action, access_token=token)
 
     def upload_lease(self, identity, media_id, prepare_operation_id, *, access_token):
         request = validate_commit({"mediaId": media_id, "prepareOperationId": prepare_operation_id})
-        before = self._read(identity, request, access_token, initial=True)
+        before = self._read(identity, request, access_token, upload_target=True)
         if "error" in before or before["status"] != "pending": raise PhotoUploadTargetRejected()
         if self._writer is None or not self._slots.acquire(blocking=False): raise RuntimeUnavailable()
         cancel = threading.Event(); deadline = self._clock() + 5
@@ -259,7 +275,7 @@ class RuntimeProfilePhotoUploadsService:
             remaining = datetime.strptime(lease["expiresAt"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp() - self._wall()
             if not 0 < remaining <= 60: raise RuntimeUnavailable()
             # The port owns TTL/proof checking. Repeat SQL authority after signing.
-            after = self._read(identity, request, access_token, initial=True)
+            after = self._read(identity, request, access_token, upload_target=True)
             if "error" in after or after["status"] != "pending" or after["record"] != record: raise PhotoUploadTargetRejected()
             return {"mediaId": media_id, "method": "PUT", **lease, "byteSize": record["size"], "mimeType": record["content_type"], "sha256": record["sha256"]}
         finally:
@@ -271,7 +287,7 @@ class RuntimeProfilePhotoUploadsService:
         if original.payload["state"] != "not_found": return original
         cancel = None; slot_owned = False
         try:
-            before = self._read(identity, request, access_token, initial=True); evidence = None; mismatch = False
+            before = self._read(identity, request, access_token, upload_target=True); evidence = None; mismatch = False
             if "error" not in before and before["status"] == "pending":
                 if self._writer is None or not self._slots.acquire(blocking=False): raise RuntimeUnavailable()
                 cancel = threading.Event(); deadline = self._clock() + 8
@@ -280,7 +296,7 @@ class RuntimeProfilePhotoUploadsService:
                 except PhotoUploadVerificationFailed: mismatch = True
                 if self._clock() >= deadline: raise RuntimeUnavailable()
             def action(cursor, execute, uid):
-                self._require_initial(cursor, execute, uid, True)
+                self._upload_target(cursor, execute, uid, True)
                 current = self._context(cursor, execute, uid, request, True)
                 if "error" in current: return _ERRORS[current["error"]], {"error": current["error"]}, None
                 if "error" in before or current["record"] != before["record"]: raise PhotoUploadTargetRejected()

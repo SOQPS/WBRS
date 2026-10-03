@@ -22,6 +22,7 @@ import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/group_badge.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
 import 'package:wbrs/presentation/widgets/timeweb_profile_photos_view.dart';
+import 'package:wbrs/presentation/widgets/timeweb_photo_append_control.dart';
 import 'package:wbrs/presentation/screens/auth/writing_profile_page/timeweb_initial_profile_page.dart';
 
 const timewebOwnProfileRoute = '/timeweb/own-profile';
@@ -666,6 +667,13 @@ class _TimewebOwnProfilePageState extends State<TimewebOwnProfilePage> {
               color: LrsTheme.peachLight,
             ),
           ),
+          if (_current && _initialChecked && !_initialPending &&
+              profile?.profileDetailsSaved == true && profile?.isRegistrationEnd == true &&
+              widget.runtime.profilePhotosEnabled)
+            TimewebPhotoAppendControl(
+              key: ValueKey('own-photo-append:${_profile!.uid}:$_epoch'),
+              runtime: widget.runtime, snapshot: _profile!, onReady: _reload,
+            ),
           const SizedBox(height: 16),
           if (_profile == null || !widget.runtime.profilePhotosEnabled) Center(
             child: Text(

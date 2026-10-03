@@ -14,6 +14,26 @@ onboarding is not. New empty native profiles can prepare photos.
 
 ## Exact wire
 
+`GET /v1/runtime/profile/photos/upload-availability` has an empty query/body and
+uses the current native bearer and own-account transaction. A completed profile
+with native origin (`legacy_raw` is an empty JSON object) and an exact native
+gallery of 3..20 ready photos returns `{canAppend,photoCount,photoLimit:20,
+profileAuthority:'canonical-current-v1'}`. At the limit `canAppend` is false.
+Incomplete, transitional or imported/mixed galleries return target 404 without
+logging out a healthy actor. Missing writer/service remains 503. The UI checks
+availability again before choosing a new image; an unresolved original upload
+keeps its receipt recovery independently of this availability read.
+
+Prepare, lease and commit recheck an exact `(0,0)` initial or `(1,1)` completed
+flag pair, native origin and the current native gallery. A completed profile
+requires at least three ready native photos; an empty initial profile remains
+eligible for its first upload. Appending after completion preserves
+all original ordinals and the first primary photo; it does not reopen initial
+registration. Imported/mixed gallery append, reorder and deletion are separate
+operations and remain unsupported. The writer release fingerprint includes the
+upload HTTP adapter as well as its core, so a previous nine-file release binding
+cannot enable this changed ten-file source.
+
 `POST /v1/runtime/profile/photos/prepare`, operation `profile.photo.prepare.v1`:
 
 ```

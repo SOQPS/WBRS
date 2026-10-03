@@ -21,7 +21,8 @@ from runtime_profile_photos_http import RuntimeProfilePhotosHttp
 GATE = 'CLRS_RUNTIME_NATIVE_PHOTO_UPLOADS_ENABLED'
 _SOURCE = ('native_profile_photo_factory.py', 'runtime_native_profile_photos.py',
     'native_photo_upload_s3.py', 'runtime_profile_photo_uploads.py', 'runtime_mutations.py',
-    'native_photo_raster.py', 'native_photo_raster_worker.py', 'runtime_http.py', 'app.py')
+    'runtime_profile_photo_uploads_http.py', 'native_photo_raster.py',
+    'native_photo_raster_worker.py', 'runtime_http.py', 'app.py')
 
 
 def _binding(settings):

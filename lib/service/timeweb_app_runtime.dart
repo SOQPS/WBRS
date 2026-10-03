@@ -304,6 +304,14 @@ final class TimewebAppRuntime {
     return TimewebPhotoUploadFlow.open(client: client,session: session,lease: lease,journal: _photoUploadJournal,onReady:onReady);
   }).timeout(session.waitTimeout);
 
+  Future<TimewebPhotoUploadAvailability> readPhotoUploadAvailability() => session.runAuthenticated((lease) async {
+    if (!ownProfileEnabled) throw StateError('Current photo upload is unavailable.');
+    final availability = await client.readPhotoUploadAvailability();
+    lease.requireCurrent();
+    availability.requireCurrent();
+    return availability.bindSessionGuard(lease.requireCurrent);
+  }).timeout(session.waitTimeout);
+
   bool get profilePhotosEnabled => ownProfileEnabled;
 
   Future<TimewebProfilePhotoReader> openProfilePhotos(String targetUid) =>
