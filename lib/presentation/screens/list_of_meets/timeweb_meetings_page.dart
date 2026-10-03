@@ -5,6 +5,7 @@ import 'package:wbrs/localization/clrs_localizations.dart';
 import 'package:wbrs/presentation/screens/list_of_users/timeweb_people_page.dart';
 import 'package:wbrs/presentation/screens/list_of_meets/meetings.dart';
 import 'package:wbrs/presentation/screens/list_of_meets/timeweb_meeting_chat_page.dart';
+import 'package:wbrs/presentation/screens/list_of_meets/timeweb_meeting_archive_page.dart';
 import 'package:wbrs/service/app_session.dart';
 import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
@@ -186,7 +187,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
   String? _membershipNotice;
   bool _joining = false, _joinUnavailable = false;
   String? _joinNotice;
-  String? _chatNotice;
+  String? _chatNotice, _archiveNotice;
   bool _loading = false, _error = false, _invalidated = false;
   int _generation = 0;
 
@@ -252,7 +253,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
-    _chatNotice = null;
+    _chatNotice = _archiveNotice = null;
     _page = null;
     _participants = null;
     _meeting = null;
@@ -428,6 +429,28 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     }
   }
 
+  Future<void> _openArchive() async {
+    final meeting = _meeting;
+    if (!_current || _memberActionsLocked || _loading || _joining || meeting == null) return;
+    setState(() { _loading = true; _archiveNotice = null; });
+    try {
+      final flow = await _runtime.openMeetingArchive(meeting.meetingId);
+      if (!mounted || !_current || !identical(_meeting, meeting)) { flow.close(); return; }
+      try {
+        flow.requireCurrent();
+        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => TimewebMeetingArchivePageView(
+          runtime: _runtime, flow: flow, onUnavailable: () {
+            if (!_actorCurrent) return;
+            _purgeMembershipReads();
+            setState(() => _archiveNotice = 'Сохранённая история пока недоступна. Откройте её заново.');
+          })));
+      } finally { flow.close(); }
+    } catch (_) {
+      if (_actorCurrent) setState(() => _archiveNotice = 'Сохранённая история пока недоступна.');
+    } finally { if (_actorCurrent) setState(() => _loading = false); }
+    if (_actorCurrent) await _load();
+  }
+
   void _purgeMembershipReads() {
     if (!_actorCurrent) return;
     widget.onMembershipChanged?.call();
@@ -540,7 +563,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
-    _chatNotice = null;
+    _chatNotice = _archiveNotice = null;
     _page = null;
     _meeting = null;
     _participants = null;
@@ -680,6 +703,11 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
           child: Text(context.tr('Обсуждение встречи')),
         )),
         if (_chatNotice != null) _left(Text(context.tr(_chatNotice!))),
+        _left(TextButton(
+          key: const ValueKey('native-meeting-archive'),
+          onPressed: _memberActionsLocked || _loading || _joining ? null : _openArchive,
+          child: Text(context.tr('Сохранённая история')),
+        )),
         TextButton(
           key: const ValueKey('native-meeting-participants'),
           onPressed: _memberActionsLocked || _loading || _joining ? null : () => _load(roster: true),
@@ -723,6 +751,7 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         child: Text(context.tr('Проверить исключение')),
       )),
       if (_membershipNotice != null) _left(Text(context.tr(_membershipNotice!))),
+      if (_archiveNotice != null) _left(Text(context.tr(_archiveNotice!))),
       if (_changingMembership) const Center(child: CircularProgressIndicator()),
       if (_error) Text(context.tr('Не удалось загрузить данные. Обновите страницу.')),
       if (_loading) const Center(child: CircularProgressIndicator()),

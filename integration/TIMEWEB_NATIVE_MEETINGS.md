@@ -3,9 +3,9 @@
 The integration branch includes native meeting creation, self-only joining,
 list/detail/participants and member-only text discussion with their Flutter routes. The server is deployed
 to existing Timeweb stand 5179, GitLab commit
-`a23d18a8b8e2a501fcc285754162395465fecd40`.
+`a34ab681e6782fa1aa3e812cf255ecad93367646`.
 The operator preview guard remains enabled; the main app deployment is stopped.
-The deployed message route returns404 without the operator proof and401 with proof
+The deployed archive route returns404 without the operator proof and401 with proof
 but without a native bearer. These refusals are deployment/guard evidence,
 not a successful real-user creation, join, message, old-password login or full cutover.
 Native release flags remain false. Permissions, schema and imported rows were
@@ -21,8 +21,9 @@ Firebase identity or retained source is not a serving fallback.
 
 Readers accept only the exact server-built meeting marker
 `{origin:'clrs-native-meeting-v1',localDatetime:'03.10.2026 19:15'}` and member
-marker `{origin:'clrs-native-meeting-member-v1'}` with a real server joined time.
-Extra keys, malformed markers, old empty raw and typed imported Firestore roots
+marker `{origin:'clrs-native-meeting-member-v1'}` with a real server joined time
+or its exact reviewed archiveWindow extension described below. Unreviewed
+extra keys, malformed markers, old empty raw and typed imported Firestore roots
 are excluded. The existing155 imported meetings are retained and excluded;
 their unknown historical joined times are not overwritten.
 
@@ -231,7 +232,12 @@ The separate read-only Flutter flow opens only this archive endpoint. Its bounde
 300-message rolling cache discards newest rows when loading older pages and
 preserves the server cursor, so the memory bound does not truncate older history.
 Held window/messages and late responses retain account and read-generation
-guards. The archive screen is being integrated; native release flags remain false.
+guards. The detail screen offers Saved history only after pending leave/kick originals
+are resolved. A fresh owner archive read precedes the separate owned route; the
+page has no composer, protected roster, participant avatars or live chat reads.
+Manual translation retains the same scoped ML Kit policy. Back/reopen obtains
+a fresh first page; owner changes and rejected late reads purge the route.
+Native release flags remain false.
 
 ## Focused evidence and limits
 
@@ -273,7 +279,12 @@ Scoped analysis of the three changed paths reports No issues. Archive adds eight
 aggregate backend cases (six new and two affected membership cases) and four
 client groups; the one rolling-cache correction alone was rerun with 330 rows,
 11 pages and oldest sequence1 reached, at most300 in memory and no extra request
-after terminal cursor. No old full suites or live-user writes were repeated.
+after terminal cursor. The archive UI adds one focused widget case covering original Check priority,
+ACK before archive opening, 330 rows/11 manual pages, bounded RAM, fresh reopen,
+A-to-B purge and unavailable history with a healthy account. Scoped analysis of
+three UI paths reports No issues. Root corrected only one static description to
+state that messages were saved at the time of exit. No old full suites or
+live-user writes were repeated.
 
 Frozen patches were independently reviewed, applied in order and matched their
 source manifests. Credentials remain outside source/APK. Full source hashes,
