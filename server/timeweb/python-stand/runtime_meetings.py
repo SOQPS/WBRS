@@ -296,6 +296,18 @@ class RuntimeMeetingsService:
             result[row["meetingId"]] = row
         return result
 
+    def _meeting_rows(self, cursor, execute, sources):
+        return [_meeting_row(source) for source in sources]
+
+    def _member_rows(self, cursor, execute, sources):
+        return [_member_row(source) for source in sources]
+
+    def _read_actor_members(self, cursor, execute, meeting_ids, uid):
+        return self._actor_members(cursor, execute, meeting_ids, uid)
+
+    def _read_policy(self):
+        return TRUSTED_POLICY
+
     @staticmethod
     def _eligible(row, actor, profiles, member, now, *, participants=False):
         if _meeting_dto(row) is None:
@@ -326,12 +338,12 @@ class RuntimeMeetingsService:
             raise RuntimeReadRejected()
         if len(sources) != 1:
             raise RuntimeUnavailable()
-        row = _meeting_row(sources[0])
+        row = self._meeting_rows(cursor, execute, sources)[0]
         if row["meetingId"] != meeting_id:
             raise RuntimeUnavailable()
         profiles = self._profiles(cursor, execute, [target for target in (row["organizerUid"], row["invitedUid"])
                                                     if target is not None and target != uid])
-        member = self._actor_members(cursor, execute, [meeting_id], uid).get(meeting_id)
+        member = self._read_actor_members(cursor, execute, [meeting_id], uid).get(meeting_id)
         if not self._eligible(row, actor, profiles, member, now, participants=participants):
             raise RuntimeReadRejected()
         return row
@@ -365,7 +377,7 @@ class RuntimeMeetingsService:
             raise RuntimeInvalidRequest()
         geo = validate_people_filters(country_code=country_code, region=region)
         filters = {"scope": scope, "countryCode": geo["countryCode"], "region": geo["region"],
-                   "policy": TRUSTED_POLICY}
+                   "policy": self._read_policy()}
         digest = hashlib.sha256(canonical_json(filters)).hexdigest()
         def action(sql_cursor, execute, uid):
             anchor, expiry = self._cursor(cursor, uid, MEETING_ORDER, limit, digest)
@@ -377,14 +389,14 @@ class RuntimeMeetingsService:
                 execute(sql, params); sources = sql_cursor.fetchall()
                 if len(sources) > SCAN_CHUNK:
                     raise RuntimeUnavailable()
-                rows = [_meeting_row(source) for source in sources]
+                rows = self._meeting_rows(sql_cursor, execute, sources)
                 candidates = [row for row in rows if _meeting_dto(row) is not None
                     and (scope != "individual" or uid in (row["organizerUid"], row["invitedUid"]))
                     and (country_code is None or row["countryCode"] == country_code)
                     and (region is None or row["region"] == region)]
                 profiles = self._profiles(sql_cursor, execute, [target for row in candidates
                     for target in (row["organizerUid"], row["invitedUid"]) if target is not None and target != uid])
-                members = self._actor_members(sql_cursor, execute, [row["meetingId"] for row in candidates], uid)
+                members = self._read_actor_members(sql_cursor, execute, [row["meetingId"] for row in candidates], uid)
                 candidate_ids = {row["meetingId"] for row in candidates}
                 for row in rows:
                     if row["kind"] != scope or not _after(row, anchor):
@@ -416,7 +428,7 @@ class RuntimeMeetingsService:
 
     def participants(self, identity, meeting_id, *, access_token, limit=30, cursor=None):
         meeting_id = _uid(meeting_id); self._limit(limit)
-        digest = hashlib.sha256(canonical_json({"meetingId": meeting_id, "policy": TRUSTED_POLICY})).hexdigest()
+        digest = hashlib.sha256(canonical_json({"meetingId": meeting_id, "policy": self._read_policy()})).hexdigest()
         def action(sql_cursor, execute, uid):
             anchor, expiry = self._cursor(cursor, uid, PARTICIPANT_ORDER, limit, digest, participant=True)
             actor = RuntimePeopleService._actor(sql_cursor, execute, uid)
@@ -428,7 +440,7 @@ class RuntimeMeetingsService:
                 execute(sql, params); sources = sql_cursor.fetchall()
                 if len(sources) > SCAN_CHUNK:
                     raise RuntimeUnavailable()
-                rows = [_member_row(source) for source in sources]
+                rows = self._member_rows(sql_cursor, execute, sources)
                 profiles = self._profiles(sql_cursor, execute, [row["uid"] for row in rows
                     if row["trusted"] == 1 and row["leftAt"] is None and row["kickedAt"] is None
                     and (meeting["kind"] == "group" or row["uid"] in (meeting["organizerUid"], meeting["invitedUid"]))])
