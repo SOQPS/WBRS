@@ -31,7 +31,8 @@ _SOURCE_FILES = ("imported_meeting_authority.py", "runtime_imported_meetings.py"
     "runtime_meetings.py", "imported_meeting_review.py", "runtime_mutations.py",
     "runtime_people.py", "profile_visibility.py", "runtime_meeting_create.py",
     "runtime_geography.py", "geo_catalog.json", "legacy_conversation_payload.py",
-    "native_credentials.py", "runtime_reads.py", "meeting_schedule.py", "runtime_meetings_http.py")
+    "native_credentials.py", "runtime_reads.py", "meeting_schedule.py", "runtime_meetings_http.py",
+    "app.py", "runtime_http.py", "runtime_read_http.py")
 _BINDING_KEYS = {"generation", "sourceSha256", "cohortSha256", "policy",
                  "barrierSha256", "finalDeltaSha256"}
 

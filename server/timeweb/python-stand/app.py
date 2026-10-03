@@ -95,10 +95,19 @@ def _peer(environ):
     return environ.get("REMOTE_ADDR", "")
 
 
-def _native_runtime_http(env):
-    # The reviewed server-only creator marker policy does not publish imports.
-    return RuntimeMutationHttp(env, meetings_factory=lambda store, current_env:
-        RuntimeMeetingsService.from_env(store, current_env, trusted_policy=TRUSTED_POLICY))
+def _native_runtime_http(env, *, imported_authority=None, reviewed_binding=None):
+    # Only an external reviewed assembler may supply the opaque final authority.
+    if imported_authority is not None or reviewed_binding is not None:
+        from runtime_imported_meetings import imported_meetings_factory
+        from runtime_mutations import RuntimeUnavailable
+        if imported_authority is None or reviewed_binding is None:
+            raise RuntimeUnavailable()
+        meetings_factory = imported_meetings_factory(imported_authority,
+                                                     reviewed_binding=reviewed_binding)
+    else:
+        meetings_factory = lambda store, current_env: RuntimeMeetingsService.from_env(
+            store, current_env, trusted_policy=TRUSTED_POLICY)
+    return RuntimeMutationHttp(env, meetings_factory=meetings_factory)
 
 
 def create_app(*, env=None, verify_token=verify_firebase_id_token,
@@ -109,7 +118,8 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                runtime_http_factory=_native_runtime_http,
                lifecycle_http_factory=NativeAuthLifecycleHttp,
                profile_photos_http=None,
-               profile_photos_http_factory=create_profile_photos_http):
+               profile_photos_http_factory=create_profile_photos_http,
+               imported_meeting_authority=None, imported_meeting_binding=None):
     """Construct WSGI app with injectable dependencies for offline tests."""
     if env is None:
         env = os.environ
@@ -140,7 +150,11 @@ def create_app(*, env=None, verify_token=verify_firebase_id_token,
                 return
             legacy_http = legacy_http_factory(env)
             media_http = media_http_factory(env)
-            runtime_http = runtime_http_factory(env)
+            if imported_meeting_authority is not None or imported_meeting_binding is not None:
+                runtime_http = runtime_http_factory(env, imported_authority=imported_meeting_authority,
+                                                   reviewed_binding=imported_meeting_binding)
+            else:
+                runtime_http = runtime_http_factory(env)
             if profile_photos_http is None:
                 profile_photos_http = profile_photos_http_factory(env)
             profile_photos_http = create_native_profile_photos_http(env, profile_photos_http)
