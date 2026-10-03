@@ -738,4 +738,189 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    '360px null gender correction retains original after lost ACK and preserves fixed gender',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final directory = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('clrs-null-gender-ui-'),
+      ))!;
+      final current = _profile()..['pol'] = null;
+      TimewebMutationRequest? original;
+      var posts = 0, lookups = 0;
+      final wire = _Wire((request) async {
+        expect(request.headers['authorization'], 'Bearer na1.synthetic-A');
+        if (request.url.path.contains('/operations/')) {
+          lookups++;
+          expect(
+            request.url.path.endsWith('/${original!.operationId}'),
+            isTrue,
+          );
+          expect(
+            request.url.queryParameters['requestHash'],
+            original!.requestHash,
+          );
+          expect(_journals(directory), hasLength(1));
+          return _reply(_receipt(original!, current));
+        }
+        if (request.method == 'GET') {
+          return _reply({..._view(), 'profile': current});
+        }
+        posts++;
+        final body =
+            jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+        expect(body['expectedUpdatedAt'], posts == 1 ? _stamp : _nextStamp);
+        expect(_journals(directory), hasLength(1));
+        if (posts == 1) {
+          expect(body['changes'], {'pol': 'ж'});
+          original = _request(body);
+          current['pol'] = 'ж';
+          current['updatedAt'] = _nextStamp;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode('{"error":"outcome_unknown"}')),
+            503,
+            headers: {
+              'content-type': 'application/json',
+              'cache-control': 'no-store',
+            },
+          );
+        }
+        expect(body['changes'], {'fullName': 'Corrected A'});
+        current['fullName'] = 'Corrected A';
+        current['updatedAt'] = '2026-10-02T12:00:00.000003Z';
+        return _reply(_receipt(_request(body), current));
+      });
+      final store = _Store();
+      var runtime = _runtime(store, wire, directory);
+      TimewebProfileEditFlow? opened;
+      bool? routeResult;
+      final gender = find.byKey(const ValueKey('timeweb-profile-gender'));
+      final location = find.byKey(const ValueKey('timeweb-profile-location'));
+      final save = find.byKey(const ValueKey('timeweb-profile-save'));
+      Future<void> openEditor() async {
+        routeResult = null;
+        await tester.tap(find.text('Open editor'));
+        await _waitFor(
+          tester,
+          () => find.byType(TimewebProfileEditPage).evaluate().isNotEmpty,
+        );
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> stopRuntime() async {
+        var stopped = false;
+        final stopping = runtime.stop().then((_) => stopped = true);
+        await _waitFor(tester, () => stopped);
+        await stopping;
+      }
+
+      try {
+        await tester.runAsync(() => runtime.start(remember: true));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: LrsTheme.theme,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () async {
+                    opened = await runtime.openProfileEditor();
+                    if (!context.mounted) return;
+                    routeResult = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => TimewebProfileEditPage(
+                          flow: opened!,
+                          onEditLocation: (_) async => null,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open editor'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await openEditor();
+        expect(opened!.canSetGender, isTrue);
+        expect(
+          tester.widget<DropdownButtonFormField<String>>(gender).initialValue,
+          isNull,
+        );
+        expect(tester.widget<TextButton>(location).onPressed, isNotNull);
+        expect(posts, 0);
+        await tester.ensureVisible(gender);
+        await tester.tap(gender);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Женский').last);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextButton>(location).onPressed, isNull);
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await _waitFor(
+          tester,
+          () =>
+              posts == 1 &&
+              tester.widget<ElevatedButton>(save).onPressed != null,
+        );
+        expect(opened!.needsCheck, isTrue);
+        expect(
+          tester.widget<DropdownButtonFormField<String>>(gender).onChanged,
+          isNull,
+        );
+        expect(current['profileDetailsSaved'], isFalse);
+        expect(current['isRegistrationEnd'], isFalse);
+        expect(current['age'], 0);
+        expect(current['rost'], isNull);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await stopRuntime();
+        expect(() => opened!.canSetGender, throwsStateError);
+        runtime = _runtime(store, wire, directory);
+        await tester.runAsync(() => runtime.start(remember: true));
+        await openEditor();
+        expect(opened!.needsCheck, isTrue);
+        expect(opened!.pol, 'ж');
+        expect(
+          opened!.canSetGender,
+          isFalse,
+        ); // Fresh canonical value is now fixed.
+        expect(gender, findsNothing);
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await _waitFor(tester, () => routeResult == true);
+        await tester.pumpAndSettle();
+        expect(posts, 1);
+        expect(lookups, 1);
+        expect(
+          _journals(directory),
+          isEmpty,
+        ); // Disk ACK precedes the successful return.
+        await openEditor();
+        expect(gender, findsNothing);
+        await tester.enterText(
+          find.byKey(const ValueKey('timeweb-profile-name')),
+          'Corrected A',
+        );
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await _waitFor(tester, () => routeResult == true);
+        await tester.pumpAndSettle();
+        expect(posts, 2);
+        expect(current['pol'], 'ж');
+        expect(current['relationStatus'], 'historical relation');
+        expect(current['profileDetailsSaved'], isFalse);
+        expect(current['isRegistrationEnd'], isFalse);
+        expect(_journals(directory), isEmpty);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await stopRuntime();
+        await tester.runAsync(() => directory.delete(recursive: true));
+      }
+    },
+  );
 }

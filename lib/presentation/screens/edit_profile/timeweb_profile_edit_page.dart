@@ -31,6 +31,7 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
   final _about = TextEditingController();
   final _interests = TextEditingController();
   bool? _children;
+  String? _gender;
   bool _busy = false;
   bool _invalidated = false;
   String? _notice;
@@ -47,6 +48,7 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
       _about.text = widget.flow.about;
       _interests.text = widget.flow.hobbi;
       _children = widget.flow.deti;
+      _gender = widget.flow.pol;
       if (widget.flow.needsCheck) {
         _notice =
             'Результат пока не подтверждён. Нажмите «Проверить результат».';
@@ -82,7 +84,8 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
       _height.text != (widget.flow.rost?.toString() ?? '') ||
       _about.text != widget.flow.about ||
       _interests.text != widget.flow.hobbi ||
-      _children != widget.flow.deti;
+      _children != widget.flow.deti ||
+      widget.flow.canSetGender && _gender != widget.flow.pol;
 
   Future<void> _editLocation() async {
     final callback = widget.onEditLocation;
@@ -128,6 +131,7 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
     _about.clear();
     _interests.clear();
     _children = null;
+    _gender = null;
     setState(() {});
     // Session invalidation closes this route. It never changes the app owner.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -186,6 +190,7 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
           age: int.tryParse(_age.text.trim()),
           rost: int.tryParse(_height.text.trim()),
           deti: _children,
+          pol: widget.flow.canSetGender ? _gender : null,
         )) {
       return;
     }
@@ -203,6 +208,7 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
               age: int.tryParse(_age.text.trim()),
               rost: int.tryParse(_height.text.trim()),
               deti: _children,
+              pol: widget.flow.canSetGender ? _gender : null,
             );
       // Observe the same operation within a bounded UI interval. A timeout
       // does not clear/retry a POST; the next tap checks that original handle.
@@ -349,6 +355,40 @@ class _TimewebProfileEditPageState extends State<TimewebProfileEditPage> {
                               : (value) => setState(() => _children = value),
                         ),
                         const SizedBox(height: 12),
+                        if (widget.flow.canSetGender) ...[
+                          DropdownButtonFormField<String>(
+                            key: const ValueKey('timeweb-profile-gender'),
+                            value: _gender,
+                            isExpanded: true,
+                            decoration: InputDecoration(
+                              labelText: context.tr('Пол'),
+                            ),
+                            items: [
+                              DropdownMenuItem(
+                                value: 'м',
+                                child: Text(context.tr('Мужской')),
+                              ),
+                              DropdownMenuItem(
+                                value: 'ж',
+                                child: Text(context.tr('Женский')),
+                              ),
+                              // A restored original intent is displayed exactly,
+                              // even if an older caller supplied another literal.
+                              if (pending &&
+                                  _gender != null &&
+                                  _gender != 'м' &&
+                                  _gender != 'ж')
+                                DropdownMenuItem(
+                                  value: _gender,
+                                  child: Text(_gender!),
+                                ),
+                            ],
+                            onChanged: _busy || pending || reload
+                                ? null
+                                : (value) => setState(() => _gender = value),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         TextFormField(
                           key: const ValueKey('timeweb-profile-interests'),
                           controller: _interests,

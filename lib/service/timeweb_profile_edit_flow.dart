@@ -103,6 +103,11 @@ final class TimewebProfileEditFlow {
   int? get rost => _value<int>('rost', _view.profile!.rost);
   bool? get deti => _value<bool>('deti', _view.profile!.deti);
   String? get pol => _value<String>('pol', _view.profile!.pol);
+  bool get canSetGender {
+    requireCurrent();
+    return _view.profile!.pol == null;
+  }
+
   String? get relationStatus =>
       _value<String>('relationStatus', _view.profile!.relationStatus);
   String _text(String key, String? source) => _value<String>(key, source) ?? '';
