@@ -27,6 +27,7 @@ final class TimewebMeetingChatFlow {
   TimewebMutationFailure? _failure;
   int _minimumRevision = 0;
   bool _closed = false, _available = true;
+  void Function()? _readAuthority;
   static const _limit = 30, _maximumMessages = 300;
 
   static Future<TimewebMeetingChatFlow> open({required TimewebAuthClient client,
@@ -44,8 +45,12 @@ final class TimewebMeetingChatFlow {
   void requireCurrent() {
     if (_closed) throw StateError('Meeting conversation is closed.');
     _lease.requireCurrent(); if (!_available) throw const TimewebMeetingNotFound();
+    _readAuthority?.call();
   }
-  bool get targetAvailable { _lease.requireCurrent(); return !_closed && _available; }
+  bool get targetAvailable {
+    _lease.requireCurrent(); if (_closed || !_available) return false;
+    try { requireCurrent(); return true; } on TimewebMeetingNotFound { return false; }
+  }
   Stream<AppSessionState> get sessionStates => _session.states;
   Duration get observationTimeout => _client.requestDeadline + const Duration(seconds: 2);
   String get ownerUid { requireCurrent(); return _lease.identity.uid; }
@@ -65,7 +70,7 @@ final class TimewebMeetingChatFlow {
     final future = (() async {
       try {
         final page = await _client.readMeetingMessages(_meetingId, limit: _limit, cursor: older ? _older : null);
-        requireCurrent(); page.requireCurrent();
+        requireCurrent(); page.requireCurrent(); _readAuthority = page.requireCurrent;
         if (page.chatRevision < _minimumRevision) throw const TimewebAuthException(TimewebAuthOperation.currentRead, TimewebAuthError.invalidResponse);
         final rows = <String, TimewebMeetingMessage>{}; final sequences = <int, String>{};
         for (final item in [...(older || updates ? _messages : <TimewebMeetingMessage>[]), ...page.items]) {

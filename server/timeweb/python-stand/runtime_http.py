@@ -18,11 +18,12 @@ from runtime_personal_chat import RuntimePersonalChatService, PersonalChatAccess
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
 from runtime_meeting_create import RuntimeMeetingCreateService, MeetingAccessRejected
 from runtime_meeting_join import RuntimeMeetingJoinService
+from runtime_meeting_membership import RuntimeMeetingMembershipService
 from runtime_meeting_chat import RuntimeMeetingChatService
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "meeting.join.v1", "meeting.leave.v1", "meeting.kick.v1", "meeting.send-text.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -49,6 +50,10 @@ def _route(path):
         return "profile.complete-test.v1", None, None
     if path == "/v1/runtime/me/geography":
         return "profile.edit-geography.v1", None, None
+    if path == "/v1/runtime/meetings/leave":
+        return "meeting.leave.v1", None, None
+    if path == "/v1/runtime/meetings/kick":
+        return "meeting.kick.v1", None, None
     if path == "/v1/runtime/meetings/join":
         return "meeting.join.v1", None, None
     if path == "/v1/runtime/meetings":
@@ -92,7 +97,7 @@ def _body(environ):
 
 def _create(env):
     store = RuntimeMutationStore.from_env(env)
-    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store), RuntimeMeetingChatService(store)
+    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store), RuntimeMeetingJoinService(store), RuntimeMeetingChatService(store), RuntimeMeetingMembershipService(store)
 
 
 class RuntimeMutationHttp:
@@ -117,7 +122,7 @@ class RuntimeMutationHttp:
             self._services = None
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
-        meeting_mutation = (environ.get("PATH_INFO") == "/v1/runtime/meetings/join"
+        meeting_mutation = (environ.get("PATH_INFO") in {"/v1/runtime/meetings/join", "/v1/runtime/meetings/leave", "/v1/runtime/meetings/kick"}
             or (environ.get("PATH_INFO") == "/v1/runtime/meetings"
                 and environ.get("REQUEST_METHOD") == "POST")
             or (environ.get("REQUEST_METHOD") == "POST"
@@ -193,6 +198,15 @@ class RuntimeMutationHttp:
                         raise RuntimeUnavailable()
                     outcome = self._services[6].send_text(identity, resource, operation_id,
                         body["text"], access_token=token)
+                elif operation in {"meeting.leave.v1", "meeting.kick.v1"}:
+                    expected = {"operationId", "meetingId"} | ({"targetUid"} if operation == "meeting.kick.v1" else set())
+                    if set(body) != expected:
+                        raise RuntimeInvalidRequest()
+                    if len(self._services) < 8:
+                        raise RuntimeUnavailable()
+                    method = self._services[7].kick if operation == "meeting.kick.v1" else self._services[7].leave
+                    outcome = method(identity, operation_id,
+                        {key: value for key, value in body.items() if key != "operationId"}, access_token=token)
                 elif operation == "meeting.join.v1":
                     if set(body) != {"operationId", "meetingId"}:
                         raise RuntimeInvalidRequest()

@@ -3,7 +3,7 @@
 The integration branch includes native meeting creation, self-only joining,
 list/detail/participants and member-only text discussion with their Flutter routes. The server is deployed
 to existing Timeweb stand 5179, GitLab commit
-`b93116683ed626eb08ca63dff7bb5f645ed99df6`.
+`a23d18a8b8e2a501fcc285754162395465fecd40`.
 The operator preview guard remains enabled; the main app deployment is stopped.
 The deployed message route returns404 without the operator proof and401 with proof
 but without a native bearer. These refusals are deployment/guard evidence,
@@ -84,17 +84,21 @@ an unresolved original operation.
 operationId and meetingId. It joins only the current actor, with no client-supplied
 member list. New group membership requires current eligible meeting authority;
 new individual membership requires the exact current invited UID. Existing active
-trusted membership returns an honest no-op and preserves joined_at. Left, kicked
-and untrusted memberships are not overwritten or automatically rejoined.
+trusted membership returns an honest no-op and preserves joined_at. An explicit
+new join may reactivate trusted voluntary-left membership after rechecking current
+eligibility; it increments membershipRevision and preserves original joined_at.
+Kicked or untrusted memberships remain refused; readers do not reactivate them.
 
 Success200 has result `{meetingId,joined:true,alreadyMember,membershipRevision}`;
 entityRevision equals membershipRevision. Matching committed errors are
 404meeting_not_found/profile_not_found and409meeting_unavailable/profile_not_ready.
-Join INSERT and receipt are atomic. Receipt lookup binds the original meetingId
-and current active self membership; changed access returns a short404 without
+Join INSERT or voluntary rejoin UPDATE and receipt are atomic. Receipt lookup
+binds the original meetingId and current active self membership with a revision
+at least the recorded revision; it cannot confirm a future revision or grant access
+after another exit. Changed access returns a short404 without
 logging out a healthy actor. Revoked native authority still returns401.
 
-Both writers require the already-supported provider-database permission model
+Meeting writers require the already-supported provider-database permission model
 and existing exact indexes; denied configuration fails closed. No grants, DDL,
 source rewriting, unrelated profile updates or imported membership history are
 introduced. Unknown COMMIT is reconciled by original receipt lookup only.
@@ -129,7 +133,7 @@ horizontal geography filters, metadata/roster panels on the left two-thirds.
 The same approved meeting guide is reused with legacy navigation disabled;
 its dialogs stay inside the owned native navigator. The participants link is
 `Участники встречи`. Discussion opens only after a fresh member-authorized
-message read; no fabricated meeting image is shown. Leave/kick actions, push and
+message read; no fabricated meeting image is shown. Push, archived history and
 imported-meeting serving remain separate cutover work.
 
 ## Current member-only text discussion
@@ -167,6 +171,35 @@ failure keeps the original. Real SDK translation and phone acceptance are not
 proven by the injected local widget fixture. Quotes, media, push and read markers
 remain unsupported by this message contract.
 
+## Native membership actions
+
+`POST /v1/runtime/meetings/leave` and `/kick` retain original operation receipts.
+Leave uses `{operationId,meetingId}`; kick adds exact targetUid. Only the current
+native organizer may kick another participant. An organizer can voluntarily leave
+without deleting the meeting or organizer relation. Absent leave is an honest
+no-op with membershipRevision/leftAt/entityRevision all null; no membership is
+invented. Already-left/kicked rows preserve existing timestamps. Active changes
+lock the meeting and exact member, update by the recorded member revision and
+commit the receipt atomically. Original joinedAt and all message rows remain.
+
+Leave success is exactly `{meetingId,left:true,alreadyLeft,membershipRevision,
+leftAt}`. Kick success is exactly `{meetingId,targetUid,kicked:true,alreadyKicked,
+membershipRevision,kickedAt,leftAt}`. entityRevision matches membershipRevision.
+Four existing declared errors remain, with kick-specific participant_not_found
+(404), organizer_required and cannot_kick_self (409). All unreceipted responses
+remain UNKNOWN on the client. A retained minimal original leave/kick receipt may
+be checked after membership loss; it confirms the past action and never grants
+current message or roster access. Active readers retain their membership checks.
+
+The client restores each original action by endpoint/UID/meeting/action without
+requiring a member-only message GET. This permits checking a lost reply to an
+already-committed exit after restart. Kick target is retained inside the original.
+Exact disk readback/ACK precedes local meeting-read generation retirement: held
+items, cursors, empty pages and late reads become unavailable, while the healthy
+native account and minimal owner-bound receipt remain. Personal chat is unchanged.
+The screen controls are being integrated separately from this reviewed client
+and server contract. Archive history after exit is not yet implemented.
+
 ## Focused evidence and limits
 
 Server evidence:29 focused creator/reader/HTTP cases, then4 targeted join cases
@@ -190,6 +223,15 @@ honest initials sit outside bubbles, manual translation below, and the composer
 is full width. Real avatar, notification, attachment and bottom-navigation
 readiness is not claimed. Root changed only the earlier participants link text
 after frozen join UI verification.
+
+Membership actions add six targeted backend cases (five new cases and the one
+affected join refusal case) plus five new client scenario groups. These cover
+creator exit/kick, voluntary rejoin and kick refusal, timestamp/no-op preservation,
+current ownership, unknown COMMIT, original-only lookup, disk ACK and read
+authority retirement. Scoped client analysis has no errors or warnings; 27
+pre-existing style information entries were left unchanged. Only brace lint fixes
+and the original closed-flow getter behavior changed after the focused client run;
+the final source hashes received independent backend peer acceptance.
 
 Frozen patches were independently reviewed, applied in order and matched their
 source manifests. Credentials remain outside source/APK. Full source hashes,

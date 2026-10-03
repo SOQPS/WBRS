@@ -34,7 +34,7 @@ class _JoinFailure(Exception):
         self.status = status; self.error = error
 
 
-def _member(cursor, execute, meeting_id, uid, *, readonly):
+def _member(cursor, execute, meeting_id, uid, *, readonly, allow_left=False):
     execute(MEMBER_SELECT + " WHERE mm.meeting_id = %s AND CAST(mm.meeting_id AS BINARY) = CAST(%s AS BINARY)"
         " AND mm.uid = %s AND CAST(mm.uid AS BINARY) = CAST(%s AS BINARY) LIMIT 1"
         + (" FOR SHARE OF mm" if readonly else " FOR UPDATE"), (meeting_id, meeting_id, uid, uid))
@@ -46,12 +46,12 @@ def _member(cursor, execute, meeting_id, uid, *, readonly):
     row = _member_row(rows[0])
     if row["meetingId"] != meeting_id or row["uid"] != uid:
         raise RuntimeUnavailable()
-    if row["trusted"] != 1 or row["leftAt"] is not None or row["kickedAt"] is not None:
+    if row["trusted"] != 1 or (row["leftAt"] is not None and not allow_left) or row["kickedAt"] is not None:
         raise _JoinFailure(409, "meeting_unavailable")
     return row
 
 
-def _target(cursor, execute, uid, meeting_id, now, *, readonly):
+def _target(cursor, execute, uid, meeting_id, now, *, readonly, allow_left=False):
     # Existing PK equality and exact byte comparison; never browse/import scan.
     execute(MEETING_SELECT + " WHERE m.meeting_id = %s AND CAST(m.meeting_id AS BINARY) = CAST(%s AS BINARY) LIMIT 1"
         + (" FOR SHARE OF m" if readonly else " FOR UPDATE"), (meeting_id, meeting_id))
@@ -65,7 +65,7 @@ def _target(cursor, execute, uid, meeting_id, now, *, readonly):
         raise RuntimeUnavailable()
     if _meeting_dto(row) is None:
         raise _JoinFailure(404, "meeting_not_found")
-    member = _member(cursor, execute, meeting_id, uid, readonly=readonly)
+    member = _member(cursor, execute, meeting_id, uid, readonly=readonly, allow_left=allow_left)
     actor = RuntimePeopleService._actor(cursor, execute, uid)
     profiles = RuntimeMeetingsService._profiles(cursor, execute,
         [target for target in (row["organizerUid"], row["invitedUid"]) if target is not None and target != uid])
@@ -84,7 +84,7 @@ class RuntimeMeetingJoinService:
         self._allow_join = getattr(store, "_env", {}).get("CLRS_RUNTIME_PERMISSION_MODEL") == "provider-database-v1"
         store.register_replay_guard(JOIN_OPERATION, self._replay_guard, response_guard=True)
 
-    def _current(self, cursor, execute, uid, request, *, readonly):
+    def _current(self, cursor, execute, uid, request, *, readonly, allow_left=False):
         if not self._allow_join:
             raise RuntimeUnavailable()
         _indexes(cursor, execute)
@@ -92,7 +92,7 @@ class RuntimeMeetingJoinService:
         failure = _current_profile(cursor, execute, uid, {"type": "групповая"}, now)
         if failure:
             raise _JoinFailure(*failure)
-        return _target(cursor, execute, uid, request["meetingId"], now, readonly=readonly)
+        return _target(cursor, execute, uid, request["meetingId"], now, readonly=readonly, allow_left=allow_left)
 
     def _replay_guard(self, cursor, execute, uid, request, response):
         request = validate_join(request)
@@ -105,7 +105,7 @@ class RuntimeMeetingJoinService:
         _integer(response["membershipRevision"])
         try:
             member = self._current(cursor, execute, uid, request, readonly=True)
-            if member is None or member["membershipRevision"] != response["membershipRevision"]:
+            if member is None or member["membershipRevision"] < response["membershipRevision"]:
                 raise _JoinFailure(409, "meeting_unavailable")
         except (_JoinFailure, RuntimeUnavailable):
             raise MeetingAccessRejected() from None
@@ -114,11 +114,24 @@ class RuntimeMeetingJoinService:
         request = validate_join(payload)
         def action(cursor, execute, uid):
             try:
-                member = self._current(cursor, execute, uid, request, readonly=False)
+                member = self._current(cursor, execute, uid, request, readonly=False, allow_left=True)
             except _JoinFailure as failure:
                 return failure.status, {"error": failure.error}, None
-            already = member is not None
-            if not already:
+            already = member is not None and member["leftAt"] is None
+            if member is not None and member["leftAt"] is not None:
+                previous = member["membershipRevision"]
+                _integer(previous + 1)
+                execute("""UPDATE clrs_staging.meeting_members SET left_at = NULL, membership_revision = %s
+ WHERE meeting_id = %s AND CAST(meeting_id AS BINARY) = CAST(%s AS BINARY)
+ AND uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY)
+ AND membership_revision = %s AND left_at IS NOT NULL AND kicked_at IS NULL""",
+                    (previous + 1, request["meetingId"], request["meetingId"], uid, uid, previous))
+                if cursor.rowcount != 1:
+                    raise RuntimeUnavailable()
+                member = _member(cursor, execute, request["meetingId"], uid, readonly=False)
+                if member is None or member["membershipRevision"] != previous + 1:
+                    raise RuntimeUnavailable()
+            elif not already:
                 stamp = _stamp(cursor, execute)
                 execute("""INSERT INTO clrs_staging.meeting_members
  (meeting_id, uid, joined_at, left_at, kicked_at, membership_revision, legacy_raw)

@@ -71,6 +71,86 @@ final class TimewebMeetingJoinReceipt {
   String toString() => 'TimewebMeetingJoinReceipt(<redacted>)';
 }
 
+final class TimewebMeetingLeaveRequest {
+  TimewebMeetingLeaveRequest({required this.meetingId}) {
+    if (!_meetingIdentifier(meetingId)) throw ArgumentError('Invalid native meeting.');
+  }
+  final String meetingId;
+  @override
+  String toString() => 'TimewebMeetingLeaveRequest(<redacted>)';
+}
+final class TimewebMeetingKickRequest {
+  TimewebMeetingKickRequest({required this.meetingId, required this.targetUid}) {
+    TimewebMeetingLeaveRequest(meetingId: meetingId);
+    if (!_currentIdentifier(targetUid)) throw ArgumentError('Invalid native participant.');
+  }
+  final String meetingId, targetUid;
+  @override
+  String toString() => 'TimewebMeetingKickRequest(<redacted>)';
+}
+final class TimewebMeetingLeaveReceipt {
+  TimewebMeetingLeaveReceipt._(this._data, this._check);
+  final Map<String, dynamic> _data;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  TimewebMeetingLeaveReceipt bindSessionGuard(void Function() guard) =>
+      TimewebMeetingLeaveReceipt._(_data, () { requireCurrent(); guard(); });
+  T _read<T>(String key) { _check(); return _data[key] as T; }
+  String get meetingId => _read('meetingId');
+  bool get left => _read('left');
+  bool get alreadyLeft => _read('alreadyLeft');
+  int? get membershipRevision => _read('membershipRevision');
+  String? get leftAt => _read('leftAt');
+  @override
+  String toString() => 'TimewebMeetingLeaveReceipt(<redacted>)';
+}
+final class TimewebMeetingKickReceipt {
+  TimewebMeetingKickReceipt._(this._data, this._check);
+  final Map<String, dynamic> _data;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  TimewebMeetingKickReceipt bindSessionGuard(void Function() guard) =>
+      TimewebMeetingKickReceipt._(_data, () { requireCurrent(); guard(); });
+  T _read<T>(String key) { _check(); return _data[key] as T; }
+  String get meetingId => _read('meetingId');
+  String get targetUid => _read('targetUid');
+  bool get kicked => _read('kicked');
+  bool get alreadyKicked => _read('alreadyKicked');
+  int get membershipRevision => _read('membershipRevision');
+  String get kickedAt => _read('kickedAt');
+  String get leftAt => _read('leftAt');
+  @override
+  String toString() => 'TimewebMeetingKickReceipt(<redacted>)';
+}
+
+// One bounded generation per client, separate from auth/receipt ownership. An
+// ACK retires held meeting reads, including empty pages and late responses.
+final _meetingGenerations = Expando<int>();
+final _meetingFlightChecks = Expando<void Function()>();
+void _invalidateMeetingReads(TimewebAuthClient owner) => _meetingGenerations[owner] = (_meetingGenerations[owner] ?? 0) + 1;
+void Function() _meetingReadCheck(_PeopleFlight f) => _meetingFlightChecks[f]!;
+bool _meetingMembershipKind(TimewebMutationKind kind) =>
+    kind == TimewebMutationKind.leaveMeeting || kind == TimewebMutationKind.kickMeetingParticipant;
+
+TimewebMutationResult _decodeMeetingMembership(TimewebMutationReference ref, int status, Map<String, dynamic> value, int? revision, bool replayed) {
+  final leave = ref._request.kind == TimewebMutationKind.leaveMeeting;
+  if (status != 200 || value['meetingId'] != ref._request._payload['meetingId']) { _mutationInvalidReply(); }
+  if (leave) {
+    if (!_mutationExact(value, {'meetingId','left','alreadyLeft','membershipRevision','leftAt'}) ||
+        value['left'] != true || value['alreadyLeft'] is! bool || revision != value['membershipRevision'] ||
+        !(value['membershipRevision'] == null ? value['leftAt'] == null && value['alreadyLeft'] == true :
+          _mutationInteger(value['membershipRevision']) && _mutationStamp(value['leftAt']))) { _mutationInvalidReply(); }
+    return TimewebMutationResult._(ref, TimewebMutationState.confirmed, status, revision: revision, replayed: replayed,
+      leftMeeting: TimewebMeetingLeaveReceipt._(value, ref.requireCurrent), receiptConfirmed: true);
+  }
+  if (!_mutationExact(value, {'meetingId','targetUid','kicked','alreadyKicked','membershipRevision','kickedAt','leftAt'}) ||
+      value['targetUid'] != ref._request._payload['targetUid'] || value['kicked'] != true || value['alreadyKicked'] is! bool ||
+      !_mutationInteger(value['membershipRevision']) || revision != value['membershipRevision'] ||
+      !_mutationStamp(value['kickedAt']) || !_mutationStamp(value['leftAt'])) { _mutationInvalidReply(); }
+  return TimewebMutationResult._(ref, TimewebMutationState.confirmed, status, revision: revision, replayed: replayed,
+    kickedParticipant: TimewebMeetingKickReceipt._(value, ref.requireCurrent), receiptConfirmed: true);
+}
+
 final class TimewebMeetingFilters {
   TimewebMeetingFilters._(this._query);
   final Map<String, String> _query;
@@ -243,12 +323,12 @@ TimewebMeetingMessagePage _decodeMeetingMessages(_PeopleFlight f, Map<String, dy
     if (value is! Map<String, dynamic> || !_mutationExact(value, {'meetingId','messageId','sequence','senderUid','text','createdAt'}) ||
         !_meetingMessageFields(value, id) || value['sequence'] > body['chatRevision'] ||
         cursor != null && value['sequence'] > cursor._capSequence! || previous != null && value['sequence'] >= previous || !ids.add(value['messageId'])) _peopleInvalid();
-    previous = value['sequence']; rows.add(TimewebMeetingMessage._(Map.unmodifiable(value), f.checkSession));
+    previous = value['sequence']; rows.add(TimewebMeetingMessage._(Map.unmodifiable(value), _meetingReadCheck(f)));
   }
-  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, f.checkSession,
+  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, _meetingReadCheck(f),
     cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)), capSequence: cursor?._capSequence ?? rows.first.sequence,
     beforeSequence: rows.last.sequence, revision: cursor?._revision ?? body['chatRevision']);
-  return TimewebMeetingMessagePage._(List.unmodifiable(rows), continuation, id, body['chatRevision'], f.checkSession);
+  return TimewebMeetingMessagePage._(List.unmodifiable(rows), continuation, id, body['chatRevision'], _meetingReadCheck(f));
 }
 
 TimewebMutationResult _decodeSentMeetingMessage(TimewebMutationReference ref, int status, Map<String, dynamic> result, int? revision, bool replayed) {
@@ -293,11 +373,16 @@ Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, 
       if (!identical(cursor._owner, owner) || cursor._scope != scope) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.invalidRequest);
       cursor.requireCurrent();
     }
-    final key = '${owner._epoch}\u0000$scope\u0000${cursor?._value ?? ''}';
+    final generation = _meetingGenerations[owner] ?? 0;
+    final key = '${owner._epoch}\u0000$generation\u0000$scope\u0000${cursor?._value ?? ''}';
     final existing = owner._peopleFlights[key];
     if (existing != null) return existing.result.future;
     if (owner._peopleFlights.length >= 4) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.unavailable);
     final flight = _PeopleFlight(owner, null, null, null, owner._epoch, session.uid, key);
+    _meetingFlightChecks[flight] = () {
+      flight.checkSession();
+      if ((_meetingGenerations[owner] ?? 0) != generation) throw const TimewebMeetingNotFound();
+    };
     owner._peopleFlights[key] = flight;
     unawaited(_executeMeetingRead(flight, query, id, cursor, scope, messages));
     return flight.result.future;
@@ -325,6 +410,7 @@ Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, Str
     final catalog = messages ? const <String, dynamic>{} : await _pinnedGeographyCatalog(); f.check();
     final value = messages ? _decodeMeetingMessages(f, reply.body!, query, id!, cursor, scope)
       : _decodeMeetingRead(f, reply.body!, query, id, cursor, scope, catalog); f.check();
+    _meetingReadCheck(f)();
     if (!f.result.isCompleted) f.result.complete(value);
   } catch (error) {
     if (!f.result.isCompleted) {
@@ -377,7 +463,7 @@ TimewebMeeting _decodeMeeting(_PeopleFlight f, Object? value, Map<String, dynami
   if (value['title'] is! String || (value['title'] as String).trim().isEmpty || value['description'] is! String ||
       !_currentNullableText(value['title'], 1000) || !_currentNullableText(value['description'], 4096) ||
       !(catalog['countries'] as List).any((row) => row['code'] == value['countryCode'] && (row['regions'] as List).contains(value['region']))) _peopleInvalid();
-  return TimewebMeeting._(Map.unmodifiable(value), f.checkSession);
+  return TimewebMeeting._(Map.unmodifiable(value), _meetingReadCheck(f));
 }
 
 Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, String scope, Map<String, dynamic> catalog) {
@@ -392,7 +478,7 @@ Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String
       (participants ? body['meetingId'] != id : body['scope'] != query['scope']) || body['items'] is! List || (body['items'] as List).length > limit) _peopleInvalid();
   final next = body['nextCursor'];
   if (next != null && (!_validReadCursor(next is String ? next : '') || next == cursor?._value)) _peopleInvalid();
-  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, f.checkSession, cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)));
+  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, _meetingReadCheck(f), cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)));
   String? previous;
   if (participants) {
     final items = <TimewebMeetingParticipant>[];
@@ -401,9 +487,9 @@ Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String
           !_currentIdentifier(value['uid']) || !_currentNullableText(value['fullName'], 1000) || !_currentNullableText(value['primaryGroup'], 191) ||
           !_currentNullableStamp(value['joinedAt']) || !_mutationInteger(value['membershipRevision']) || value['avatar'] != null || value['mediaReady'] != false ||
           previous != null && _currentCompareIds(previous, value['uid']) >= 0) _peopleInvalid();
-      previous = value['uid']; items.add(TimewebMeetingParticipant._(Map.unmodifiable(value), f.checkSession));
+      previous = value['uid']; items.add(TimewebMeetingParticipant._(Map.unmodifiable(value), _meetingReadCheck(f)));
     }
-    return TimewebMeetingPage<TimewebMeetingParticipant>._(List.unmodifiable(items), continuation, f.checkSession);
+    return TimewebMeetingPage<TimewebMeetingParticipant>._(List.unmodifiable(items), continuation, _meetingReadCheck(f));
   }
   final items = <TimewebMeeting>[];
   for (final value in body['items'] as List) {
@@ -413,7 +499,7 @@ Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String
         item.kind == 'individual' && ![item.organizerUid, item.invitedUid].contains(f.uid)) _peopleInvalid();
     previous = item.meetingId; items.add(item);
   }
-  return TimewebMeetingPage<TimewebMeeting>._(List.unmodifiable(items), continuation, f.checkSession);
+  return TimewebMeetingPage<TimewebMeeting>._(List.unmodifiable(items), continuation, _meetingReadCheck(f));
 }
 
 TimewebMutationResult _decodeCreatedMeeting(TimewebMutationReference ref, int status, Map<String, dynamic> result, int? revision, bool replayed) {

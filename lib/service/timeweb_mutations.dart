@@ -14,6 +14,8 @@ enum TimewebMutationKind {
   createMeeting,
   joinMeeting,
   sendMeetingText,
+  leaveMeeting,
+  kickMeetingParticipant,
 }
 
 enum TimewebMutationState { confirmed, declaredFailure, unknown, notFound }
@@ -35,6 +37,9 @@ enum TimewebMutationFailure {
   profileNotReady,
   meetingUnavailable,
   meetingNotFound,
+  participantNotFound,
+  organizerRequired,
+  cannotKickSelf,
 }
 
 /// Only the reviewed editable fields. Original strings are preserved for the
@@ -263,6 +268,16 @@ final class TimewebMutationRequest {
     return TimewebMutationRequest._(TimewebMutationKind.sendMeetingText, operationId,
       Map.unmodifiable({'meetingId': meetingId, 'text': text}), ['v1', 'runtime', 'meetings', meetingId, 'messages']);
   }
+  factory TimewebMutationRequest.leaveMeeting({required String operationId, required String meetingId}) {
+    TimewebMeetingLeaveRequest(meetingId: meetingId);
+    return TimewebMutationRequest._(TimewebMutationKind.leaveMeeting, operationId,
+      Map.unmodifiable({'meetingId': meetingId}), ['v1', 'runtime', 'meetings', 'leave']);
+  }
+  factory TimewebMutationRequest.kickMeetingParticipant({required String operationId, required String meetingId, required String targetUid}) {
+    TimewebMeetingKickRequest(meetingId: meetingId, targetUid: targetUid);
+    return TimewebMutationRequest._(TimewebMutationKind.kickMeetingParticipant, operationId,
+      Map.unmodifiable({'meetingId': meetingId, 'targetUid': targetUid}), ['v1', 'runtime', 'meetings', 'kick']);
+  }
   final TimewebMutationKind kind;
   final String operationId;
   final Map<String, dynamic> _payload;
@@ -279,6 +294,8 @@ final class TimewebMutationRequest {
     TimewebMutationKind.createMeeting => 'meeting.create.v1',
     TimewebMutationKind.joinMeeting => 'meeting.join.v1',
     TimewebMutationKind.sendMeetingText => 'meeting.send-text.v1',
+    TimewebMutationKind.leaveMeeting => 'meeting.leave.v1',
+    TimewebMutationKind.kickMeetingParticipant => 'meeting.kick.v1',
   };
   Map<String, dynamic> get _wireBody => {
     'operationId': operationId,
@@ -352,6 +369,8 @@ final class TimewebMutationResult {
     TimewebMeetingCreateReceipt? meeting,
     TimewebMeetingJoinReceipt? joinedMeeting,
     TimewebSentMeetingMessageReceipt? meetingMessage,
+    TimewebMeetingLeaveReceipt? leftMeeting,
+    TimewebMeetingKickReceipt? kickedParticipant,
     String? updatedAt,
     bool receiptConfirmed = false,
     bool originalPostDeclaredFailure = false,
@@ -368,6 +387,8 @@ final class TimewebMutationResult {
        _meeting = meeting,
        _joinedMeeting = joinedMeeting,
        _meetingMessage = meetingMessage,
+       _leftMeeting = leftMeeting,
+       _kickedParticipant = kickedParticipant,
        _updatedAt = updatedAt,
        _receiptConfirmed = receiptConfirmed,
        _originalPostDeclaredFailure = originalPostDeclaredFailure;
@@ -387,6 +408,8 @@ final class TimewebMutationResult {
   final TimewebMeetingCreateReceipt? _meeting;
   final TimewebMeetingJoinReceipt? _joinedMeeting;
   final TimewebSentMeetingMessageReceipt? _meetingMessage;
+  final TimewebMeetingLeaveReceipt? _leftMeeting;
+  final TimewebMeetingKickReceipt? _kickedParticipant;
   final String? _updatedAt;
   final bool _receiptConfirmed;
   final bool _originalPostDeclaredFailure;
@@ -487,6 +510,9 @@ final class TimewebMutationResult {
     requireCurrent();
     return _meetingMessage;
   }
+
+  TimewebMeetingLeaveReceipt? get leftMeeting { requireCurrent(); return _leftMeeting; }
+  TimewebMeetingKickReceipt? get kickedParticipant { requireCurrent(); return _kickedParticipant; }
 
   @override
   String toString() => 'TimewebMutationResult(<redacted>)';
@@ -794,6 +820,9 @@ void _acknowledgeMutation(
       '${reference._request.operation}\u0000${reference._request.operationId}';
   if (identical(owner._mutationReferences[key], reference)) {
     owner._mutationReferences.remove(key);
+    if (_meetingMembershipKind(reference._request.kind) && reference._settledResult?._state == TimewebMutationState.confirmed) {
+      _invalidateMeetingReads(owner);
+    }
   }
   // Receipts and definite original POST 400/401/404/409/429 may be retired
   // after durable caller acknowledgement. Unknown/not-found/lookup failures
@@ -813,7 +842,8 @@ TimewebMutationResult _retainMutationOutcome(
       !result._receiptConfirmed &&
       !const {TimewebMutationKind.openPersonalChat,
         TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting,
-        TimewebMutationKind.sendMeetingText}.contains(reference._request.kind)) {
+        TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
+        TimewebMutationKind.kickMeetingParticipant}.contains(reference._request.kind)) {
     return confirmed!;
   }
   reference._settledResult = result;
@@ -1207,7 +1237,8 @@ TimewebMutationResult _decodeMutationReply(
 }) {
   ref.requireCurrent();
   if (reply.status == 401) {
-    if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
+    if (!lookup && const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
+        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
       return TimewebMutationResult._(ref, TimewebMutationState.unknown, 401,
         failure: TimewebMutationFailure.unauthorized,
         unknownReason: TimewebAuthError.unauthorized);
@@ -1255,14 +1286,16 @@ TimewebMutationResult _decodeMutationReply(
         unknownReason: TimewebAuthError.unavailable,
       );
     }
-    if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
+    if (const {TimewebMutationKind.createMeeting, TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
+        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
       // Every short refusal lacks the original operation/hash receipt. Only a
       // matching committed envelope below can retire this durable create intent.
       final failure = switch ((reply.status, body['error'])) {
         (400, 'invalid_request') => TimewebMutationFailure.invalidRequest,
         (404, 'not_found') => TimewebMutationFailure.notFound,
         (404, 'meeting_unavailable') when lookup => TimewebMutationFailure.meetingUnavailable,
-        (404, 'meeting_not_found') when const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind) => TimewebMutationFailure.meetingNotFound,
+        (404, 'meeting_not_found') when const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
+        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind) => TimewebMutationFailure.meetingNotFound,
         (409, 'operation_conflict') => TimewebMutationFailure.conflict,
         (429, 'rate_limited') => TimewebMutationFailure.rateLimited,
         _ => null,
@@ -1331,12 +1364,16 @@ TimewebMutationResult _decodeMutationReply(
   final replayed = body['replayed'] as bool;
   final revision = body['entityRevision'] as int?;
   if (const [404, 409].contains(reply.status)) {
-    if (const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText}.contains(ref._request.kind)) {
+    if (const {TimewebMutationKind.joinMeeting, TimewebMutationKind.sendMeetingText, TimewebMutationKind.leaveMeeting,
+        TimewebMutationKind.kickMeetingParticipant}.contains(ref._request.kind)) {
       final failure = switch ((reply.status, result['error'])) {
         (404, 'meeting_not_found') => TimewebMutationFailure.meetingNotFound,
         (404, 'profile_not_found') => TimewebMutationFailure.notFound,
         (409, 'meeting_unavailable') => TimewebMutationFailure.meetingUnavailable,
         (409, 'profile_not_ready') => TimewebMutationFailure.profileNotReady,
+        (404, 'participant_not_found') when _meetingMembershipKind(ref._request.kind) => TimewebMutationFailure.participantNotFound,
+        (409, 'organizer_required') when _meetingMembershipKind(ref._request.kind) => TimewebMutationFailure.organizerRequired,
+        (409, 'cannot_kick_self') when _meetingMembershipKind(ref._request.kind) => TimewebMutationFailure.cannotKickSelf,
         _ => null,
       };
       if (!_mutationExact(result, {'error'}) || revision != null || failure == null) _mutationInvalidReply();
@@ -1428,6 +1465,9 @@ TimewebMutationResult _decodeMutationReply(
   final frozen = _immutableJson(result) as Map<String, dynamic>;
   final request = ref._request;
   final check = ref.requireCurrent;
+  if (_meetingMembershipKind(request.kind)) {
+    return _decodeMeetingMembership(ref, reply.status, frozen, revision, replayed);
+  }
   if (request.kind == TimewebMutationKind.sendMeetingText) {
     return _decodeSentMeetingMessage(ref, reply.status, frozen, revision, replayed);
   }

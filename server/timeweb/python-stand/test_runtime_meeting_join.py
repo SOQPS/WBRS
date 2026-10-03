@@ -140,7 +140,6 @@ class MeetingJoinTests(unittest.TestCase):
             (404, "meeting_not_found", lambda db: db.state["meetings"][MID].update(legacy_raw={"fields": {"admin": {"stringValue": "actor"}}})),
             (404, "meeting_not_found", lambda db: db.state["meetings"][MID].update(deletedAt=STAMP)),
             (409, "meeting_unavailable", lambda db: db.state["profiles"]["actor"].update(invisible_until="2030-01-01T00:00:00Z")),
-            (409, "meeting_unavailable", lambda db: db.state["meeting_members"].update({(MID, "peer"): db.member("peer", leftAt=STAMP)})),
             (409, "meeting_unavailable", lambda db: db.state["meeting_members"].update({(MID, "peer"): db.member("peer", leftAt=STAMP, kickedAt=STAMP)})),
             (409, "meeting_unavailable", lambda db: db.state["meeting_members"].update({(MID, "peer"): db.member("peer", legacy_raw={})})),
             (404, "profile_not_found", lambda db: db.state["profiles"].pop("peer")),
