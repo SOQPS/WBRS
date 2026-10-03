@@ -1,7 +1,7 @@
 """Isolated, disabled-by-default current meeting read projection.
 
 The policy argument is a trusted integration prerequisite, NOT evidence that
-empty retained source proves native origin. No HTTP factory is wired here.
+a retained source marker proves native origin. No HTTP factory is wired here.
 See TIMEWEB_NATIVE_MEETINGS.md before enabling any production caller.
 """
 from __future__ import annotations
@@ -19,9 +19,11 @@ from runtime_people import (RuntimePeopleService, _SELECT as PROFILE_SELECT,
                             _row as profile_row, _decode_person, _uid,
                             validate_people_filters)
 from runtime_reads import RuntimeReadRejected, _number, _text, _timestamp
+from runtime_meeting_create import native_origin_sql, local_datetime
+from runtime_geography import resolve_geography
 
 
-TRUSTED_POLICY = "reviewed-native-empty-raw-v1"
+TRUSTED_POLICY = "reviewed-native-marker-v1"
 MEETING_ORDER = "starts_at_asc_meeting_id_asc_null_first"
 PARTICIPANT_ORDER = "uid_binary_asc"
 MAX_PAGE = 30
@@ -32,7 +34,7 @@ MAX_CURSOR_CHARS = 4096
 CURSOR_SECONDS = 300
 MEETING_FIELDS = ("meetingId", "organizerUid", "invitedUid", "kind", "title",
     "description", "countryCode", "region", "startsAt", "createdAt", "updatedAt",
-    "revision", "deletedAt", "trusted", "valid")
+    "revision", "deletedAt", "trusted", "valid", "localDatetime")
 MEMBER_FIELDS = ("meetingId", "uid", "joinedAt", "leftAt", "kickedAt",
                  "membershipRevision", "trusted")
 
@@ -41,8 +43,8 @@ def _stamp(column):
     return f"DATE_FORMAT({column}, '%%Y-%%m-%%dT%%H:%%i:%%s.%%fZ')"
 
 
-def _empty_source(alias):
-    return f"(JSON_TYPE({alias}.legacy_raw) = 'OBJECT' AND JSON_LENGTH({alias}.legacy_raw) = 0)"
+def _native_source(alias):
+    return native_origin_sql(alias, member=alias == "mm")
 
 
 def _meeting_selection():
@@ -54,14 +56,15 @@ def _meeting_selection():
         columns.append(f"CASE WHEN {predicate} THEN m.{column} ELSE NULL END")
         valid.append(predicate)
     columns += [_stamp("m." + column) for column in ("starts_at", "created_at", "updated_at")]
-    columns += ["m.revision", _stamp("m.deleted_at"), _empty_source("m"),
-                "(" + " AND ".join(valid) + ")"]
+    columns += ["m.revision", _stamp("m.deleted_at"), _native_source("m"),
+                "(" + " AND ".join(valid) + ")",
+                "CASE WHEN " + _native_source("m") + " = 1 THEN JSON_UNQUOTE(JSON_EXTRACT(m.legacy_raw, '$.localDatetime')) ELSE NULL END"]
     return "SELECT " + ",\n ".join(columns) + "\n FROM clrs_staging.meetings AS m"
 
 
 MEETING_SELECT = _meeting_selection()
 MEMBER_SELECT = "SELECT mm.meeting_id, mm.uid, " + ", ".join(
-    _stamp("mm." + column) for column in ("joined_at", "left_at", "kicked_at")) + ", mm.membership_revision, " + _empty_source("mm") + " FROM clrs_staging.meeting_members AS mm"
+    _stamp("mm." + column) for column in ("joined_at", "left_at", "kicked_at")) + ", mm.membership_revision, " + _native_source("mm") + " FROM clrs_staging.meeting_members AS mm"
 
 
 def meetings_query(scope, anchor=None):
@@ -137,6 +140,13 @@ def _meeting_row(source):
     for field in ("trusted", "valid"):
         if type(row[field]) is not int or row[field] not in (0, 1):
             raise RuntimeUnavailable()
+    if row["trusted"] == 1:
+        try:
+            local_datetime(row["localDatetime"])
+        except RuntimeInvalidRequest:
+            raise RuntimeUnavailable() from None
+        if row["startsAt"] is not None:
+            raise RuntimeUnavailable()
     return row
 
 
@@ -150,7 +160,13 @@ def _meeting_dto(row):
             result[field] = _text(row[field], maximum, nullable=True)
     except RuntimeUnavailable:
         return None
-    result.update(media=None, mediaReady=False)
+    try:
+        if not isinstance(result["title"], str) or not result["title"].strip() or type(result["description"]) is not str:
+            return None
+        resolve_geography({key: result[key] for key in ("countryCode", "region")})
+    except RuntimeInvalidRequest:
+        return None
+    result.update(localDatetime=row["localDatetime"], media=None, mediaReady=False)
     return result
 
 
@@ -162,6 +178,8 @@ def _member_row(source):
     for field in ("joinedAt", "leftAt", "kickedAt"):
         _timestamp(row[field], nullable=True)
     _number(row["membershipRevision"])
+    if row["trusted"] == 1:
+        _timestamp(row["joinedAt"])
     if type(row["trusted"]) is not int or row["trusted"] not in (0, 1):
         raise RuntimeUnavailable()
     if row["kickedAt"] is not None and row["leftAt"] is None:

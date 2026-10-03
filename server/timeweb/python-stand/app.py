@@ -19,6 +19,7 @@ from native_credentials import unique_json, CredentialUnavailable
 from legacy_conversation_http import LegacyConversationHttp
 from legacy_private_media_http import LegacyPrivateMediaHttp, MediaHttpReply
 from runtime_http import RuntimeMutationHttp
+from runtime_meetings import RuntimeMeetingsService, TRUSTED_POLICY
 from native_auth_lifecycle_http import NativeAuthLifecycleHttp
 from runtime_profile_photos_http import RuntimeProfilePhotoMediaReply, RuntimeProfilePhotosHttpReply
 from runtime_profile_photos_factory import create_profile_photos_http
@@ -93,12 +94,18 @@ def _peer(environ):
     return environ.get("REMOTE_ADDR", "")
 
 
+def _native_runtime_http(env):
+    # The reviewed server-only creator marker policy does not publish imports.
+    return RuntimeMutationHttp(env, meetings_factory=lambda store, current_env:
+        RuntimeMeetingsService.from_env(store, current_env, trusted_policy=TRUSTED_POLICY))
+
+
 def create_app(*, env=None, verify_token=verify_firebase_id_token,
                profile_reader=read_own_profile, database_probe=probe_database,
                native_service_factory=NativeAuthService.from_env,
                legacy_http_factory=LegacyConversationHttp,
                media_http_factory=LegacyPrivateMediaHttp,
-               runtime_http_factory=RuntimeMutationHttp,
+               runtime_http_factory=_native_runtime_http,
                lifecycle_http_factory=NativeAuthLifecycleHttp,
                profile_photos_http=None,
                profile_photos_http_factory=create_profile_photos_http):

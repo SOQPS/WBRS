@@ -16,10 +16,11 @@ from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest,
 from runtime_chat import RuntimeChatService
 from runtime_personal_chat import RuntimePersonalChatService, PersonalChatAccessRejected
 from runtime_profile import RuntimeProfileService, ProfileEditInvalid
+from runtime_meeting_create import RuntimeMeetingCreateService, MeetingAccessRejected
 from runtime_read_http import RuntimeReadHttp
 
 
-_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+_OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _MAX_BODY = 65536
 
@@ -46,6 +47,8 @@ def _route(path):
         return "profile.complete-test.v1", None, None
     if path == "/v1/runtime/me/geography":
         return "profile.edit-geography.v1", None, None
+    if path == "/v1/runtime/meetings":
+        return "meeting.create.v1", None, None
     if path == "/v1/runtime/personal-chats":
         return "chat.open-personal.v1", None, None
     match = re.fullmatch(r"/v1/runtime/chats/([^/]{1,191})/(messages|read)", path)
@@ -79,11 +82,11 @@ def _body(environ):
 
 def _create(env):
     store = RuntimeMutationStore.from_env(env)
-    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store)
+    return store, RuntimeChatService(store), RuntimeProfileService(store), RuntimePersonalChatService(store), RuntimeMeetingCreateService(store)
 
 
 class RuntimeMutationHttp:
-    def __init__(self, env, *, service_factory=_create, read_factory=None):
+    def __init__(self, env, *, service_factory=_create, read_factory=None, meetings_factory=None):
         self._enabled = (env.get("CLRS_RUNTIME_WRITES_ENABLED") == "1"
             and env.get("CLRS_RUNTIME_MEMBERSHIP_AUTHORITY") == "canonical-current-v1")
         self._services = None
@@ -93,7 +96,7 @@ class RuntimeMutationHttp:
             except Exception:
                 pass
         self._reads = RuntimeReadHttp(env, self._services[0] if self._services else None,
-                                      read_factory=read_factory)
+                                      read_factory=read_factory, meetings_factory=meetings_factory)
 
     def close(self):
         self._reads.close()
@@ -104,8 +107,10 @@ class RuntimeMutationHttp:
             self._services = None
 
     def dispatch(self, environ, *, native_service=None, native_configured=False):
-        read_reply = self._reads.dispatch(environ, native_service=native_service,
-                                          native_configured=native_configured)
+        create_meeting = (environ.get("PATH_INFO") == "/v1/runtime/meetings"
+                          and environ.get("REQUEST_METHOD") == "POST")
+        read_reply = None if create_meeting else self._reads.dispatch(
+            environ, native_service=native_service, native_configured=native_configured)
         if read_reply is not None:
             return read_reply
         route = _route(environ.get("PATH_INFO", ""))
@@ -164,10 +169,16 @@ class RuntimeMutationHttp:
                 if operation == "chat.open-personal.v1":
                     if set(body) != {"operationId", "targetUid"}:
                         raise RuntimeInvalidRequest()
-                    if len(self._services) != 4:
+                    if len(self._services) < 4:
                         raise RuntimeUnavailable()
                     outcome = self._services[3].open_personal(identity, body["targetUid"],
                         operation_id, access_token=token)
+                elif operation == "meeting.create.v1":
+                    if len(self._services) < 5:
+                        raise RuntimeUnavailable()
+                    outcome = self._services[4].create(identity, operation_id,
+                        {key: value for key, value in body.items() if key != "operationId"},
+                        access_token=token)
                 elif operation == "chat.send-text.v1":
                     if set(body) != {"operationId", "text", "quoteMessageId"}:
                         raise RuntimeInvalidRequest()
@@ -203,6 +214,8 @@ class RuntimeMutationHttp:
             return RuntimeHttpReply(status, outcome.payload)
         except (RuntimeInvalidRequest, ProfileEditInvalid):
             return RuntimeHttpReply("400 Bad Request", {"error": "invalid_request"})
+        except MeetingAccessRejected:
+            return RuntimeHttpReply("404 Not Found", {"error": "meeting_unavailable"})
         except PersonalChatAccessRejected:
             return RuntimeHttpReply("404 Not Found", {"error": "person_unavailable"})
         except (NativeRejected, RuntimeRejected):

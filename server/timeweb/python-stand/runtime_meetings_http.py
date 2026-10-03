@@ -17,12 +17,13 @@ from runtime_reads import RuntimeReadRejected, _text, _timestamp, _number
 from runtime_people import _uid, validate_people_filters
 from runtime_meetings import (RuntimeMeetingsService, MEETING_ORDER, PARTICIPANT_ORDER,
                              MAX_PAGE, MAX_PUBLIC_BYTES)
+from runtime_meeting_create import local_datetime
 
 
 PREFIX = "/v1/runtime/meetings"
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,4096}\Z")
 _MEETING_KEYS = {"meetingId", "organizerUid", "invitedUid", "kind", "title", "description",
-    "countryCode", "region", "startsAt", "createdAt", "updatedAt", "revision", "media", "mediaReady"}
+    "countryCode", "region", "startsAt", "localDatetime", "createdAt", "updatedAt", "revision", "media", "mediaReady"}
 _PARTICIPANT_KEYS = {"uid", "fullName", "primaryGroup", "joinedAt", "membershipRevision", "avatar", "mediaReady"}
 
 
@@ -121,6 +122,13 @@ def _meeting(value):
         _text(value[field], maximum, nullable=True)
     for field in ("startsAt", "createdAt", "updatedAt"):
         _timestamp(value[field], nullable=True)
+    if value["localDatetime"] is not None:
+        try:
+            local_datetime(value["localDatetime"])
+        except RuntimeInvalidRequest:
+            raise RuntimeUnavailable() from None
+        if value["startsAt"] is not None:
+            raise RuntimeUnavailable()
     _number(value["revision"])
     return value
 

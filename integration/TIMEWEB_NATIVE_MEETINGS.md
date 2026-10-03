@@ -1,9 +1,11 @@
-# Native current meetings: isolated read projection
+# Native current meeting creation and reads
 
-Status: source projection and 13 focused synthetic scenarios are verified locally.
-No HTTP adapter/factory, Flutter route, deployment, permission change, schema
-change, registration/join mutation, native meeting chat or cutover is included.
-The current APK44 bytes are unchanged and do not contain this work.
+Status: reviewed creator/marker, receipt repair and app construction wiring are
+applied to the integration branch. One focused invocation passed 29/29 synthetic
+scenarios (13 reader +11 HTTP +5 creator), including the reviewed app factory.
+The server implementation is ready for the existing guarded Timeweb preview;
+this source review does not prove a real user creation or production cutover.
+Flutter routes, flags, permissions, schema, APK44 and imported rows are unchanged.
 
 ## Authority and explicit integration prerequisite
 
@@ -13,23 +15,28 @@ Empty canonical meetings return an empty list with `nextCursor: null`. No
 retained import table, raw text, Firebase identity, legacy meeting fallback or
 media URL is used as returned data.
 
-The constructor requires the trusted server-side argument
-`trusted_policy='reviewed-native-empty-raw-v1'`. `from_env(store, env)` returns
-`None` even when the existing runtime flags and cursor key are configured. An
-environment variable, HTTP request or empty `legacy_raw` cannot supply this
-policy. A separate production integration must establish and review provenance
-for the native writer and the intended public visibility of its empty-source
-rows before supplying that argument. This module does **not** prove that `{}`
-alone means native/public. Default production wiring is absent and remains off.
+The constructor now requires the reviewed server-side policy
+`trusted_policy='reviewed-native-marker-v1'`. `from_env(store, env)` still returns
+`None` without explicit trusted injection. No environment flag or request can
+supply that authority. Defaults in RuntimeReadHttp/RuntimeMeetingsHttp remain closed. A separate
+reviewed app-local construction patch explicitly injects this policy using the
+existing shared store; the isolated factory test is not deployment evidence.
 
-Within this explicitly selected narrow policy, group rows with empty source are
-public metadata; individual rows are private to their exact canonical organizer
-and invited UID. Nonempty meeting source is never published, including imported
-rows whose source privacy/hide semantics have not been projected into reviewed
-canonical visibility. Such rows need a separate reviewed projection/backfill;
-this work does not erase or rewrite them. Nonempty member source is not trusted
-as an active/no-kick decision: it excludes that member from the roster and denies
-an actor whose current own membership row has that source.
+Only the exact flat server-built meeting marker is accepted:
+`{origin:'clrs-native-meeting-v1',localDatetime:'03.10.2026 19:15'}`.
+`localDatetime` must have the current MeetingForm `dd.MM.yyyy HH:mm` shape and a
+real calendar date. The SQL `starts_at` stays NULL. The only accepted member
+marker is `{origin:'clrs-native-meeting-member-v1'}`, with a non-null server-time
+`joined_at`. Extra keys, wrong types/values, old empty raw and original imported
+Firestore typed roots are excluded. The existing 155 imported meetings remain
+excluded; their original source and unknown historical joined times are not
+changed. Markers are not cryptographic proof: trusted injection still requires
+review of the sole native writer and retained-source import paths.
+
+Group marker rows are public metadata; individual marker rows remain private
+to their exact organizer/invitee. The existing current visibility, left/kicked,
+actor pre/post checks, bounded sparse pagination and participant policy remain.
+Native title/description/geography must validate; source fallback is not used.
 
 The existing `RuntimeMutationStore.read_authenticated` owns the real native
 token/current account checks before and after the transaction, TLS, MySQL8.4
@@ -41,12 +48,11 @@ Reviewed permissions and factory/HTTP wiring are separate prerequisites, not
 changes made here. Provider-wide approved permissions, if already in use, do not
 replace the provenance review.
 
-## Service contract for a later HTTP adapter
+## Read service contract
 
-Proposed future paths below are not routed by this patch. The adapter must use
-the existing authenticated read facade, reject duplicate/unknown query options,
-preserve the 64KiB envelope and distinguish current resource denial from native
-actor authentication failure.
+The existing default-closed HTTP adapter preserves native authority, strict
+query/body bounds and the 64KiB envelope. This isolated patch adjusts its exact
+DTO validator and the mutation dispatcher without activating a reader factory.
 
 `GET /v1/runtime/meetings` corresponds to
 `meetings(identity, access_token=..., scope='group', limit=30, cursor=None,
@@ -58,9 +64,8 @@ pinned geography catalog. Region requires that country and must be an exact
 member of its region list. No trimming, translation or case rewrite is done.
 The catalog pin remains
 `6d696906e2ca14e09dc8516606567768b6161ceed82f84a0bdf5961ddfa93a05`.
-Filters compare canonical `country_code` and `region` bytes. Partial/null stored
-geography remains nullable in an unfiltered response; source geography is not a
-fallback and no derived country name is added.
+Filters compare canonical `country_code` and `region` bytes. Native marker rows must contain the exact valid geography pair. Source
+geography is not a fallback and no derived country name is added.
 
 The exact page is:
 
@@ -77,7 +82,7 @@ The exact page is:
 
 Each item has exactly `meetingId`, `organizerUid`, `invitedUid`, `kind`, `title`,
 `description`, `countryCode`, `region`, `startsAt`, `createdAt`, `updatedAt`,
-`revision`, `media: null`, `mediaReady: false`. `kind` in an item is group or
+`revision`, nullable `localDatetime`, `media: null`, `mediaReady: false`. `kind` in an item is group or
 individual; the outer `kind` denotes canonical read authority. Revision is a
 nonnegative signed 64-bit integer. All three timestamps and all four text fields
 are nullable. Timestamps use exact UTC `YYYY-MM-DDTHH:mm:ss.ffffffZ`; title is
@@ -214,3 +219,90 @@ is separately hashable; no immutable APK or deployment claim is made.
 | `server/timeweb/python-stand/test_runtime_meetings.py` | `267c4235fba5e7ddd8b652cfe83f33f5884f891f25b3d22faf5dd4229ee8d0f4` |
 
 Sorted JSON manifest SHA256: `21427425cfd297f4d01b4ac444e6573fb8fd07b7f155f990003fe21d3f83e215`.
+
+## Isolated native creator review patch
+
+`POST /v1/runtime/meetings`, operation `meeting.create.v1`, accepts exactly
+`{operationId,name,description,countryCode,region,datetime,type}` and additionally
+`invitedUid` only when `type='индивидуальная'`; group type is `'групповая'`.
+Name is nonblank bounded 1000/4000, description 4096/16384 (empty allowed), both
+retain bytes; date is the exact current dot-date local text. Geography reuses
+`resolve_geography` and the unchanged catalog pin above. Clients cannot supply
+raw/origin, organizer, member lists, server timestamps, country/city/name copies,
+media or notification fields. Individual self-invitation is rejected.
+
+The actor's current canonical profile is SHARE-locked and decoded by the existing
+own-profile decoder; its onboarding must be `search` (complete flag or recognized
+current primary group). An individual invitee reuses the existing current pair
+visibility/locked account-profile guard. Missing own profile returns a committed
+404 `profile_not_found`, nonready own profile 409 `profile_not_ready`, and an
+unavailable invitee 404 `person_unavailable`.
+
+The fixed server action uses the existing RuntimeMutationStore session/account
+locks and transaction. It validates the existing exact nonprefix binary primary,
+creator-request and member indexes; no DDL is performed. The actor and original
+operation ID determine the meeting ID. A unique organizer/request key and the
+existing receipt store retain that original intent. Meeting INSERT and its only
+initial member (the creator) are atomic; no membership is fabricated for the
+invitee. Raw markers and created/updated/joined server times are server-built.
+Readback verifies the row and member before the receipt is committed.
+
+Success HTTP201 has existing receipt envelope/result
+`{meetingId,created:true,meetingRevision:0,localDatetime}`, entityRevision0.
+Original POST/receipt lookup repeats that outcome with the same owner/hash/ID;
+unknown COMMIT requires fresh lookup and never causes an automatic POST/new ID.
+Error-only declared receipts remain failures. Success lookup rechecks the current
+profile/visibility, exact marked row and active creator membership. Target denial
+is thin404 `meeting_unavailable` without logging out a healthy actor; a revoked
+actor still receives401. A different actor cannot read A's receipt/private detail.
+
+Creation is refused with503 under the existing strict-tables permission model;
+only the already-supported provider database permission model can insert these
+tables. Fresh grant verification is unchanged, and no permissions are expanded.
+The adapter defaults stay closed. The reviewed app-local factory injection
+selects the native creator marker policy. UI/Firestore POST paths and
+provider deployment are not switched here.
+Local dates are displayed as wall-clock text, not UTC or guaranteed calendar
+ordering: the existing NULL-first `starts_at/id` keyset order remains deterministic.
+
+One invocation of `test_runtime_meeting_create` passed four focused scenarios:
+actual HTTP create/replay/lookup/detail/roster plus imported/empty marker denial;
+unknown COMMIT both committed/not-found after restart without second INSERT and
+owner B isolation; invalid fields/geography/profile, denied grants and atomic
+member rollback; individual visibility, kick, target404 and revoked actor401.
+No SQL server, network, keys, cloud/provider API, deployment, flags, broad suite,
+APK or schema changes were used. Original imported joined history remains unknown.
+
+## Receipt repair and fixture compatibility layer
+
+A native success replay now opts into the original-operation-ID guard. The store
+passes the lookup/POST receipt key to this guard without changing old request or
+response guard signatures. Response meetingId must equal the ID derived from the
+exact current actor plus that original operation ID; current row creation_request_id
+must equal the original operation ID as well. A different same-owner/same-payload meeting cannot
+confirm a pending original operation. Error-only declared receipts remain intact.
+The added case substitutes a valid other-operation success into an unknown-commit
+receipt, verifies rejection, then checks the genuine original success and the old
+personal response guard. Existing reader/HTTP fixtures use exact native markers
+and localDatetime; UTC-bearing rows do not match this narrow native marker policy.
+
+## Separate app wiring layer and focused verification
+
+`app.py` uses an app-local default runtime factory that constructs the existing
+RuntimeMutationHttp with meetings_factory calling
+RuntimeMeetingsService.from_env(store,env,trusted_policy=TRUSTED_POLICY).
+Custom injected runtime factories keep the original factory(env) signature.
+This reuses the existing native bearer/session authority, common SQL store,
+cursor key, runtime flags and preview guard. There is no new pool, resource,
+permission or flag; denied/missing existing permissions/configuration still fail
+closed. It publishes only the exact new native markers, never imported meetings.
+Adapter/class defaults without explicit policy remain closed.
+
+The focused factory case executes this exact app construction function (without
+importing unrelated auth/media configuration), supplies the existing synthetic
+store through the constructor seam, and verifies native detail200/localDatetime
+through the real reader and HTTP adapter, plus unwired default503. The three
+agreed modules passed in one invocation: 29 tests, 0.207s. No further suites were
+run. The immutable review layers were applied in order and matched their frozen
+source hashes. Real user acceptance and the native Flutter creation/invitee path
+remain separate work; this is not an APK or cutover claim.

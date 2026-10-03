@@ -1,5 +1,7 @@
 """Focused native HTTP/current-store synthetic cases; no TCP or real accounts."""
 import copy
+import ast
+from pathlib import Path
 import unittest
 from urllib.parse import urlencode
 
@@ -89,7 +91,7 @@ class RuntimeMeetingsHttpTests(unittest.TestCase):
             native_configured=configured)
 
     def test_default_policy_missing_reader_disabled_flags_and_lazy_factory_are_closed(self):
-        self.db.add_meeting("m")  # {} is deliberately not enough for default factory.
+        self.db.add_meeting("m")  # Even a valid marker cannot supply the default factory policy.
         default = RuntimeMeetingsHttp({**READ_ENV, "CLRS_RUNTIME_MEETINGS_TRUSTED_POLICY": TRUSTED_POLICY}, self.store)
         for _ in range(2):
             reply = self.request(adapter=default)
@@ -276,6 +278,29 @@ class RuntimeMeetingsHttpTests(unittest.TestCase):
         self.assertIsNone(self.request("/v1/runtime/chats/chat/messages", adapter=dispatcher, REQUEST_METHOD="POST"))
         dispatcher.close()
         self.assertEqual(self.request(adapter=dispatcher).status, "503 Service Unavailable")
+        self.assertFalse(self.store._closed)
+
+    def test_exact_app_default_factory_injects_reviewed_policy_without_changing_closed_adapters(self):
+        # Execute only the app's small construction function; importing the whole
+        # app would initialize unrelated authentication/media configuration.
+        from runtime_http import RuntimeMutationHttp
+        tree = ast.parse(Path(__file__).with_name("app.py").read_text())
+        factory = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_native_runtime_http")
+        create = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "create_app")
+        defaults = {arg.arg: value for arg, value in zip(create.args.kwonlyargs, create.args.kw_defaults)}
+        self.assertEqual(defaults["runtime_http_factory"].id, factory.name)
+        namespace = {"RuntimeMeetingsService": RuntimeMeetingsService, "TRUSTED_POLICY": TRUSTED_POLICY,
+            "RuntimeMutationHttp": lambda config, **options: RuntimeMutationHttp(config,
+                service_factory=lambda _: (self.store, None, None), **options)}
+        exec(compile(ast.Module(body=[factory], type_ignores=[]), "app-construction", "exec"), namespace)
+        self.db.add_meeting("m")
+        assembled = namespace[factory.name](READ_ENV)
+        reply = self.request(PREFIX + "/m", adapter=assembled)
+        self.assertEqual(reply.status, "200 OK")
+        self.assertEqual(reply.payload["meeting"]["localDatetime"], "03.10.2026 19:15")
+        self.assertIsNone(RuntimeMeetingsService.from_env(self.store, READ_ENV))
+        closed = RuntimeMutationHttp(READ_ENV, service_factory=lambda _: (self.store, None, None))
+        self.assertEqual(self.request(adapter=closed).status, "503 Service Unavailable")
         self.assertFalse(self.store._closed)
 
 

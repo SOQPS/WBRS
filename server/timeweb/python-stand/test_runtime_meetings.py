@@ -11,6 +11,7 @@ from runtime_meetings import (RuntimeMeetingsService, TRUSTED_POLICY, MEETING_OR
     meetings_query, participants_query, profiles_query, actor_members_query)
 from runtime_mutations import RuntimeInvalidRequest, RuntimeRejected, RuntimeUnavailable, canonical_json
 from runtime_reads import RuntimeReadRejected
+from runtime_meeting_create import MEETING_ORIGIN, MEMBER_ORIGIN
 from runtime_people import ROW_FIELDS, _TEXT_FIELDS
 from test_runtime_people import profile, source, PeopleDatabase, PeopleCursor
 from test_runtime_mutations import FakeConnection, ENV, STAMP, NOW, store_for
@@ -18,7 +19,7 @@ from test_runtime_mutations import FakeConnection, ENV, STAMP, NOW, store_for
 
 KEY = bytes(range(32))
 READ_ENV = {**ENV, "CLRS_LEGACY_READ_CURSOR_KEY_B64": base64.b64encode(KEY).decode()}
-MEETING_KEYS = set(MEETING_FIELDS[:12]) | {"media", "mediaReady"}
+MEETING_KEYS = set(MEETING_FIELDS[:12]) | {"localDatetime", "media", "mediaReady"}
 MEMBER_KEYS = {"uid", "fullName", "primaryGroup", "joinedAt", "membershipRevision", "avatar", "mediaReady"}
 
 
@@ -27,12 +28,13 @@ def meeting(meeting_id, **changes):
         "kind": "group", "title": "  Встреча  ", "description": "Описание\n",
         "countryCode": "RU", "region": "Москва", "startsAt": None,
         "createdAt": None, "updatedAt": STAMP, "revision": 0, "deletedAt": None,
-        "legacy_raw": {}, **changes}
+        "localDatetime": "03.10.2026 19:15",
+        "legacy_raw": {"origin": MEETING_ORIGIN, "localDatetime": "03.10.2026 19:15"}, **changes}
 
 
 def member(meeting_id, uid, **changes):
     return {"meetingId": meeting_id, "uid": uid, "joinedAt": STAMP, "leftAt": None,
-            "kickedAt": None, "membershipRevision": 0, "legacy_raw": {}, **changes}
+            "kickedAt": None, "membershipRevision": 0, "legacy_raw": {"origin": MEMBER_ORIGIN}, **changes}
 
 
 def _after_meeting(row, anchor):
@@ -96,7 +98,11 @@ class MeetingsCursor(PeopleCursor):
                 rows = [] if row is None or row["deletedAt"] is not None else [row]
             self.rows = []
             for row in rows:
-                data = {**row, "trusted": int(type(row["legacy_raw"]) is dict and row["legacy_raw"] == {}), "valid": 1}
+                raw = row["legacy_raw"]; local = raw.get("localDatetime") if type(raw) is dict else None
+                trusted = (type(raw) is dict and set(raw) == {"origin", "localDatetime"}
+                    and raw["origin"] == MEETING_ORIGIN and type(local) is str
+                    and len(local.encode()) == 16 and row["startsAt"] is None)
+                data = {**row, "trusted": int(trusted), "valid": 1, "localDatetime": local if trusted else None}
                 for field, maximum in (("title", 1000), ("description", 4096), ("countryCode", 191), ("region", 191)):
                     value = data[field]
                     if type(value) is str and (len(value) > maximum or len(value.encode(errors="surrogatepass")) > maximum * 4):
@@ -116,7 +122,7 @@ class MeetingsCursor(PeopleCursor):
                 assert tuple(meeting_ids) == tuple(params[count:count * 2]) and params[-3] == params[-2]
                 rows = [row for row in state["meeting_members"].values()
                         if row["meetingId"] in meeting_ids and row["uid"] == uid]
-            self.rows = [tuple({**row, "trusted": int(type(row["legacy_raw"]) is dict and row["legacy_raw"] == {})}[field]
+            self.rows = [tuple({**row, "trusted": int(row["legacy_raw"] == {"origin": MEMBER_ORIGIN})}[field]
                                for field in MEMBER_FIELDS) for row in rows]
         elif sql.startswith("SELECT p.uid, a.disabled") and "p.uid IN (" in sql:
             category = "profiles"
@@ -180,8 +186,8 @@ class RuntimeMeetingsTests(unittest.TestCase):
         self.assertFalse(any("FROM clrs_staging.legacy_" in sql for sql, _ in self.db.calls))
 
     def test_nullable_exact_allowlist_no_private_source_media_or_writes(self):
-        self.db.add_meeting("m", title="  Название\t ", description="Описание\n", region=None,
-                            countryCode=None, startsAt=None, createdAt=None, updatedAt=None,
+        self.db.add_meeting("m", title="  Название\t ", description="Описание\n",
+                            startsAt=None, createdAt=None, updatedAt=None,
                             media_id="private-media", creation_request_id="private-operation")
         before = copy.deepcopy(self.db.state)
         page = self.meetings(); detail = self.detail()
@@ -191,8 +197,10 @@ class RuntimeMeetingsTests(unittest.TestCase):
         self.assertEqual(set(item), MEETING_KEYS)
         self.assertEqual(item, page["items"][0]); self.assertEqual(item["title"], "  Название\t ")
         self.assertIsNone(item["media"]); self.assertIs(item["mediaReady"], False)
-        for key in ("startsAt", "createdAt", "updatedAt", "countryCode", "region", "invitedUid"):
+        for key in ("startsAt", "createdAt", "updatedAt", "invitedUid"):
             self.assertIsNone(item[key])
+        self.assertEqual(item["localDatetime"], "03.10.2026 19:15")
+        self.assertEqual((item["countryCode"], item["region"]), ("RU", "Москва"))
         encoded = canonical_json(detail)
         for forbidden in (b"email", b"balance", b"role", b"legacy", b"private", b"media_id", b"creation_request", b"participantCount"):
             self.assertNotIn(forbidden, encoded)
@@ -323,7 +331,7 @@ class RuntimeMeetingsTests(unittest.TestCase):
             ids.extend(m["meetingId"] for m in page["items"])
             if page["nextCursor"] is not None:
                 self.assertEqual(self.reads._codec.open("cursor", page["nextCursor"])["exp"], original_exp)
-        self.assertEqual(ids, ["null-a", "null-b", "timed-a", "timed-b", "later"])
+        self.assertEqual(ids, ["null-a", "null-b"])  # UTC rows are excluded by this native marker policy
         self.assertNotIn("null-a", original_cursor); self.assertNotIn("actor", original_cursor)
         for options in ({"limit": 2}, {"limit": 1, "scope": "individual"},
                         {"limit": 1, "country_code": "RU"}, {"limit": 1, "region": "Москва", "country_code": "RU"}):

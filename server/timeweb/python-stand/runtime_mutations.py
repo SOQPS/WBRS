@@ -51,7 +51,7 @@ class MutationOutcome:
 MAX_INTEGER = 2 ** 63 - 1
 MAX_JSON_BYTES = 65536
 MAX_RECEIPT_BYTES = 131072
-OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
+OPERATIONS = frozenset({"chat.send-text.v1", "chat.mark-read.v1", "chat.open-personal.v1", "meeting.create.v1", "profile.edit.v1", "profile.complete-test.v1", "profile.edit-geography.v1"})
 RECEIPT_QUERY = """SELECT request_hash, state, response_status, result, entity_revision,
  completed_at FROM clrs_staging.idempotency_receipts
  WHERE actor_uid = %s AND operation = %s AND idempotency_key = %s LIMIT 1"""
@@ -182,14 +182,15 @@ class RuntimeMutationStore:
                       autocommit=False, charset="utf8mb4")
         return config
 
-    def register_replay_guard(self, operation, callback, *, response_guard=False):
+    def register_replay_guard(self, operation, callback, *, response_guard=False, operation_id_guard=False):
         if operation not in OPERATIONS or not callable(callback) or operation in self._replay_guards:
             raise RuntimeUnavailable()
         # Trusted service setup only, before HTTP dispatch. The stored original
         # request lets hash-only reconciliation check current chat membership.
-        if type(response_guard) is not bool:
+        if (type(response_guard) is not bool or type(operation_id_guard) is not bool
+                or operation_id_guard and not response_guard):
             raise RuntimeUnavailable()
-        self._replay_guards[operation] = (callback, response_guard)
+        self._replay_guards[operation] = (callback, response_guard, operation_id_guard)
 
     def _grants(self, rows):
         model = self._env.get("CLRS_RUNTIME_PERMISSION_MODEL", "strict-tables-v1")
@@ -402,11 +403,13 @@ class RuntimeMutationStore:
     def _replayed(self, cursor, execute, uid, operation, operation_id, digest, row):
         status, wrapper, revision = self._receipt(row, digest)
         guard = self._replay_guards.get(operation)
-        if operation.startswith("chat.") and guard is None:
+        if operation.startswith(("chat.", "meeting.")) and guard is None:
             raise RuntimeUnavailable()
         if guard is not None:
-            callback, response_guard = guard
-            if response_guard:
+            callback, response_guard, operation_id_guard = guard
+            if operation_id_guard:
+                callback(cursor, execute, uid, operation_id, wrapper["request"], wrapper["response"])
+            elif response_guard:
                 callback(cursor, execute, uid, wrapper["request"], wrapper["response"])
             else:
                 callback(cursor, execute, uid, wrapper["request"])
