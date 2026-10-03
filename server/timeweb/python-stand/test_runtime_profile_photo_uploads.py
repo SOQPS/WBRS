@@ -33,6 +33,22 @@ class PhotoCursor(FakeCursor):
         if db.fail_contains and db.fail_contains in sql: raise OSError("synthetic denied write")
         if "information_schema.statistics" in sql:
             self.rows = [( *row, None) for row in sorted(_PARTS)] if db.indexes_ok else []
+        elif sql.startswith("SELECT profile_details_saved, registration_complete"):
+            assert params[0] == params[1]
+            uid = params[0]
+            if uid in state["profiles"]:
+                initial = state.get("initial_profiles", {}).get(uid)
+                values = (initial["profileDetailsSaved"], initial["isRegistrationEnd"]) if initial is not None else state["flags"][uid]
+                self.rows = [tuple(values)]
+        elif sql.startswith("SELECT p.media_id, p.ordinal, p.is_primary"):
+            assert params[0] == params[1]
+            for photo in sorted(state["photos"].get(params[0], []), key=lambda row: row[1]):
+                media = state["media"].get(photo[0])
+                if media is None: continue  # Actual SQL is an inner exact-MID join.
+                copied = list(media)
+                if len(copied[3].encode("utf-8")) > 128: copied[3] = None
+                self.rows.append((*photo, state.get("firebase", {}).get(photo[0]), *copied))
+            self.rows = self.rows[:51 if "LIMIT 51" in sql else 21]
         elif sql.startswith("SELECT uid, DATE_FORMAT"):
             assert params[0] == params[1]
             stamp = state["profiles"].get(params[0]); self.rows = [(params[0], stamp)] if stamp else []
@@ -71,7 +87,8 @@ class PhotoDatabase(FakeDatabase):
         super().__init__(); self.env = {**__import__('test_runtime_mutations').ENV, "CLRS_RUNTIME_PERMISSION_MODEL": "provider-database-v1"}
         self.grant_rows = [("GRANT USAGE ON *.* TO 'fixture'@'%' REQUIRE SSL",),
             ("GRANT SELECT, INSERT, UPDATE ON `clrs_staging`.* TO 'fixture'@'%'",)]
-        self.state.update(profiles={"actor": STAMP, "peer": STAMP}, photos={}, media={})
+        self.state.update(profiles={"actor": STAMP, "peer": STAMP}, photos={}, media={},
+            flags={"actor": [0, 0], "peer": [0, 0]})
         self.indexes_ok = True; self.revoke_at_append = False
 
     def connect(self, **config):
@@ -218,7 +235,13 @@ class NativePhotoUploadTests(unittest.TestCase):
             self.assertEqual(result.status, "400 Bad Request")
         db.indexes_ok = False
         self.assertEqual(call("/v1/runtime/profile/photos/prepare", {"operationId": OP, **PAYLOAD}).status, "503 Service Unavailable")
-        db.indexes_ok = True; db.state["photos"]["actor"] = [["legacy-" + str(i), i, int(i == 0)] for i in range(20)]
+        db.indexes_ok = True; db.state["photos"]["actor"] = []
+        for ordinal in range(20):
+            prepare_id = f"12345678-1234-4234-8234-{500 + ordinal:012d}"
+            mid, key = photo_identity("actor", prepare_id)
+            db.state["media"][mid] = [mid, "actor", "profile", key, PAYLOAD["mimeType"], PAYLOAD["byteSize"],
+                PAYLOAD["sha256"], "ready", 1, 1, 1]
+            db.state["photos"]["actor"].append([mid, ordinal, int(ordinal == 0)])
         limited = call("/v1/runtime/profile/photos/prepare", {"operationId": OP, **PAYLOAD})
         self.assertEqual(limited.payload["result"], {"error": "photo_limit_reached"})
         native = Native(); adapter = RuntimeProfilePhotoUploadsHttp(db.env)
