@@ -41,7 +41,7 @@ class GalleryCursor(PhotoCursor):
             self.rows = [tuple(state['flags'][uid])]
         elif sql.startswith('SELECT a.uid'):
             account = state['accounts'][uid]
-            self.rows = [(uid, *account[:2], uid, *state['flags'][uid], None, {}, state['profiles'][uid])]
+            self.rows = [(uid, *account[:2], uid, *state['flags'][uid], state.get('invisible', {}).get(uid), {}, state['profiles'][uid])]
         elif sql.startswith('SELECT p.media_id'):
             for photo in state['photos'].get(uid, []):
                 media = state['media'][photo[0]]
@@ -189,6 +189,10 @@ class NativeGalleryTests(unittest.TestCase):
             def _reader(self): return self.service
             def close(self): self.closed += 1
         legacy = LegacyHttp()
+        db.state['flags']['peer'] = [1, 1]
+        db.state['media']['legacy-peer'] = ['legacy-peer', 'peer', 'profile', 'clrs-import-quarantine/'+'b'*64,
+            'image/jpeg', 1, 'b'*64, 'ready', 0, 1, 1]
+        db.state['photos']['peer'] = [['legacy-peer', 0, 1]]
         read_store = RuntimeMutationStore(db.env, db.tokens, connect=db.connect, clock=lambda: NOW)
         self.addCleanup(read_store.close)
         settings = {**db.env, factory.GATE: '1',

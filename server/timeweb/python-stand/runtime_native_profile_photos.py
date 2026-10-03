@@ -1,4 +1,4 @@
-"""Own-only native gallery proof; imported reader/HTTP/lease implementation unchanged."""
+"""Current-visible native gallery proof; imported reader/HTTP/lease implementation unchanged."""
 from __future__ import annotations
 import hashlib
 import hmac
@@ -25,17 +25,21 @@ COMMITS_SQL = """SELECT idempotency_key, request_hash, state, response_status,
  ORDER BY idempotency_key LIMIT 21 FOR SHARE"""
 
 
-def profile_photo_branch(store, identity, target_uid, *, access_token):
-    if _uid(target_uid) != identity.uid: return "legacy"
+def profile_photo_branch(store, identity, target_uid, *, access_token, clock=time.time):
+    target_uid = _uid(target_uid)
     def action(cursor, execute, uid):
-        execute(NATIVE_GALLERY_SQL.replace("LIMIT 21", "LIMIT 51"), (uid, uid)); rows = cursor.fetchall()
+        actor = _account(_rows(cursor, execute, ACTOR_SQL, (uid, uid)), uid)
+        _, _, before = _target(cursor, execute, target_uid, actor, datetime.fromtimestamp(clock(), timezone.utc))
+        execute(NATIVE_GALLERY_SQL.replace("LIMIT 21", "LIMIT 51"), (target_uid, target_uid)); rows = cursor.fetchall()
         if len(rows) > 50: raise RuntimeProfilePhotoNotFound()
-        if rows and all(type(row[7]) is str and row[7].startswith("clrs-import-quarantine/")
-                and type(row[12]) is int and row[12] == 0 for row in rows):
-            return {"branch": "legacy"}
-        try: native_gallery(rows, uid)
-        except Exception: raise RuntimeProfilePhotoNotFound() from None
-        return {"branch": "native"}
+        branch = "legacy" if rows and all(type(row[7]) is str and row[7].startswith("clrs-import-quarantine/")
+            and type(row[12]) is int and row[12] == 0 for row in rows) else "native"
+        if branch == "native":
+            try: native_gallery(rows, target_uid)
+            except Exception: raise RuntimeProfilePhotoNotFound() from None
+        _, _, after = _target(cursor, execute, target_uid, actor, datetime.fromtimestamp(clock(), timezone.utc))
+        if after != before: raise RuntimeProfilePhotoNotFound()
+        return {"branch": branch}
     return store.read_authenticated(identity, action, access_token=access_token)["branch"]
 
 
@@ -60,19 +64,18 @@ class RuntimeNativeProfilePhotosService(RuntimeProfilePhotosService):
         except Exception: raise RuntimeUnavailable() from None
 
     def _context(self, cursor, execute, actor_uid, target_uid):
-        if actor_uid != target_uid: raise RuntimeProfilePhotoNotFound()
         self._check(); actor = _account(_rows(cursor, execute, ACTOR_SQL, (actor_uid, actor_uid)), actor_uid)
         _, _, before = _target(cursor, execute, target_uid, actor,
             datetime.fromtimestamp(self._clock(), timezone.utc))
-        stamp = self._uploads._profile(cursor, execute, actor_uid)
-        photos = self._uploads._photos(cursor, execute, actor_uid)
-        execute(NATIVE_GALLERY_SQL, (actor_uid, actor_uid))
-        try: rows = native_gallery(cursor.fetchall(), actor_uid)
+        stamp = self._uploads._profile(cursor, execute, target_uid)
+        photos = self._uploads._photos(cursor, execute, target_uid)
+        execute(NATIVE_GALLERY_SQL, (target_uid, target_uid))
+        try: rows = native_gallery(cursor.fetchall(), target_uid)
         except Exception: raise RuntimeProfilePhotoNotFound() from None
         if [row[:3] for row in rows] != photos or stamp is None: raise RuntimeProfilePhotoNotFound()
         receipts = {}
         if rows:
-            execute(COMMITS_SQL, (actor_uid, actor_uid, COMMIT_OPERATION)); commits = cursor.fetchall()
+            execute(COMMITS_SQL, (target_uid, target_uid, COMMIT_OPERATION)); commits = cursor.fetchall()
             if len(commits) > 20: raise RuntimeProfilePhotoNotFound()
             for row in commits:
                 if len(row) != 7: raise RuntimeUnavailable()
@@ -91,9 +94,9 @@ class RuntimeNativeProfilePhotosService(RuntimeProfilePhotosService):
             receipt = receipts.get(row[0])
             if receipt is None: raise RuntimeProfilePhotoNotFound()
             operation_id, request, response = receipt
-            try: fields, record = photo_record(actor_uid, request, row[4:])
+            try: fields, record = photo_record(target_uid, request, row[4:])
             except PhotoUploadTargetRejected: raise RuntimeProfilePhotoNotFound() from None
-            execute(RECEIPT_QUERY + ' FOR SHARE', (actor_uid, PREPARE_OPERATION, request['prepareOperationId']))
+            execute(RECEIPT_QUERY + ' FOR SHARE', (target_uid, PREPARE_OPERATION, request['prepareOperationId']))
             original = cursor.fetchone()
             if original is None: raise RuntimeProfilePhotoNotFound()
             status, wrapper, revision = self._store._receipt(original, request_digest(fields))
