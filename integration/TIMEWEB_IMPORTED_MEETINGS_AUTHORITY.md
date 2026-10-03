@@ -1,7 +1,7 @@
 # Imported meeting read authority: unmounted source seam
 
 This patch supports list/detail/roster for an explicitly reviewed imported
-cohort whose schedules match the current local16 wire contract. It is source
+cohort with a supported exact local schedule or canonical UTC timestamp. It is source
 readiness only. No real barrier/final-delta evidence, production manifest,
 issuer, app injection, activation, grant or SQL mutation was produced here.
 It does not establish readiness for all imported meetings.
@@ -62,10 +62,24 @@ for roster eligibility; leaving a public group does not hide its public metadata
 Invalid provenance or metadata cannot fall back to native/legacy visibility.
 Cursor filtering binds the complete authority fingerprint, including generation.
 
-Only exact `dd.MM.yyyy HH:mm` source-local schedule, starts_at NULL and current
-supported geography/DTO are accepted. UTC timestamp, one-digit day/month and
-unknown schedules are explicitly refused. No UTC guess or canonical date repair
-is made. Their client compatibility remains a required later step.
+Policy `reviewed-imported-meetings-read-schedules-v2` has two exclusive wire
+branches using the existing fields: localDatetime is the original calendar-valid
+`d[d].M[M].yyyy H[H]:mm` source string and startsAt is NULL, or localDatetime is
+NULL and startsAt is the canonical `YYYY-MM-DDTHH:mm:ss.ffffffZ` UTC value.
+Local day/month/hour may have one or two digits; the source spelling is retained.
+UTC years must fit SQL DATETIME, 1000..9999. The original typed timestamp stays
+unchanged in retained raw; the existing reviewed `_schedule` supplies its SQL6
+representation and refuses a nonzero nanosecond remainder. Neither read branch
+guesses a timezone or converts local time into UTC. Both missing, both present,
+offset/truncated UTC, invalid calendar and disagreement with retained source are
+closed. Native create/request/receipt validation remains strict local16.
+
+The pure `meeting_schedule.read_schedule` helper is shared with HTTP wire
+validation and both helper/HTTP source hashes now enter authority binding.
+Changing to v2 invalidates old source/policy-bound manifests; no old observation
+is renewed. Flutter displays original local text or an explicit UTC label,
+without device-local conversion; list validation retains the server's
+null-first startsAt/meetingId order. UI/transport changes are reviewed separately.
 
 Native marker globals and mutation guards remain unchanged. Imported current or
 archived messages are refused with current actor authentication. Existing native
@@ -82,3 +96,8 @@ revocation plus cursor generation binding; factory closure and unchanged native
 mutation rejection. No TCP/database/cloud call or old suite was run. Initial
 fixture-only failures and affected corrections are recorded in the private freeze
 manifest; passing cases were not repeated after unrelated fixture corrections.
+
+The schedule correction adds three targeted runtime/HTTP fixture scenarios:
+UTC/null-first ordering and unchanged raw; one-digit and native16 literal local
+dates; unknown/conflicting/offset/truncated/nanosecond/unrepresentable timestamp
+and source/wire mismatch refusal. Historical cases are not a rerun claim.

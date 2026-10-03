@@ -12,11 +12,14 @@ from runtime_meetings import RuntimeMeetingsService, TRUSTED_POLICY, MEETING_FIE
 from runtime_meeting_join import _target, _JoinFailure
 from runtime_mutations import RuntimeUnavailable, RuntimeRejected, RuntimeInvalidRequest, canonical_json
 from runtime_reads import RuntimeReadRejected
+from runtime_meetings_http import RuntimeMeetingsHttp
 from legacy_conversation_payload import payload_digest
+from meeting_schedule import read_schedule
 from test_runtime_meetings import (MeetingsDatabase, MeetingsConnection, MeetingsCursor,
                                   KEY, READ_ENV, MEETING_KEYS, MEMBER_KEYS)
 from test_runtime_people import source
 from test_runtime_mutations import store_for, STAMP, NOW
+from test_runtime_meetings_http import Native
 
 SIGNING_KEY = b"synthetic-final-pack-key-32-bytes!"
 SHA = lambda digit: digit * 64
@@ -68,6 +71,24 @@ def capability(body, *, expected=None, domain=DOMAIN):
         clock=lambda: datetime.fromtimestamp(NOW + 1, timezone.utc))
 
 
+def schedule_fixture(body, db, meeting_id, typed_source, local, starts):
+    row = db.state["meetings"][meeting_id]
+    if typed_source is None:
+        row["legacy_raw"]["fields"].pop("datetime", None)
+    else:
+        row["legacy_raw"]["fields"]["datetime"] = copy.deepcopy(typed_source)
+    row.update(localDatetime=local, startsAt=starts)
+    hashed = payload_digest(row["legacy_raw"])
+    entry = next(item for item in body["meetings"] if item["meetingId"] == meeting_id)
+    entry["canonical"].update(localDatetime=local, startsAt=starts); entry["payloadSha256"] = hashed
+    for key, member in db.state["meeting_members"].items():
+        if key[0] == meeting_id: member["legacy_raw"]["source_payload_hash"] = hashed
+    for item in body["finalRoots"]:
+        if item[0] == meeting_id: item[1] = hashed
+    body["finalDelta"]["rootSetSha256"] = digest(body["finalRoots"])
+    body["binding"]["cohortSha256"] = digest({"meetings": body["meetings"], "tombstones": body["tombstones"]})
+
+
 class ProofDatabase(MeetingsDatabase):
     def connect(self, **config):
         assert config["ssl"].verify_mode == ssl.CERT_REQUIRED and config["ssl"].check_hostname
@@ -114,6 +135,62 @@ class ImportedAuthorityTests(unittest.TestCase):
     def detail(self, reader=None):
         return (reader or self.reads).meeting(self.db.identity, "m", access_token=self.db.access)
 
+    def http_read(self, reads, path="/v1/runtime/meetings"):
+        http = RuntimeMeetingsHttp(READ_ENV, self.store, service_factory=lambda *_: reads)
+        self.addCleanup(http.close)
+        return http.dispatch({"PATH_INFO": path, "QUERY_STRING": "", "REQUEST_METHOD": "GET",
+            "HTTP_AUTHORIZATION": "Bearer " + self.db.access}, native_service=Native(self.db), native_configured=True)
+
+    def test_utc_schedule_runtime_http_null_first_order_and_raw_preserved(self):
+        body = pack(self.db, ids=("a-utc", "z-local", "z-utc"))
+        self.db.state["meetings"].pop("m")
+        later = "2027-01-16T08:00:00.000001Z"
+        schedule_fixture(body, self.db, "z-utc", {"timestampValue": STAMP}, None, STAMP)
+        schedule_fixture(body, self.db, "a-utc", {"timestampValue": later}, None, later)
+        reads = self.reader(body); before = copy.deepcopy(self.db.state)
+        reply = self.http_read(reads)
+        self.assertEqual(reply.status, "200 OK")
+        self.assertEqual([item["meetingId"] for item in reply.payload["items"]], ["z-local", "z-utc", "a-utc"])
+        utc = self.http_read(reads, "/v1/runtime/meetings/z-utc")
+        self.assertEqual(utc.status, "200 OK")
+        self.assertEqual((utc.payload["meeting"]["localDatetime"], utc.payload["meeting"]["startsAt"]), (None, STAMP))
+        roster = self.http_read(reads, "/v1/runtime/meetings/z-utc/participants")
+        self.assertEqual(roster.status, "200 OK")
+        self.assertTrue(all(item["joinedAt"] is None for item in roster.payload["items"]))
+        self.assertEqual(self.db.state, before)
+
+    def test_one_digit_local_schedule_remains_literal_without_timezone_conversion(self):
+        for local in ("3.1.2027 8:05", "03.01.2027 08:05"):
+            with self.subTest(local=local):
+                body = pack(self.db)
+                schedule_fixture(body, self.db, "m", {"stringValue": local}, local, None)
+                before = copy.deepcopy(self.db.state)
+                reply = self.http_read(self.reader(body), "/v1/runtime/meetings/m")
+                self.assertEqual(reply.status, "200 OK")
+                self.assertEqual((reply.payload["meeting"]["localDatetime"], reply.payload["meeting"]["startsAt"]), (local, None))
+                self.assertEqual(read_schedule(local, None), (local, None))
+                self.assertEqual(self.db.state, before)
+
+    def test_schedule_null_conflict_offset_precision_and_source_mismatch_are_closed(self):
+        malformed = [(None, None), ("3.1.2027 8:05", STAMP), ("31.2.2027 8:05", None),
+            (None, "2027-01-15T08:00:00.000001+00:00"), (None, "2027-01-15T08:00:00Z"),
+            (None, "2027-01-15T08:00:00.000001123Z"), (None, "0999-01-15T08:00:00.000001Z")]
+        for local, starts in malformed:
+            with self.subTest(local=local, starts=starts):
+                body = pack(self.db)
+                schedule_fixture(body, self.db, "m", {"stringValue": "3.1.2027 8:05"}, local, starts)
+                with self.assertRaises(RuntimeUnavailable): capability(body)
+        for raw, local, starts in [({"timestampValue": STAMP}, "3.1.2027 8:05", None),
+                ({"stringValue": "3.1.2027 8:05"}, None, STAMP),
+                ({"timestampValue": "2027-01-15T08:00:00.000001123Z"}, None, STAMP),
+                (None, "3.1.2027 8:05", None)]:
+            body = pack(self.db); schedule_fixture(body, self.db, "m", raw, local, starts)
+            reply = self.http_read(self.reader(body), "/v1/runtime/meetings/m")
+            self.assertEqual(reply.status, "404 Not Found")
+            self.assertFalse(reply.authenticate)
+        body = pack(self.db); body["binding"]["policy"] = "reviewed-imported-meetings-read-local16-v1"
+        with self.assertRaises(RuntimeUnavailable): capability(body)
+
     def test_final_pack_flags_binding_domain_tombstones_and_schedule_refusals(self):
         mutations = [("barrier", key, False) for key in ("enforced", "allWritersStopped", "verified")]
         mutations += [("finalDelta", key, False) for key in ("consistent", "final", "complete", "readbackVerified")]
@@ -123,10 +200,10 @@ class ImportedAuthorityTests(unittest.TestCase):
             with self.subTest(parent=parent, key=key):
                 body = copy.deepcopy(self.body); body[parent][key] = value
                 with self.assertRaises(RuntimeUnavailable): capability(body)
-        for schedule in (None, "3.10.2026 19:15", "UTC"):
+        for schedule in (None, "31.2.2026 19:15", "CONFLICT"):
             body = copy.deepcopy(self.body); canon = body["meetings"][0]["canonical"]
-            canon["localDatetime"] = None if schedule == "UTC" else schedule
-            if schedule == "UTC": canon["startsAt"] = STAMP
+            canon["localDatetime"] = "03.10.2026 19:15" if schedule == "CONFLICT" else schedule
+            if schedule == "CONFLICT": canon["startsAt"] = STAMP
             body["binding"]["cohortSha256"] = digest({"meetings": body["meetings"], "tombstones": body["tombstones"]})
             with self.assertRaises(RuntimeUnavailable): capability(body)
         expected = {**self.body["binding"], "generation": SHA("9")}

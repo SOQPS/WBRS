@@ -17,7 +17,7 @@ from runtime_reads import RuntimeReadRejected, _text, _timestamp, _number
 from runtime_people import _uid, validate_people_filters
 from runtime_meetings import (RuntimeMeetingsService, MEETING_ORDER, PARTICIPANT_ORDER,
                              MAX_PAGE, MAX_PUBLIC_BYTES)
-from runtime_meeting_create import local_datetime
+from meeting_schedule import read_schedule
 from runtime_meeting_chat import validate_page
 from runtime_meeting_archive import validate_archive_page
 
@@ -124,13 +124,7 @@ def _meeting(value):
         _text(value[field], maximum, nullable=True)
     for field in ("startsAt", "createdAt", "updatedAt"):
         _timestamp(value[field], nullable=True)
-    if value["localDatetime"] is not None:
-        try:
-            local_datetime(value["localDatetime"])
-        except RuntimeInvalidRequest:
-            raise RuntimeUnavailable() from None
-        if value["startsAt"] is not None:
-            raise RuntimeUnavailable()
+    read_schedule(value["localDatetime"], value["startsAt"])
     _number(value["revision"])
     return value
 

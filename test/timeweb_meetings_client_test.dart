@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -39,6 +41,16 @@ Matcher error(TimewebAuthError value) => isA<TimewebAuthException>().having((e) 
 Future<void> tick(bool Function() ready) async {
   for (var i = 0; i < 100 && !ready(); i++) { await Future<void>.delayed(Duration.zero); }
   expect(ready(), isTrue);
+}
+
+Future<void> attachMeetingCatalog() async {
+  final bytes = await File('assets/geo_catalog.json').readAsBytes();
+  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMessageHandler('flutter/assets', (message) async {
+    final name = utf8.decode(message!.buffer.asUint8List(message.offsetInBytes, message.lengthInBytes));
+    return name == 'assets/geo_catalog.json' ? ByteData.sublistView(bytes) : null;
+  });
+  addTearDown(() => messenger.setMockMessageHandler('flutter/assets', null));
 }
 
 void main() {
@@ -256,5 +268,85 @@ void main() {
     var drained = false; final stop = owner.stop().then((_) { drained = true; }); await Future<void>.delayed(Duration.zero); expect(drained, isFalse);
     for (final response in held) { response.complete(peopleReply({})); }
     await Future.wait(rejected); await stop; expect(drained, isTrue);
+  });
+
+  test('imported schedule: original local literals and canonical UTC labels retain nested guards', () async {
+    await attachMeetingCatalog();
+    const utc = '2026-10-03T18:30:45.123456Z';
+    final rows = {
+      'utc': meeting('utc', edits: {'startsAt': utc, 'localDatetime': null}),
+      'local': meeting('local', edits: {'localDatetime': '3.9.2026 7:05'}),
+      'leap': meeting('leap', edits: {'localDatetime': '29.2.2024 09:05'}),
+      'ancient': meeting('ancient', edits: {'localDatetime': '1.1.0001 0:00'}),
+    };
+    final owner = client(PeopleWire((call) async => peopleReply(detail(rows[call.url.path.split('/').last]!))));
+    await owner.restore();
+    final item = await owner.readMeeting('utc');
+    expect(item.startsAt, utc); expect(item.localDatetime, isNull);
+    expect(item.scheduleLabel, '03.10.2026 18:30 UTC');
+    for (final id in ['local', 'leap', 'ancient']) {
+      final localItem = await owner.readMeeting(id);
+      expect(localItem.startsAt, isNull);
+      expect(localItem.scheduleLabel, rows[id]!['localDatetime']);
+    }
+    var current = true;
+    final guarded = item.bindSessionGuard(() { if (!current) throw const TimewebAuthException(TimewebAuthOperation.currentRead, TimewebAuthError.staleSession); });
+    current = false;
+    for (final getter in [() => guarded.localDatetime, () => guarded.startsAt, () => guarded.scheduleLabel]) {
+      expect(getter, throwsA(error(TimewebAuthError.staleSession)));
+    }
+    await owner.stop(); expect(() => item.scheduleLabel, throwsA(error(TimewebAuthError.staleSession)));
+  });
+
+  test('imported schedule: ambiguous malformed or unrepresentable values fail closed; native create stays strict', () async {
+    await attachMeetingCatalog();
+    const utc = '2026-10-03T18:30:00.000000Z';
+    final invalid = <Map<String, dynamic>>[
+      {'startsAt': null, 'localDatetime': null}, {'startsAt': utc, 'localDatetime': local},
+      for (final stamp in ['2026-10-03T18:30:00.000000+00:00', '2026-10-03T18:30:00Z',
+        '2026-10-03T18:30:00.0000000Z', '0999-10-03T18:30:00.000000Z',
+        '2025-02-29T18:30:00.000000Z', '2026-10-03T24:30:00.000000Z', '2026-10-03T18:30:00.000000Z\n'])
+        {'startsAt': stamp, 'localDatetime': null},
+      for (final literal in ['31.4.2026 7:05', '3.10.2026 24:00', '3.10.2026 7:5',
+        '003.10.2026 7:05', '3.10.0000 7:05', '3.10.2026 7:05 UTC', '3.10.2026 7:05\n'])
+        {'startsAt': null, 'localDatetime': literal},
+    ];
+    for (final edits in invalid) {
+      final wire = PeopleWire((_) async => peopleReply(detail(meeting('M', edits: edits))));
+      final owner = client(wire); await owner.restore();
+      await expectLater(owner.readMeeting('M'), throwsA(error(TimewebAuthError.invalidResponse)));
+      expect(owner.currentUid, 'A'); expect(wire.calls, hasLength(1)); await owner.stop();
+    }
+    await expectLater(draft(datetime: '3.10.2026 7:05'), throwsArgumentError);
+    expect((await draft()).fields['datetime'], local);
+  });
+
+  test('imported schedule: null-first UTC binary-ID order continues through guarded sparse cursors', () async {
+    await attachMeetingCatalog();
+    const early = '2026-03-01T12:00:00.000000Z', later = '2026-04-01T12:00:00.000000Z';
+    Map<String, dynamic> timed(String id, String stamp) => meeting(id, edits: {'startsAt': stamp, 'localDatetime': null});
+    final wire = PeopleWire((call) async {
+      final cursor = call.url.queryParameters['cursor'];
+      if (cursor == null) { return peopleReply(list([meeting('z-local'), timed('z-utc', early), timed('a-utc', later)], cursor: 'next-one')); }
+      if (cursor == 'next-one') { return peopleReply(list([], cursor: 'next-empty')); }
+      if (cursor == 'next-empty') { return peopleReply(list([timed('b-utc', later)], cursor: 'next-last')); }
+      return peopleReply(list([timed('z-rewind', early)]));
+    });
+    final owner = client(wire); await owner.restore();
+    final filters = await TimewebMeetingFilters.fromCatalog(limit: 3);
+    final first = (await owner.readMeetings(filters)).bindSessionGuard(() {});
+    expect(first.items.map((item) => item.meetingId), ['z-local', 'z-utc', 'a-utc']);
+    final empty = (await owner.readMeetings(filters, cursor: first.nextCursor)).bindSessionGuard(() {});
+    expect(empty.items, isEmpty); expect(empty.nextCursor, isNotNull);
+    final last = await owner.readMeetings(filters, cursor: empty.nextCursor);
+    expect(last.items.single.meetingId, 'b-utc');
+    await expectLater(owner.readMeetings(filters, cursor: last.nextCursor), throwsA(error(TimewebAuthError.invalidResponse)));
+    expect(owner.currentUid, 'A'); await owner.stop();
+    for (final rows in [[timed('a', later), timed('z', early)], [timed('a', early), meeting('z')],
+        [timed('b', early), timed('a', early)], [timed('same', early), timed('same', later)]]) {
+      final check = client(PeopleWire((_) async => peopleReply(list(rows)))); await check.restore();
+      await expectLater(check.readMeetings(filters), throwsA(error(TimewebAuthError.invalidResponse)));
+      await check.stop();
+    }
   });
 }

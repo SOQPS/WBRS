@@ -30,6 +30,29 @@ bool _meetingLocalDatetime(Object? value) {
   return year >= 1 && year <= 9999 && date.year == year && date.month == month && date.day == day && date.hour == hour && date.minute == minute;
 }
 
+// Imported read schedules keep the original local literal or one canonical SQL UTC stamp.
+bool _meetingReadSchedule(Object? local, Object? utc) {
+  if (local == null) {
+    return utc is String && utc.endsWith('Z') && _mutationStamp(utc) && int.parse(utc.substring(0, 4)) >= 1000;
+  }
+  if (utc != null || local is! String) { return false; }
+  final match = RegExp(r'^([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4}) ([0-9]{1,2}):([0-9]{2})$').firstMatch(local);
+  if (match == null || match.end != local.length) { return false; }
+  final day = int.parse(match[1]!), month = int.parse(match[2]!), year = int.parse(match[3]!);
+  final hour = int.parse(match[4]!), minute = int.parse(match[5]!);
+  final date = DateTime.utc(year, month, day, hour, minute);
+  return year >= 1 && year <= 9999 && date.year == year && date.month == month && date.day == day && date.hour == hour && date.minute == minute;
+}
+
+int _meetingCompareSchedule(String? leftTime, String leftId, String? rightTime, String rightId) {
+  if (leftTime != rightTime) {
+    if (leftTime == null) { return -1; }
+    if (rightTime == null) { return 1; }
+    return leftTime.compareTo(rightTime);
+  }
+  return _currentCompareIds(leftId, rightId);
+}
+
 final class TimewebMeetingCreateReceipt {
   TimewebMeetingCreateReceipt._(this._data, this._check);
   final Map<String, dynamic> _data;
@@ -171,12 +194,15 @@ final class TimewebMeetingFilters {
 
 final class TimewebMeetingCursor {
   TimewebMeetingCursor._(this._value, this._owner, this._scope, this._check, this._expiry,
-    {int? capSequence, int? beforeSequence, int? revision}) : _capSequence = capSequence, _beforeSequence = beforeSequence, _revision = revision;
+    {int? capSequence, int? beforeSequence, int? revision, String? previousMeetingId, String? previousStartsAt})
+      : _capSequence = capSequence, _beforeSequence = beforeSequence, _revision = revision,
+        _previousMeetingId = previousMeetingId, _previousStartsAt = previousStartsAt;
   final String _value, _scope;
   final TimewebAuthClient _owner;
   final void Function() _check;
   final DateTime _expiry;
   final int? _capSequence, _beforeSequence, _revision;
+  final String? _previousMeetingId, _previousStartsAt;
   void requireCurrent() { _check(); if (!_owner._clock().isBefore(_expiry)) throw const TimewebAuthException(TimewebAuthOperation.currentRead, TimewebAuthError.invalidRequest); }
   @override
   String toString() => 'TimewebMeetingCursor(<redacted>)';
@@ -198,7 +224,8 @@ final class TimewebMeetingPage<T> {
       (item is TimewebMeeting ? item.bindSessionGuard(guard) : (item as TimewebMeetingParticipant).bindSessionGuard(guard)) as T)),
       cursor == null ? null : TimewebMeetingCursor._(cursor._value, cursor._owner, cursor._scope,
         () { cursor.requireCurrent(); guard(); }, cursor._expiry,
-        capSequence: cursor._capSequence, beforeSequence: cursor._beforeSequence, revision: cursor._revision), check);
+        capSequence: cursor._capSequence, beforeSequence: cursor._beforeSequence, revision: cursor._revision,
+        previousMeetingId: cursor._previousMeetingId, previousStartsAt: cursor._previousStartsAt), check);
   }
   @override
   String toString() => 'TimewebMeetingPage(<redacted>)';
@@ -223,7 +250,14 @@ final class TimewebMeeting {
   String? get createdAt => _read('createdAt');
   String? get updatedAt => _read('updatedAt');
   int get revision => _read('revision');
-  String get localDatetime => _read('localDatetime');
+  String? get localDatetime => _read('localDatetime');
+  String get scheduleLabel {
+    _check();
+    final local = _data['localDatetime'] as String?;
+    if (local != null) { return local; }
+    final utc = _data['startsAt'] as String;
+    return '${utc.substring(8, 10)}.${utc.substring(5, 7)}.${utc.substring(0, 4)} ${utc.substring(11, 16)} UTC';
+  }
   Null get media { _check(); return null; }
   bool get mediaReady { _check(); return false; }
   @override
@@ -546,7 +580,7 @@ TimewebMeeting _decodeMeeting(_PeopleFlight f, Object? value, Map<String, dynami
       'startsAt','localDatetime','createdAt','updatedAt','revision','media','mediaReady'}) ||
       !_meetingIdentifier(value['meetingId']) || !_currentIdentifier(value['organizerUid']) ||
       !((value['kind'] == 'group' && value['invitedUid'] == null) || (value['kind'] == 'individual' && _currentIdentifier(value['invitedUid']) && value['invitedUid'] != value['organizerUid'] && [value['organizerUid'], value['invitedUid']].contains(f.uid))) ||
-      value['startsAt'] != null || !_meetingLocalDatetime(value['localDatetime']) || value['media'] != null || value['mediaReady'] != false ||
+      !_meetingReadSchedule(value['localDatetime'], value['startsAt']) || value['media'] != null || value['mediaReady'] != false ||
       !_mutationInteger(value['revision']) || !_currentNullableStamp(value['createdAt']) || !_currentNullableStamp(value['updatedAt'])) _peopleInvalid();
   if (value['title'] is! String || (value['title'] as String).trim().isEmpty || value['description'] is! String ||
       !_currentNullableText(value['title'], 1000) || !_currentNullableText(value['description'], 4096) ||
@@ -566,7 +600,9 @@ Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String
       (participants ? body['meetingId'] != id : body['scope'] != query['scope']) || body['items'] is! List || (body['items'] as List).length > limit) _peopleInvalid();
   final next = body['nextCursor'];
   if (next != null && (!_validReadCursor(next is String ? next : '') || next == cursor?._value)) _peopleInvalid();
-  final continuation = next == null ? null : TimewebMeetingCursor._(next, f.owner, scope, _meetingReadCheck(f), cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)));
+  TimewebMeetingCursor? continuation({String? meetingId, String? startsAt}) => next == null ? null :
+      TimewebMeetingCursor._(next, f.owner, scope, _meetingReadCheck(f), cursor?._expiry ?? f.startedAt.add(const Duration(seconds: 300)),
+        previousMeetingId: meetingId, previousStartsAt: startsAt);
   String? previous;
   if (participants) {
     final items = <TimewebMeetingParticipant>[];
@@ -577,17 +613,19 @@ Object _decodeMeetingRead(_PeopleFlight f, Map<String, dynamic> body, Map<String
           previous != null && _currentCompareIds(previous, value['uid']) >= 0) _peopleInvalid();
       previous = value['uid']; items.add(TimewebMeetingParticipant._(Map.unmodifiable(value), _meetingReadCheck(f)));
     }
-    return TimewebMeetingPage<TimewebMeetingParticipant>._(List.unmodifiable(items), continuation, _meetingReadCheck(f));
+    return TimewebMeetingPage<TimewebMeetingParticipant>._(List.unmodifiable(items), continuation(), _meetingReadCheck(f));
   }
-  final items = <TimewebMeeting>[];
+  final items = <TimewebMeeting>[], ids = <String>{};
+  var previousId = cursor?._previousMeetingId, previousTime = cursor?._previousStartsAt;
   for (final value in body['items'] as List) {
     final item = _decodeMeeting(f, value, catalog);
     if (item.kind != query['scope'] || query['countryCode'] != null && item.countryCode != query['countryCode'] ||
-        query['region'] != null && item.region != query['region'] || previous != null && _currentCompareIds(previous, item.meetingId) >= 0 ||
+        query['region'] != null && item.region != query['region'] || !ids.add(item.meetingId) ||
+        previousId != null && _meetingCompareSchedule(previousTime, previousId, item.startsAt, item.meetingId) >= 0 ||
         item.kind == 'individual' && ![item.organizerUid, item.invitedUid].contains(f.uid)) _peopleInvalid();
-    previous = item.meetingId; items.add(item);
+    previousId = item.meetingId; previousTime = item.startsAt; items.add(item);
   }
-  return TimewebMeetingPage<TimewebMeeting>._(List.unmodifiable(items), continuation, _meetingReadCheck(f));
+  return TimewebMeetingPage<TimewebMeeting>._(List.unmodifiable(items), continuation(meetingId: previousId, startsAt: previousTime), _meetingReadCheck(f));
 }
 
 TimewebMutationResult _decodeCreatedMeeting(TimewebMutationReference ref, int status, Map<String, dynamic> result, int? revision, bool replayed) {

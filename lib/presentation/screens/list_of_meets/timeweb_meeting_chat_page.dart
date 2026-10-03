@@ -442,7 +442,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
             children: [
               const Icon(Icons.calendar_today_outlined, size: 16),
               const SizedBox(width: 6),
-              Expanded(child: Text(widget.meeting.localDatetime)),
+              Expanded(child: Text(widget.meeting.scheduleLabel)),
             ],
           ),
           const SizedBox(height: 6),

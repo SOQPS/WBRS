@@ -18,10 +18,10 @@ from imported_meeting_review import (_ROOT_FIELDS, _uids, _string, _schedule,
                                      SOURCE_PROJECT, SOURCE_DATABASE, SOURCE_CONTRACT)
 from runtime_mutations import RuntimeUnavailable, canonical_json
 from runtime_meetings import MEETING_FIELDS, _meeting_row, _meeting_dto
-from runtime_meeting_create import local_datetime
+from meeting_schedule import read_schedule
 from runtime_people import _uid
 
-POLICY = "reviewed-imported-meetings-read-local16-v1"
+POLICY = "reviewed-imported-meetings-read-schedules-v2"
 DOMAIN = b"clrs-imported-meeting-final-authority-v1\0"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_ROOTS = 4096
@@ -31,7 +31,7 @@ _SOURCE_FILES = ("imported_meeting_authority.py", "runtime_imported_meetings.py"
     "runtime_meetings.py", "imported_meeting_review.py", "runtime_mutations.py",
     "runtime_people.py", "profile_visibility.py", "runtime_meeting_create.py",
     "runtime_geography.py", "geo_catalog.json", "legacy_conversation_payload.py",
-    "native_credentials.py", "runtime_reads.py")
+    "native_credentials.py", "runtime_reads.py", "meeting_schedule.py", "runtime_meetings_http.py")
 _BINDING_KEYS = {"generation", "sourceSha256", "cohortSha256", "policy",
                  "barrierSha256", "finalDeltaSha256"}
 
@@ -194,8 +194,8 @@ def load_imported_authority(raw, signature, key, *, reviewed_binding, clock=None
             users = _ids(entry["users"], 1000); kicked = _ids(entry["kicked"], 1000); member_count += len(users) + len(kicked)
             wanted = entry["canonical"]; _shape(wanted, set(MEETING_FIELDS[:12]) | {"localDatetime"})
             row = _meeting_row(tuple({**wanted, "trusted": 0, "valid": 1, "deletedAt": None}[key] for key in MEETING_FIELDS))
-            local_datetime(wanted["localDatetime"])
-            if (wanted["meetingId"] != uid or wanted["startsAt"] is not None or _meeting_dto({**row, "trusted": 1}) is None
+            read_schedule(wanted["localDatetime"], wanted["startsAt"])
+            if (wanted["meetingId"] != uid or _meeting_dto({**row, "trusted": 1}) is None
                     or wanted["createdAt"] is None or wanted["updatedAt"] is None or set(users) & set(kicked)
                     or (wanted["kind"] == "individual" and (set(users) | set(kicked)) - {wanted["organizerUid"], wanted["invitedUid"]})
                     or member_count > MAX_MEMBERS):

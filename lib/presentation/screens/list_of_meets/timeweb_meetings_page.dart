@@ -145,7 +145,7 @@ Widget _meetingCard(BuildContext context, TimewebMeeting meeting, {VoidCallback?
               meeting.title,
               style: full ? Theme.of(context).textTheme.titleLarge : Theme.of(context).textTheme.titleMedium,
             ),
-            Text(meeting.localDatetime),
+            Text(meeting.scheduleLabel),
             Text('${meeting.countryCode} · ${meeting.region}'),
             if (meeting.description.isNotEmpty) ...[
               const SizedBox(height: 8),
