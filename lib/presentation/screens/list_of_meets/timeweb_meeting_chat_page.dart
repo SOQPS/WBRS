@@ -8,6 +8,7 @@ import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_chat_flow.dart' show TimewebChatWriteOutcome;
 import 'package:wbrs/service/timeweb_meeting_chat_flow.dart';
+import 'package:wbrs/service/timeweb_meeting_membership_flow.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/lrs_theme.dart';
@@ -22,11 +23,13 @@ class TimewebMeetingChatPageView extends StatefulWidget {
     required this.onParticipants,
     this.participants = const [],
     this.translationFactory,
+    this.onMembershipChanged,
   });
   final TimewebAppRuntime runtime;
   final TimewebMeeting meeting;
   final TimewebMeetingChatFlow flow;
   final VoidCallback onParticipants;
+  final VoidCallback? onMembershipChanged;
   final List<TimewebMeetingParticipant> participants;
   final ContentTranslationService Function(String? Function())? translationFactory;
   @override
@@ -40,6 +43,8 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
   AppSessionLease? _lease;
   late final ContentTranslationService _translator;
   StreamSubscription<AppSessionState>? _subscription;
+  TimewebMeetingMembershipFlow? _leaveFlow;
+  bool _leaving = false;
   final _translations = <String, ContentTranslation>{};
   final _originals = <String>{};
   final _names = <String, String>{};
@@ -47,24 +52,24 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
   bool _closed = false, _reading = false, _writing = false, _translating = false, _descriptionOpen = false;
   int _generation = 0;
 
+  bool get _actorCurrent =>
+      mounted &&
+      !_closed &&
+      _lease?.isCurrent == true &&
+      identical(widget.runtime, _runtime) &&
+      identical(widget.flow, _flow);
   bool get _current {
-    final lease = _lease;
-    if (!mounted ||
-        _closed ||
-        lease == null ||
-        !lease.isCurrent ||
-        !identical(widget.runtime, _runtime) ||
-        !identical(widget.flow, _flow)) {
-      return false;
-    }
+    if (!_actorCurrent) return false;
     try {
       _flow.requireCurrent();
       widget.meeting.requireCurrent();
-      return _flow.ownerUid == lease.identity.uid && _flow.meetingId == widget.meeting.meetingId;
+      return _flow.ownerUid == _lease!.identity.uid && _flow.meetingId == widget.meeting.meetingId;
     } catch (_) {
       return false;
     }
   }
+
+  bool get _memberLocked => _leaveFlow == null || _leaving || _leaveFlow!.needsCheck;
 
   String? _translationOwner() => _current ? '${_lease!.identity.uid}/${_lease!.epoch}' : null;
   @override
@@ -98,6 +103,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
       _subscription = _flow.sessionStates.listen((_) {
         if (!_current) _deny();
       });
+      unawaited(_restoreLeave());
     } catch (_) {
       _deny();
     }
@@ -126,11 +132,64 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
     }
   }
 
+  Future<void> _restoreLeave() async {
+    if (!_current) return;
+    try {
+      final leave = await _runtime.openMeetingLeave(_flow.meetingId);
+      if (!_current) {
+        leave.close();
+        return;
+      }
+      leave.requireCurrent();
+      setState(() => _leaveFlow = leave);
+    } catch (_) {
+      if (_current) setState(() => _notice = 'Не удалось проверить исходный выход. Обновите встречу.');
+    }
+  }
+
+  Future<void> _leave() async {
+    final leave = _leaveFlow;
+    if (!_current || _leaving || _reading || _writing || _flow.sendNeedsCheck || leave == null || leave.rejected) {
+      return;
+    }
+    final id = leave.meetingId;
+    setState(() {
+      _leaving = true;
+      _notice = null;
+    });
+    try {
+      final outcome = leave.needsCheck ? await leave.check() : await leave.submit();
+      // ACK revokes held target DTOs; only the actor lease remains valid here.
+      if (!_actorCurrent) return;
+      leave.requireCurrent();
+      if (outcome == TimewebMeetingMembershipOutcome.confirmed) {
+        final receipt = leave.leaveReceipt;
+        if (receipt == null || receipt.meetingId != id) throw StateError('Missing original leave receipt.');
+        receipt.requireCurrent();
+        widget.onMembershipChanged?.call();
+        _deny();
+      } else if (outcome == TimewebMeetingMembershipOutcome.rejected) {
+        // A declared visibility/profile failure grants no cached member access.
+        widget.onMembershipChanged?.call();
+        _deny();
+      } else {
+        setState(() => _notice = 'Проверьте исходный выход из встречи.');
+      }
+    } catch (_) {
+      if (_actorCurrent) setState(() => _notice = 'Не удалось подтвердить выход из встречи.');
+    } finally {
+      if (_actorCurrent) setState(() => _leaving = false);
+    }
+  }
+
   void _deny() {
     if (_closed) return;
     _closed = true;
     _generation++;
     _flow.close();
+    _leaveFlow?.close();
+    _leaveFlow = null;
+    _leaving = false;
     _composer.clear();
     _translations.clear();
     _originals.clear();
@@ -147,7 +206,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
   }
 
   Future<void> _load({bool older = false}) async {
-    if (!_current || _reading || _writing) return;
+    if (!_current || _memberLocked || _reading || _writing) return;
     setState(() {
       _reading = true;
       _notice = null;
@@ -172,7 +231,13 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
   }
 
   Future<void> _send() async {
-    if (!_current || _writing || _reading || (!_flow.sendNeedsCheck && _composer.text.trim().isEmpty)) return;
+    if (!_current ||
+        _memberLocked ||
+        _writing ||
+        _reading ||
+        (!_flow.sendNeedsCheck && _composer.text.trim().isEmpty)) {
+      return;
+    }
     setState(() {
       _writing = true;
       _notice = null;
@@ -222,7 +287,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
   }
 
   Future<void> _translate(TimewebMeetingMessage message) async {
-    if (!_current || _translating || _reading || _writing) return;
+    if (!_current || _memberLocked || _translating || _reading || _writing) return;
     final id = message.messageId;
     if (_translations.containsKey(id)) {
       setState(() {
@@ -237,7 +302,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
     });
     try {
       final translated = await _translator.translate(original, language);
-      if (!_current || generation != _generation || language != _language) return;
+      if (!_current || _memberLocked || generation != _generation || language != _language) return;
       message.requireCurrent();
       setState(() {
         if (_translations.length >= 30) {
@@ -259,6 +324,8 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
     _closed = true;
     _generation++;
     _flow.close();
+    _leaveFlow?.close();
+    _leaveFlow = null;
     _names.clear();
     _translations.clear();
     _originals.clear();
@@ -273,9 +340,10 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
     child: FractionallySizedBox(widthFactor: 2 / 3, child: child),
   );
   void _participants() {
-    if (!_current) return;
+    if (!_current || _memberLocked) return;
+    // Never leave cached member text/translation behind a roster route.
+    _deny();
     widget.onParticipants();
-    Navigator.of(context).maybePop();
   }
 
   Widget _avatar(String name) => Container(
@@ -334,7 +402,9 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
                                     minimumSize: const Size(0, 32),
                                     alignment: Alignment.centerLeft,
                                   ),
-                                  onPressed: _reading || _writing || _translating ? null : () => _translate(message),
+                                  onPressed: _memberLocked || _reading || _writing || _translating
+                                      ? null
+                                      : () => _translate(message),
                                   child: Text(
                                     context.tr(translated == null ? 'Перевести' : 'Показать оригинал'),
                                     maxLines: 2,
@@ -383,21 +453,41 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
               Expanded(child: Text('${widget.meeting.countryCode} · ${widget.meeting.region}')),
             ],
           ),
-          TextButton(
-            key: const ValueKey('native-meeting-chat-about'),
-            onPressed: () => setState(() => _descriptionOpen = !_descriptionOpen),
-            style: TextButton.styleFrom(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size(0, 32),
-              alignment: Alignment.centerLeft,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(context.tr('Обо встрече')),
-                Icon(_descriptionOpen ? Icons.expand_less : Icons.expand_more, size: 18),
-              ],
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  key: const ValueKey('native-meeting-chat-about'),
+                  onPressed: () => setState(() => _descriptionOpen = !_descriptionOpen),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(0, 32),
+                    alignment: Alignment.centerLeft,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(child: Text(context.tr('Обо встрече'))),
+                      Icon(_descriptionOpen ? Icons.expand_less : Icons.expand_more, size: 18),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('native-meeting-leave'),
+                tooltip: context.tr(_leaveFlow?.needsCheck == true ? 'Проверить выход' : 'Покинуть встречу'),
+                onPressed:
+                    _leaveFlow == null ||
+                        _leaving ||
+                        _reading ||
+                        _writing ||
+                        _flow.sendNeedsCheck ||
+                        _leaveFlow!.rejected
+                    ? null
+                    : _leave,
+                icon: Icon(_leaveFlow?.needsCheck == true ? Icons.refresh : Icons.exit_to_app),
+              ),
+            ],
           ),
           if (_descriptionOpen)
             Text(widget.meeting.description.isEmpty ? context.tr('Описание не указано') : widget.meeting.description),
@@ -428,7 +518,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
               child: TextField(
                 key: const ValueKey('native-meeting-chat-composer'),
                 controller: _composer,
-                enabled: !_writing && !_reading && !_flow.sendNeedsCheck,
+                enabled: !_memberLocked && !_writing && !_reading && !_flow.sendNeedsCheck,
                 maxLength: 4096,
                 minLines: 1,
                 maxLines: 4,
@@ -455,7 +545,8 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
                 foregroundColor: LrsTheme.surface,
                 shape: const CircleBorder(),
               ),
-              onPressed: _reading || _writing || (!_flow.sendNeedsCheck && _composer.text.trim().isEmpty)
+              onPressed:
+                  _memberLocked || _reading || _writing || (!_flow.sendNeedsCheck && _composer.text.trim().isEmpty)
                   ? null
                   : _send,
               icon: Icon(_flow.sendNeedsCheck ? Icons.refresh : Icons.arrow_upward),
@@ -476,7 +567,7 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
         IconButton(
           key: const ValueKey('native-meeting-chat-participants'),
           tooltip: context.tr('Участники встречи'),
-          onPressed: _current ? _participants : null,
+          onPressed: _current && !_memberLocked ? _participants : null,
           icon: const Icon(Icons.people_outline),
         ),
         IconButton(
@@ -517,18 +608,19 @@ class _TimewebMeetingChatPageViewState extends State<TimewebMeetingChatPageView>
                     if (_flow.hasOlder)
                       TextButton(
                         key: const ValueKey('native-meeting-chat-older'),
-                        onPressed: _reading || _writing ? null : () => _load(older: true),
+                        onPressed: _memberLocked || _reading || _writing ? null : () => _load(older: true),
                         child: Text(context.tr('Ранее')),
                       ),
                     for (final message in _flow.messages.reversed) _message(message),
                     if (_flow.messages.isEmpty) _left(Text(context.tr('Сообщений пока нет'))),
                     TextButton(
                       key: const ValueKey('native-meeting-chat-refresh'),
-                      onPressed: _reading || _writing ? null : _load,
+                      onPressed: _memberLocked || _reading || _writing ? null : _load,
                       child: Text(context.tr('Обновить')),
                     ),
                     if (_notice != null) ClrsPanel(child: Text(context.tr(_notice!))),
-                    if (_reading || _writing || _translating) const Center(child: CircularProgressIndicator()),
+                    if (_reading || _writing || _translating || _leaving)
+                      const Center(child: CircularProgressIndicator()),
                   ],
                 ),
               ),

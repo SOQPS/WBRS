@@ -86,15 +86,19 @@ def validate_page(value, meeting_id, limit, previous_cursor=None):
     return value
 
 
-def _state(store, cursor, execute, uid, meeting_id, now, *, readonly):
-    if getattr(store, "_env", {}).get("CLRS_RUNTIME_PERMISSION_MODEL") != "provider-database-v1":
-        raise RuntimeUnavailable()
-    _indexes(cursor, execute); execute(_INDEX); indexes = cursor.fetchall()
+def _message_indexes(cursor, execute):
+    execute(_INDEX); indexes = cursor.fetchall()
     if (len(indexes) != 6 or any(not isinstance(row, (tuple, list)) or len(row) != 7
             or type(row[1]) is not int or type(row[2]) is not int or row[5] is not None
             or row[6] != (None if row[3] == "sequence" else "utf8mb4_0900_bin") for row in indexes)
             or {tuple(row[:5]) for row in indexes} != _INDEX_PARTS):
         raise RuntimeUnavailable()
+
+
+def _state(store, cursor, execute, uid, meeting_id, now, *, readonly):
+    if getattr(store, "_env", {}).get("CLRS_RUNTIME_PERMISSION_MODEL") != "provider-database-v1":
+        raise RuntimeUnavailable()
+    _indexes(cursor, execute); _message_indexes(cursor, execute)
     failure = _current_profile(cursor, execute, uid, {"type": "групповая"}, now)
     if failure: raise _JoinFailure(*failure)
     if _target(cursor, execute, uid, meeting_id, now, readonly=readonly) is None:

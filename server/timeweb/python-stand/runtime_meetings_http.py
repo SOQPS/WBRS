@@ -19,6 +19,7 @@ from runtime_meetings import (RuntimeMeetingsService, MEETING_ORDER, PARTICIPANT
                              MAX_PAGE, MAX_PUBLIC_BYTES)
 from runtime_meeting_create import local_datetime
 from runtime_meeting_chat import validate_page
+from runtime_meeting_archive import validate_archive_page
 
 
 PREFIX = "/v1/runtime/meetings"
@@ -50,7 +51,7 @@ def _route(environ):
         if path == PREFIX:
             return "meetings", None
         pieces = path[len(PREFIX) + 1:].split("/")
-        if len(pieces) not in (1, 2) or len(pieces) == 2 and pieces[1] not in {"participants", "messages"}:
+        if len(pieces) not in (1, 2) or len(pieces) == 2 and pieces[1] not in {"participants", "messages", "archived-messages"}:
             raise RuntimeInvalidRequest()
         resource = pieces[0]
         if any(c in resource for c in "%\\?#"):
@@ -70,7 +71,7 @@ def _options(environ, operation):
             or any(ord(c) < 32 or ord(c) > 126 for c in raw)):
         raise RuntimeInvalidRequest()
     allowed = {"scope", "limit", "cursor", "countryCode", "region"} if operation == "meetings" else (
-        {"limit", "cursor"} if operation in {"participants", "messages"} else set())
+        {"limit", "cursor"} if operation in {"participants", "messages", "archived-messages"} else set())
     try:
         entries = parse_qsl(raw, keep_blank_values=True, strict_parsing=True,
             encoding="utf-8", errors="strict", max_num_fields=len(allowed))
@@ -140,6 +141,8 @@ def _next_cursor(value, options):
 
 
 def _result(value, operation, resource, options):
+    if operation == "archived-messages":
+        return validate_archive_page(value, resource, options["limit"], options.get("cursor"))
     if operation == "messages":
         return validate_page(value, resource, options["limit"], options.get("cursor"))
     if type(value) is not dict or value.get("kind") != "canonical-current" or value.get("mediaReady") is not False:
@@ -249,6 +252,8 @@ class RuntimeMeetingsHttp:
             reader = self._reader()
             if operation == "meetings":
                 value = reader.meetings(identity, access_token=token, **options)
+            elif operation == "archived-messages":
+                value = reader.archived_messages(identity, resource, access_token=token, **options)
             elif operation == "messages":
                 value = reader.messages(identity, resource, access_token=token, **options)
             elif operation == "meeting":
@@ -263,7 +268,7 @@ class RuntimeMeetingsHttp:
         except RuntimeInvalidRequest:
             return RuntimeMeetingsHttpReply("400 Bad Request", {"error": "invalid_request"})
         except RuntimeReadRejected:
-            return RuntimeMeetingsHttpReply("404 Not Found", {"error": "meeting_unavailable" if operation == "messages" else "not_found"})
+            return RuntimeMeetingsHttpReply("404 Not Found", {"error": "archive_unavailable" if operation == "archived-messages" else ("meeting_unavailable" if operation == "messages" else "not_found")})
         except (NativeRejected, RuntimeRejected):
             return RuntimeMeetingsHttpReply("401 Unauthorized", {"error": "unauthorized"}, authenticate=True)
         except NativeRateLimited:

@@ -305,6 +305,87 @@ final class TimewebMeetingMessagePage {
   String toString() => 'TimewebMeetingMessagePage(<redacted>)';
 }
 
+/// This owner archive window proves no live membership or chat capability.
+final class TimewebMeetingArchiveWindow {
+  TimewebMeetingArchiveWindow._(this._data, this._check);
+  final Map<String, dynamic> _data;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  TimewebMeetingArchiveWindow bindSessionGuard(void Function() guard) =>
+      TimewebMeetingArchiveWindow._(_data, () { requireCurrent(); guard(); });
+  T _read<T>(String key) { _check(); return _data[key] as T; }
+  int get throughSequence => _read('throughSequence');
+  String get capturedAt => _read('capturedAt');
+  String get operationId => _read('operationId');
+  int get membershipRevision => _read('membershipRevision');
+  @override
+  String toString() => 'TimewebMeetingArchiveWindow(<redacted>)';
+}
+final class TimewebMeetingArchiveCursor {
+  TimewebMeetingArchiveCursor._(this._cursor, this._window);
+  final TimewebMeetingCursor _cursor;
+  final Map<String, dynamic> _window;
+  void requireCurrent() => _cursor.requireCurrent();
+  @override
+  String toString() => 'TimewebMeetingArchiveCursor(<redacted>)';
+}
+final class TimewebMeetingArchivePage {
+  TimewebMeetingArchivePage._(this._items, this._cursor, this._meetingId, this._window, this._check);
+  final List<TimewebMeetingMessage> _items;
+  final TimewebMeetingArchiveCursor? _cursor;
+  final String _meetingId;
+  final TimewebMeetingArchiveWindow _window;
+  final void Function() _check;
+  void requireCurrent() => _check();
+  List<TimewebMeetingMessage> get items { _check(); return _items; }
+  TimewebMeetingArchiveCursor? get nextCursor { _check(); return _cursor; }
+  String get meetingId { _check(); return _meetingId; }
+  TimewebMeetingArchiveWindow get window { _check(); return _window; }
+  bool get mediaReady { _check(); return false; }
+  TimewebMeetingArchivePage bindSessionGuard(void Function() guard) {
+    void check() { requireCurrent(); guard(); }
+    final cursor = _cursor?._cursor;
+    return TimewebMeetingArchivePage._(List.unmodifiable(_items.map((v) => v.bindSessionGuard(guard))),
+      cursor == null ? null : TimewebMeetingArchiveCursor._(TimewebMeetingCursor._(cursor._value, cursor._owner, cursor._scope,
+        () { cursor.requireCurrent(); guard(); }, cursor._expiry, capSequence: cursor._capSequence,
+        beforeSequence: cursor._beforeSequence), _cursor!._window), _meetingId, _window.bindSessionGuard(guard), check);
+  }
+  @override
+  String toString() => 'TimewebMeetingArchivePage(<redacted>)';
+}
+final class TimewebMeetingArchiveUnavailable implements Exception {
+  const TimewebMeetingArchiveUnavailable();
+  @override
+  String toString() => 'TimewebMeetingArchiveUnavailable';
+}
+TimewebMeetingArchivePage _decodeMeetingArchive(_PeopleFlight f, Map<String, dynamic> body, String id,
+    Map<String, String> query, String scope, TimewebMeetingArchiveCursor? cursor) {
+  if (!_mutationExact(body, {'kind','meetingId','archiveWindow','ordering','items','nextCursor','mediaReady'}) ||
+      body['kind'] != 'canonical-current' || body['meetingId'] != id || body['ordering'] != 'sequence_desc' ||
+      body['mediaReady'] != false || body['archiveWindow'] is! Map<String, dynamic> || body['items'] is! List ||
+      (body['items'] as List).length > int.parse(query['limit']!)) { _peopleInvalid(); }
+  final window = body['archiveWindow'] as Map<String, dynamic>;
+  if (!_mutationExact(window, {'throughSequence','capturedAt','operationId','membershipRevision'}) ||
+      !_mutationInteger(window['throughSequence']) || !_mutationInteger(window['membershipRevision'], positive: true) ||
+      !_mutationStamp(window['capturedAt']) || window['operationId'] is! String ||
+      !RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$').hasMatch(window['operationId']) ||
+      cursor != null && window.entries.any((v) => cursor._window[v.key] != v.value)) { _peopleInvalid(); }
+  final next = body['nextCursor'], raw = body['items'] as List;
+  if (next != null && (!_validReadCursor(next is String ? next : '') || next == cursor?._cursor._value || raw.isEmpty)) { _peopleInvalid(); }
+  final rows = <TimewebMeetingMessage>[], ids = <String>{}; int? previous = cursor?._cursor._beforeSequence;
+  for (final value in raw) {
+    if (value is! Map<String, dynamic> || !_mutationExact(value, {'meetingId','messageId','sequence','senderUid','text','createdAt'}) ||
+        !_meetingMessageFields(value, id) || value['sequence'] > window['throughSequence'] ||
+        previous != null && value['sequence'] >= previous || !ids.add(value['messageId'])) { _peopleInvalid(); }
+    previous = value['sequence']; rows.add(TimewebMeetingMessage._(Map.unmodifiable(value), _meetingReadCheck(f)));
+  }
+  final frozen = Map<String, dynamic>.unmodifiable(window);
+  final continuation = next == null ? null : TimewebMeetingArchiveCursor._(TimewebMeetingCursor._(next, f.owner, scope, _meetingReadCheck(f),
+    cursor?._cursor._expiry ?? f.startedAt.add(const Duration(seconds: 300)), capSequence: window['throughSequence'], beforeSequence: rows.last.sequence), frozen);
+  return TimewebMeetingArchivePage._(List.unmodifiable(rows), continuation, id,
+    TimewebMeetingArchiveWindow._(frozen, _meetingReadCheck(f)), _meetingReadCheck(f));
+}
+
 bool _meetingMessageFields(Map<String, dynamic> value, String id) => value['meetingId'] == id &&
   value['messageId'] is String && RegExp(r'^tw-meet-msg-[a-f0-9]{64}$').hasMatch(value['messageId']) &&
   _mutationInteger(value['sequence'], positive: true) && _currentIdentifier(value['senderUid']) &&
@@ -348,6 +429,11 @@ final class TimewebMeetingNotFound implements Exception {
 }
 
 extension TimewebMeetingsClient on TimewebAuthClient {
+  Future<TimewebMeetingArchivePage> readMeetingArchive(String meetingId, {int limit = 30, TimewebMeetingArchiveCursor? cursor}) {
+    if (limit < 1 || limit > 30) return Future.error(ArgumentError('Invalid meeting archive limit.'));
+    return _meetingRead(this, {'limit': '$limit'}, meetingId, cursor?._cursor, messages: true, archive: true, archiveCursor: cursor)
+      .then((v) => v as TimewebMeetingArchivePage);
+  }
   Future<TimewebMeetingMessagePage> readMeetingMessages(String meetingId, {int limit = 30, TimewebMeetingCursor? cursor}) {
     if (limit < 1 || limit > 30) return Future.error(ArgumentError('Invalid meeting message limit.'));
     return _meetingRead(this, {'limit': '$limit'}, meetingId, cursor, messages: true).then((v) => v as TimewebMeetingMessagePage);
@@ -361,14 +447,14 @@ extension TimewebMeetingsClient on TimewebAuthClient {
   }
 }
 
-Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, {bool messages = false}) {
+Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, {bool messages = false, bool archive = false, TimewebMeetingArchiveCursor? archiveCursor}) {
   try {
     owner._checkEnabled(_peopleOperation);
     if (!owner.configuration.currentReadsEnabled || !owner.configuration.runtimeWritesEnabled) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.disabled);
     final session = owner._session;
     if (session == null || owner._secureStoreUnsafe) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.notAuthenticated);
     if (id != null && !_meetingIdentifier(id)) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.invalidRequest);
-    final scope = '${messages ? 'meeting-messages' : 'meetings'}:$id:${jsonEncode(query)}';
+    final scope = '${archive ? 'meeting-archive' : messages ? 'meeting-messages' : 'meetings'}:$id:${jsonEncode(query)}';
     if (cursor != null) {
       if (!identical(cursor._owner, owner) || cursor._scope != scope) throw const TimewebAuthException(_peopleOperation, TimewebAuthError.invalidRequest);
       cursor.requireCurrent();
@@ -384,15 +470,15 @@ Future<Object> _meetingRead(TimewebAuthClient owner, Map<String, String> query, 
       if ((_meetingGenerations[owner] ?? 0) != generation) throw const TimewebMeetingNotFound();
     };
     owner._peopleFlights[key] = flight;
-    unawaited(_executeMeetingRead(flight, query, id, cursor, scope, messages));
+    unawaited(_executeMeetingRead(flight, query, id, cursor, scope, messages, archive, archiveCursor));
     return flight.result.future;
   } catch (error) { return Future.error(error); }
 }
 
-Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, String scope, bool messages) async {
+Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, String? id, TimewebMeetingCursor? cursor, String scope, bool messages, bool archive, TimewebMeetingArchiveCursor? archiveCursor) async {
   final owner = f.owner;
   final uri = owner.configuration.endpoint.replace(pathSegments: ['v1', 'runtime', 'meetings',
-    if (id != null) id, if (id != null && query.isNotEmpty) messages ? 'messages' : 'participants'],
+    if (id != null) id, if (id != null && query.isNotEmpty) archive ? 'archived-messages' : messages ? 'messages' : 'participants'],
     queryParameters: query.isEmpty ? null : {...query, if (cursor != null) 'cursor': cursor._value});
   try {
     f.check(); var session = owner._session!;
@@ -404,17 +490,19 @@ Future<void> _executeMeetingRead(_PeopleFlight f, Map<String, String> query, Str
     }
     if (reply.status != 200) {
       if (reply.status == 401 && owner._session?.accessToken == session.accessToken) await owner._invalidate(f.epoch);
+      if (archive && const [400,403,404].contains(reply.status)) throw const TimewebMeetingArchiveUnavailable();
       if (reply.status == 404 && id != null) throw const TimewebMeetingNotFound();
       throw owner._statusError(_peopleOperation, reply.status);
     }
     final catalog = messages ? const <String, dynamic>{} : await _pinnedGeographyCatalog(); f.check();
-    final value = messages ? _decodeMeetingMessages(f, reply.body!, query, id!, cursor, scope)
+    final value = archive ? _decodeMeetingArchive(f, reply.body!, id!, query, scope, archiveCursor)
+      : messages ? _decodeMeetingMessages(f, reply.body!, query, id!, cursor, scope)
       : _decodeMeetingRead(f, reply.body!, query, id, cursor, scope, catalog); f.check();
     _meetingReadCheck(f)();
     if (!f.result.isCompleted) f.result.complete(value);
   } catch (error) {
     if (!f.result.isCompleted) {
-      try { f.check(); f.result.completeError(error is TimewebAuthException || error is TimewebMeetingNotFound ? error : const TimewebAuthException(_peopleOperation, TimewebAuthError.network)); }
+      try { f.check(); f.result.completeError(error is TimewebAuthException || error is TimewebMeetingNotFound || error is TimewebMeetingArchiveUnavailable ? error : const TimewebAuthException(_peopleOperation, TimewebAuthError.network)); }
       on TimewebAuthException catch (stale) { if (!f.result.isCompleted) f.result.completeError(stale); }
     }
   } finally {

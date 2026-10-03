@@ -10,6 +10,7 @@ import 'package:wbrs/service/timeweb_app_runtime.dart';
 import 'package:wbrs/service/timeweb_auth_client.dart';
 import 'package:wbrs/service/timeweb_meeting_create_flow.dart';
 import 'package:wbrs/service/timeweb_meeting_join_flow.dart';
+import 'package:wbrs/service/timeweb_meeting_membership_flow.dart';
 import 'package:wbrs/shared/clrs_brand.dart';
 import 'package:wbrs/shared/clrs_screen.dart';
 import 'package:wbrs/shared/geo_catalog.dart';
@@ -158,9 +159,10 @@ Widget _meetingCard(BuildContext context, TimewebMeeting meeting, {VoidCallback?
 
 /// One current page, then an explicit next page. No imported meeting/media fallback.
 class TimewebMeetingsPageView extends StatefulWidget {
-  const TimewebMeetingsPageView({super.key, required this.runtime, this.meetingId});
+  const TimewebMeetingsPageView({super.key, required this.runtime, this.meetingId, this.onMembershipChanged});
   final TimewebAppRuntime runtime;
   final String? meetingId;
+  final VoidCallback? onMembershipChanged;
   @override
   State<TimewebMeetingsPageView> createState() => _TimewebMeetingsPageViewState();
 }
@@ -179,13 +181,16 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
   TimewebMeetingPage<TimewebMeetingParticipant>? _participants;
   TimewebMeeting? _meeting;
   TimewebMeetingJoinFlow? _joinFlow;
+  TimewebMeetingMembershipFlow? _leaveFlow, _kickFlow;
+  bool _changingMembership = false;
+  String? _membershipNotice;
   bool _joining = false, _joinUnavailable = false;
   String? _joinNotice;
   String? _chatNotice;
   bool _loading = false, _error = false, _invalidated = false;
   int _generation = 0;
 
-  bool get _current {
+  bool get _actorCurrent {
     if (!mounted ||
         _invalidated ||
         !identical(widget.runtime, _runtime) ||
@@ -194,22 +199,35 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         _runtime.session.state.identity?.uid != _owner) {
       return false;
     }
+    return true;
+  }
+
+  bool get _current {
+    if (!_actorCurrent) return false;
     try {
       _page?.requireCurrent();
       _meeting?.requireCurrent();
       _participants?.requireCurrent();
       _joinFlow?.requireCurrent();
+      _leaveFlow?.requireCurrent();
+      _kickFlow?.requireCurrent();
       return true;
     } catch (_) {
       return false;
     }
   }
 
+  bool get _pendingLeave => _leaveFlow?.needsCheck == true;
+  bool get _pendingKick => _kickFlow?.needsCheck == true;
+  bool get _memberActionsLocked => widget.meetingId != null &&
+      (_leaveFlow == null || _pendingLeave || _pendingKick || _changingMembership);
+  bool get _organizer => _meeting != null && _meeting!.organizerUid == _owner;
+
   @override
   void initState() {
     super.initState();
     _subscription = _runtime.session.states.listen((_) {
-      if (!_current) _invalidate();
+      if (!_actorCurrent) _invalidate();
     });
     unawaited(_load());
   }
@@ -226,6 +244,11 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _generation++;
     _joinFlow?.close();
     _joinFlow = null;
+    _leaveFlow?.close();
+    _kickFlow?.close();
+    _leaveFlow = _kickFlow = null;
+    _changingMembership = false;
+    _membershipNotice = null;
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
@@ -245,7 +268,11 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
   }
 
   Future<void> _load({bool next = false, bool roster = false}) async {
-    if (!_current || _loading) return;
+    if (!_actorCurrent || _loading) return;
+    if (!_current) {
+      if (next || roster) return;
+      _purgeMembershipReads();
+    }
     final cursor = next ? (roster ? _participants?.nextCursor : _page?.nextCursor) : null;
     if (next && cursor == null) return;
     final generation = ++_generation;
@@ -269,11 +296,24 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         page.requireCurrent();
         setState(() => _participants = page);
       } else if (widget.meetingId != null) {
+        // Restore the original leave before any protected member entry.
+        if (_leaveFlow == null) {
+          final flow = await _runtime.openMeetingLeave(widget.meetingId!);
+          if (!_actorCurrent || generation != _generation) { flow.close(); return; }
+          flow.requireCurrent();
+          setState(() => _leaveFlow = flow);
+        }
         final meeting = await _runtime.readMeeting(widget.meetingId!);
         if (!_current || generation != _generation) return;
         meeting.requireCurrent();
         setState(() => _meeting = meeting);
-        if (_joinFlow == null && !_joinUnavailable && _runtime.meetingsEnabled) {
+        if (_organizer && _kickFlow == null) {
+          final flow = await _runtime.openMeetingKick(widget.meetingId!);
+          if (!_current || generation != _generation) { flow.close(); return; }
+          flow.requireCurrent();
+          setState(() => _kickFlow = flow);
+        }
+        if (!_pendingLeave && !_pendingKick && _joinFlow == null && !_joinUnavailable && _runtime.meetingsEnabled) {
           final flow = await _runtime.openMeetingJoin(meeting.meetingId);
           if (!_current || generation != _generation) {
             flow.close();
@@ -315,14 +355,14 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         settings: const RouteSettings(name: timewebMeetingsRoute),
-        builder: (_) => TimewebMeetingsPageView(runtime: _runtime, meetingId: id),
+        builder: (_) => TimewebMeetingsPageView(runtime: _runtime, meetingId: id, onMembershipChanged: _purgeMembershipReads),
       ),
     );
   }
 
   Future<void> _join() async {
     final flow = _joinFlow;
-    if (!_current || _loading || _joining || flow == null || flow.rejected || flow.receipt != null) return;
+    if (!_current || _memberActionsLocked || _loading || _joining || flow == null || flow.rejected || flow.receipt != null) return;
     setState(() {
       _joining = true;
       _joinNotice = null;
@@ -362,9 +402,9 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
 
   Future<void> _openConversation() async {
     final meeting = _meeting;
-    if (!_current || _loading || _joining || meeting == null) return;
+    if (!_current || _memberActionsLocked || _loading || _joining || meeting == null) return;
     setState(() { _loading = true; _chatNotice = null; });
-    var participantsRequested = false;
+    var participantsRequested = false, membershipChanged = false;
     try {
       final flow = await _runtime.openMeetingConversation(meeting.meetingId);
       if (!mounted || !_current || !identical(_meeting, meeting)) { flow.close(); return; }
@@ -374,12 +414,98 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         roster.requireCurrent(); flow.requireCurrent();
         await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => TimewebMeetingChatPageView(
           runtime: _runtime, meeting: meeting, flow: flow, participants: roster.items,
-          onParticipants: () => participantsRequested = true)));
+          onParticipants: () => participantsRequested = true,
+          onMembershipChanged: () { if (_actorCurrent) { membershipChanged = true; _purgeMembershipReads(); } })));
       } finally { flow.close(); }
     } catch (_) {
       if (_current) setState(() => _chatNotice = 'Обсуждение пока недоступно.');
-    } finally { if (_current) setState(() => _loading = false); }
-    if (_current && participantsRequested) await _load(roster: true);
+    } finally { if (_actorCurrent) setState(() => _loading = false); }
+    if (_actorCurrent) {
+      // Back after UNKNOWN must reopen the disk original, not the idle pre-chat flow.
+      _leaveFlow?.close(); _leaveFlow = null;
+      await _load();
+      if (!membershipChanged && _current && !_memberActionsLocked && participantsRequested) await _load(roster: true);
+    }
+  }
+
+  void _purgeMembershipReads() {
+    if (!_actorCurrent) return;
+    widget.onMembershipChanged?.call();
+    setState(() {
+      _generation++;
+      _page = null; _meeting = null; _participants = null;
+      _joinFlow?.close(); _joinFlow = null;
+      _joinNotice = null; _joinUnavailable = false;
+      _leaveFlow?.close(); _kickFlow?.close();
+      _leaveFlow = _kickFlow = null;
+    });
+  }
+
+  Future<void> _checkLeave() async {
+    final flow = _leaveFlow;
+    if (!_actorCurrent || _loading || _changingMembership || flow == null || !flow.needsCheck) return;
+    setState(() { _changingMembership = true; _membershipNotice = null; });
+    try {
+      final outcome = await flow.check();
+      if (!_actorCurrent) return;
+      flow.requireCurrent();
+      if (outcome == TimewebMeetingMembershipOutcome.confirmed) {
+        final receipt = flow.leaveReceipt;
+        if (receipt == null || receipt.meetingId != widget.meetingId) throw StateError('Missing leave receipt');
+        receipt.requireCurrent();
+        _purgeMembershipReads();
+        setState(() => _membershipNotice = 'Вы вышли из встречи.');
+        await _load();
+      } else {
+        setState(() => _membershipNotice = outcome == TimewebMeetingMembershipOutcome.unknown
+            ? 'Проверьте исходный выход из встречи.' : 'Выход из встречи отклонён.');
+        if (outcome == TimewebMeetingMembershipOutcome.rejected) {
+          _purgeMembershipReads();
+          await _load();
+        }
+      }
+    } catch (_) {
+      if (_actorCurrent) setState(() => _membershipNotice = 'Не удалось подтвердить исходный выход.');
+    } finally { if (_actorCurrent) setState(() => _changingMembership = false); }
+  }
+
+  Future<void> _kick([TimewebMeetingParticipant? person]) async {
+    final flow = _kickFlow;
+    if (!_current || !_organizer || _pendingLeave || _loading || _joining || _changingMembership || flow == null) return;
+    String? target;
+    if (!flow.needsCheck) {
+      if (person == null || flow.rejected) return;
+      person.requireCurrent();
+      target = person.uid;
+      if (target == _owner || target == _meeting!.organizerUid) return;
+    }
+    final id = flow.meetingId;
+    setState(() { _changingMembership = true; _membershipNotice = null; });
+    try {
+      final outcome = flow.needsCheck ? await flow.check() : await flow.submit(targetUid: target);
+      if (!_actorCurrent) return;
+      flow.requireCurrent();
+      if (outcome == TimewebMeetingMembershipOutcome.confirmed) {
+        final receipt = flow.kickReceipt;
+        if (receipt == null || receipt.meetingId != id || receipt.targetUid != flow.targetUid) {
+          throw StateError('Missing original kick receipt');
+        }
+        receipt.requireCurrent();
+        _purgeMembershipReads();
+        setState(() => _membershipNotice = 'Исключение подтверждено. Обновляем участников.');
+        await _load();
+        if (_current) await _load(roster: true);
+      } else {
+        setState(() => _membershipNotice = outcome == TimewebMeetingMembershipOutcome.unknown
+            ? 'Проверьте исходное исключение участника.' : 'Исключение участника отклонено.');
+        if (outcome == TimewebMeetingMembershipOutcome.rejected) {
+          _purgeMembershipReads();
+          await _load();
+        }
+      }
+    } catch (_) {
+      if (_actorCurrent) setState(() => _membershipNotice = 'Не удалось подтвердить исключение участника.');
+    } finally { if (_actorCurrent) setState(() => _changingMembership = false); }
   }
 
   Future<void> _selectScope() async {
@@ -406,6 +532,11 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
     _generation++;
     _joinFlow?.close();
     _joinFlow = null;
+    _leaveFlow?.close();
+    _kickFlow?.close();
+    _leaveFlow = _kickFlow = null;
+    _changingMembership = false;
+    _membershipNotice = null;
     _joining = false;
     _joinUnavailable = false;
     _joinNotice = null;
@@ -449,7 +580,14 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
           : null,
     ),
     body: !_current
-        ? Center(child: Text(context.tr('Сеанс завершён')))
+        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(context.tr(_actorCurrent ? 'Данные встречи недоступны' : 'Сеанс завершён')),
+            if (_actorCurrent) TextButton(
+              key: const ValueKey('native-meetings-refresh'),
+              onPressed: _loading ? null : () => _load(),
+              child: Text(context.tr('Обновить')),
+            ),
+          ]))
         : NavigatorPopHandler<void>(
             onPopWithResult: (_) => _fieldsNavigator.currentState?.pop(),
             child: Navigator(
@@ -518,10 +656,10 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
           ),
       ] else if (_meeting != null) ...[
         _meetingCard(context, _meeting!, full: true),
-        _left(
+        if (!_pendingLeave) _left(
           TextButton(
             key: const ValueKey('native-meeting-join'),
-            onPressed: _loading || _joining || _joinFlow == null || _joinFlow!.rejected || _joinFlow!.receipt != null
+            onPressed: _memberActionsLocked || _loading || _joining || _joinFlow == null || _joinFlow!.rejected || _joinFlow!.receipt != null
                 ? null
                 : _join,
             child: Text(
@@ -533,24 +671,33 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
             ),
           ),
         ),
-        if (_joinNotice != null) _left(ClrsPanel(child: Text(context.tr(_joinNotice!)))),
+        if (!_pendingLeave && _joinNotice != null) _left(ClrsPanel(child: Text(context.tr(_joinNotice!)))),
         if (_joinUnavailable) _left(Text(context.tr('Присоединение пока недоступно.'))),
         if (_joining) const Center(child: CircularProgressIndicator()),
         _left(TextButton(
           key: const ValueKey('native-meeting-discussion'),
-          onPressed: _loading || _joining ? null : _openConversation,
+          onPressed: _memberActionsLocked || _loading || _joining ? null : _openConversation,
           child: Text(context.tr('Обсуждение встречи')),
         )),
         if (_chatNotice != null) _left(Text(context.tr(_chatNotice!))),
         TextButton(
           key: const ValueKey('native-meeting-participants'),
-          onPressed: _loading || _joining ? null : () => _load(roster: true),
+          onPressed: _memberActionsLocked || _loading || _joining ? null : () => _load(roster: true),
           child: Text(context.tr('Участники встречи')),
         ),
         for (final person in _participants?.items ?? <TimewebMeetingParticipant>[])
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _left(ClrsPanel(child: Text(person.fullName ?? context.tr('Имя не указано')))),
+            child: _left(ClrsPanel(child: Row(children: [
+              Expanded(child: Text(person.fullName ?? context.tr('Имя не указано'))),
+              if (_organizer) IconButton(
+                key: ValueKey('native-meeting-kick-${person.uid}'),
+                tooltip: context.tr('Исключить участника'),
+                icon: const Icon(Icons.person_remove_outlined),
+                onPressed: _memberActionsLocked || _loading || _joining || _kickFlow == null ||
+                    _kickFlow!.rejected || person.uid == _owner ? null : () => _kick(person),
+              ),
+            ]))),
           ),
         if (_participants?.items.isEmpty == true)
           Text(
@@ -561,15 +708,27 @@ class _TimewebMeetingsPageViewState extends State<TimewebMeetingsPageView> {
         if (_participants?.nextCursor != null)
           TextButton(
             key: const ValueKey('native-participants-next'),
-            onPressed: _loading || _joining ? null : () => _load(roster: true, next: true),
+            onPressed: _memberActionsLocked || _loading || _joining ? null : () => _load(roster: true, next: true),
             child: Text(context.tr('Следующая страница')),
           ),
       ],
+      if (_pendingLeave) _left(TextButton(
+        key: const ValueKey('native-meeting-leave-check'),
+        onPressed: _loading || _changingMembership ? null : _checkLeave,
+        child: Text(context.tr('Проверить выход')),
+      )),
+      if (_pendingKick && _organizer) _left(TextButton(
+        key: const ValueKey('native-meeting-kick-check'),
+        onPressed: _loading || _changingMembership ? null : () => _kick(),
+        child: Text(context.tr('Проверить исключение')),
+      )),
+      if (_membershipNotice != null) _left(Text(context.tr(_membershipNotice!))),
+      if (_changingMembership) const Center(child: CircularProgressIndicator()),
       if (_error) Text(context.tr('Не удалось загрузить данные. Обновите страницу.')),
       if (_loading) const Center(child: CircularProgressIndicator()),
       TextButton(
         key: const ValueKey('native-meetings-refresh'),
-        onPressed: _loading || _joining ? null : () => _load(),
+        onPressed: _pendingLeave || _pendingKick || _changingMembership || _loading || _joining ? null : () => _load(),
         child: Text(context.tr('Обновить')),
       ),
     ],

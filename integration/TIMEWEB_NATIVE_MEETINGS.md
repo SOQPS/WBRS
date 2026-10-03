@@ -133,8 +133,8 @@ horizontal geography filters, metadata/roster panels on the left two-thirds.
 The same approved meeting guide is reused with legacy navigation disabled;
 its dialogs stay inside the owned native navigator. The participants link is
 `Участники встречи`. Discussion opens only after a fresh member-authorized
-message read; no fabricated meeting image is shown. Push, archived history and
-imported-meeting serving remain separate cutover work.
+message read; no fabricated meeting image is shown. Push and imported-meeting serving remain separate cutover work. Native owner
+archives use the separate read-only contract below.
 
 ## Current member-only text discussion
 
@@ -197,8 +197,41 @@ already-committed exit after restart. Kick target is retained inside the origina
 Exact disk readback/ACK precedes local meeting-read generation retirement: held
 items, cursors, empty pages and late reads become unavailable, while the healthy
 native account and minimal owner-bound receipt remain. Personal chat is unchanged.
-The screen controls are being integrated separately from this reviewed client
-and server contract. Archive history after exit is not yet implemented.
+The discussion restores leave before member actions and offers original-only
+Check after UNKNOWN. Confirmed leave clears the held discussion before returning
+to fresh detail; declared rejection clears refused data without claiming an exit.
+Only a fresh canonical organizer may kick a non-self roster target. A pending
+original locks other targets; ACK clears child and ancestor cached reads before
+fresh detail/roster. Back after an uncertain exit restores its disk original
+without a member message GET. Stale ancestor pages can refresh with the healthy
+actor's lease, and opening participants first purges the hidden chat.
+
+## Native owner archive
+
+An active voluntary leave captures the exact validated native message tail under
+the meeting lock, atomically with membership update and the original receipt.
+The existing member raw marker accepts only its original one-key form or the
+exact server-only archiveWindow: throughSequence, capturedAt, operationId and
+membershipRevision. Rejoin and kick retain an existing window; kick never creates
+one. Old absent/already-left rows are not backfilled from timestamps or later
+messages. There is no new table, permission, copying or source rewrite.
+
+`GET /v1/runtime/meetings/{meetingId}/archived-messages` checks the current owner
+account, profile existence, native window and exact original owner leave receipt
+inside the authenticated read transaction. It does not require live membership or
+search visibility and does not grant message/roster capabilities. The response
+contains kind, meetingId, archiveWindow, ordering, items, nextCursor and
+mediaReady:false. Only immutable native text rows at or below throughSequence
+are returned, with existing 30-row/64KiB bounds. The cursor pins the owner,
+meeting, all four window fields, limit and original five-minute expiry; replacement
+windows reject old cursors. Unavailable history returns a short 404 without
+logging out a healthy account. Imported meetings remain excluded.
+
+The separate read-only Flutter flow opens only this archive endpoint. Its bounded
+300-message rolling cache discards newest rows when loading older pages and
+preserves the server cursor, so the memory bound does not truncate older history.
+Held window/messages and late responses retain account and read-generation
+guards. The archive screen is being integrated; native release flags remain false.
 
 ## Focused evidence and limits
 
@@ -232,6 +265,15 @@ authority retirement. Scoped client analysis has no errors or warnings; 27
 pre-existing style information entries were left unchanged. Only brace lint fixes
 and the original closed-flow getter behavior changed after the focused client run;
 the final source hashes received independent backend peer acceptance.
+
+Membership UI adds one expanded focused widget scenario covering UNKNOWN Back
+and original Check, ACK before purge/refresh, organizer/self/target restrictions,
+synchronous hidden-chat cleanup, declared refusal and A-to-B late responses.
+Scoped analysis of the three changed paths reports No issues. Archive adds eight
+aggregate backend cases (six new and two affected membership cases) and four
+client groups; the one rolling-cache correction alone was rerun with 330 rows,
+11 pages and oldest sequence1 reached, at most300 in memory and no extra request
+after terminal cursor. No old full suites or live-user writes were repeated.
 
 Frozen patches were independently reviewed, applied in order and matched their
 source manifests. Credentials remain outside source/APK. Full source hashes,

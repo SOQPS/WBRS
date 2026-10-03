@@ -13,7 +13,7 @@ from runtime_chat import _integer, _stamp
 from runtime_meeting_create import MeetingAccessRejected, _indexes, _current_profile
 from runtime_meetings import (MEETING_SELECT, MEMBER_SELECT, _meeting_row,
     _member_row, _meeting_dto, RuntimeMeetingsService)
-from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable
+from runtime_mutations import RuntimeInvalidRequest, RuntimeUnavailable, canonical_json
 from runtime_people import RuntimePeopleService
 from runtime_personal_chat import _uid
 from runtime_reads import _timestamp
@@ -103,18 +103,23 @@ class RuntimeMeetingMembershipService:
         return row, member
 
     @staticmethod
-    def _update(cursor, execute, member, *, kick):
+    def _update(cursor, execute, member, *, kick, operation_id=None):
         previous = member["membershipRevision"]; revision = _integer(previous + 1)
         stamp = _utc(_stamp(cursor, execute)); left = member["leftAt"] or stamp
         if stamp < member["joinedAt"] or (member["leftAt"] is not None and stamp < member["leftAt"]):
             raise RuntimeUnavailable()
         kicked = stamp if kick else member["kickedAt"]
         sql_time = lambda value: value[:-1].replace("T", " ") if value is not None else None
-        execute("""UPDATE clrs_staging.meeting_members SET left_at = %s, kicked_at = %s, membership_revision = %s
+        raw_assignment = ""
+        values = [sql_time(left), sql_time(kicked), revision]
+        if not kick:
+            from runtime_meeting_archive import capture_window
+            marker = capture_window(cursor, execute, member, operation_id, revision, stamp)
+            raw_assignment = ", legacy_raw = %s"; values.append(canonical_json(marker).decode())
+        execute("""UPDATE clrs_staging.meeting_members SET left_at = %s, kicked_at = %s, membership_revision = %s""" + raw_assignment + """
  WHERE meeting_id = %s AND CAST(meeting_id AS BINARY) = CAST(%s AS BINARY)
  AND uid = %s AND CAST(uid AS BINARY) = CAST(%s AS BINARY) AND membership_revision = %s""",
-            (sql_time(left), sql_time(kicked), revision, member["meetingId"], member["meetingId"],
-                member["uid"], member["uid"], previous))
+            (*values, member["meetingId"], member["meetingId"], member["uid"], member["uid"], previous))
         if cursor.rowcount != 1:
             raise RuntimeUnavailable()
         current = _affected(cursor, execute, member["meetingId"], member["uid"], readonly=False)
@@ -132,7 +137,7 @@ class RuntimeMeetingMembershipService:
                 return failure.status, {"error": failure.error}, None
             already = member is None or member["leftAt"] is not None
             if not already:
-                member = self._update(cursor, execute, member, kick=False)
+                member = self._update(cursor, execute, member, kick=False, operation_id=operation_id)
             revision = member["membershipRevision"] if member is not None else None
             return 200, {"meetingId": request["meetingId"], "left": True, "alreadyLeft": already,
                 "membershipRevision": revision, "leftAt": member["leftAt"] if member is not None else None}, revision

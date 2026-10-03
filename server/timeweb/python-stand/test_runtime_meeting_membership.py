@@ -5,6 +5,7 @@ import unittest
 
 from runtime_http import RuntimeMutationHttp
 from runtime_meeting_create import MeetingAccessRejected
+from runtime_meeting_chat import _INDEX_PARTS
 from runtime_meeting_join import JOIN_OPERATION, RuntimeMeetingJoinService
 from runtime_meeting_membership import (LEAVE_OPERATION, KICK_OPERATION,
     RuntimeMeetingMembershipService, validate_membership)
@@ -23,6 +24,10 @@ KICK = {**PAYLOAD, "targetUid": "peer"}
 class MembershipCursor(JoinCursor):
     def execute(self, statement, params=()):
         sql = " ".join(statement.split()); db = self.c.db
+        if "s.TABLE_NAME = 'meeting_messages'" in sql or "FROM clrs_staging.meeting_messages AS mm" in sql:
+            assert self.c.held
+            db.calls.append((sql, params)); self.rows = db.message_indexes if "information_schema" in sql else []; self.rowcount = 0
+            return len(self.rows)
         if not sql.startswith("UPDATE clrs_staging.meeting_members "):
             return super().execute(statement, params)
         assert self.c.held and not self.c.readonly
@@ -33,7 +38,11 @@ class MembershipCursor(JoinCursor):
         if rejoin:
             revision, mid, exact_mid, uid, exact_uid, previous = params
         else:
-            left, kicked, revision, mid, exact_mid, uid, exact_uid, previous = params
+            if "legacy_raw = %s" in sql:
+                left, kicked, revision, raw, mid, exact_mid, uid, exact_uid, previous = params
+            else:
+                left, kicked, revision, mid, exact_mid, uid, exact_uid, previous = params
+                raw = None
         assert mid == exact_mid == MID and uid == exact_uid
         # Writes are serialized by the meeting lock, then by exact member PK.
         assert any("FROM clrs_staging.meetings AS m" in query and query.endswith("FOR UPDATE") for query, _ in db.calls)
@@ -45,6 +54,8 @@ class MembershipCursor(JoinCursor):
             else:
                 to_stamp = lambda value: value.replace(" ", "T") + "Z" if value is not None else None
                 row.update(leftAt=to_stamp(left), kickedAt=to_stamp(kicked))
+                if raw is not None:
+                    row["legacy_raw"] = json.loads(raw)
             row["membershipRevision"] = revision; self.rowcount = 1
         if db.revoke_during_update:
             self.c.state["accounts"][uid][0] = 1
@@ -54,6 +65,7 @@ class MembershipCursor(JoinCursor):
 class MembershipDatabase(JoinDatabase):
     def __init__(self, **options):
         super().__init__(**options); self.cas_failure = False; self.revoke_during_update = False
+        self.message_indexes = [(*part, None, None if part[3] == "sequence" else "utf8mb4_0900_bin") for part in sorted(_INDEX_PARTS)]
 
     def connect(self, **config):
         connection = super().connect(**config)

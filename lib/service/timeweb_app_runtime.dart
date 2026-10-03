@@ -16,6 +16,7 @@ import 'timeweb_meeting_create_flow.dart';
 import 'timeweb_meeting_join_flow.dart';
 import 'timeweb_meeting_chat_flow.dart';
 import 'timeweb_meeting_membership_flow.dart';
+import 'timeweb_meeting_archive_flow.dart';
 
 /// One native runtime owner. No Firebase identity, profile hydration or token
 /// fallback. Replacing this owner requires awaiting stop, which keeps protected
@@ -223,6 +224,20 @@ final class TimewebAppRuntime {
         if (!meetingsEnabled) throw StateError('Current meeting conversation is unavailable.');
         return TimewebMeetingChatFlow.open(client: client, session: session,
           lease: lease, journal: _meetingChatJournal, meetingId: meetingId);
+      })
+      .timeout(session.waitTimeout);
+
+  Future<TimewebMeetingArchiveFlow> openMeetingArchive(String meetingId) => session
+      .runAuthenticated((lease) {
+        if (!meetingsEnabled) throw StateError('Current meeting archive is unavailable.');
+        return TimewebMeetingArchiveFlow.open(client: client, session: session, lease: lease, meetingId: meetingId);
+      })
+      .timeout(session.waitTimeout);
+  Future<TimewebMeetingArchivePage> readMeetingArchive(String meetingId, {int limit = 30, TimewebMeetingArchiveCursor? cursor}) => session
+      .runAuthenticated((lease) async {
+        if (!meetingsEnabled) throw StateError('Current meeting archive is unavailable.');
+        final page = await client.readMeetingArchive(meetingId, limit: limit, cursor: cursor);
+        lease.requireCurrent(); page.requireCurrent(); return page.bindSessionGuard(lease.requireCurrent);
       })
       .timeout(session.waitTimeout);
 

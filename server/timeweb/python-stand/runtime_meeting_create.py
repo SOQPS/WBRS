@@ -66,13 +66,59 @@ def local_datetime(value):
     return value
 
 
+def member_archive_window(raw, revision, joined_at, now_stamp):
+    """Only the two reviewed server forms; no source/raw-origin guessing."""
+    if raw == {"origin": MEMBER_ORIGIN}:
+        return None
+    if type(raw) is not dict or set(raw) != {"origin", "archiveWindow"} or raw["origin"] != MEMBER_ORIGIN:
+        raise RuntimeUnavailable()
+    window = raw["archiveWindow"]
+    if type(window) is not dict or set(window) != {"throughSequence", "capturedAt", "operationId", "membershipRevision"}:
+        raise RuntimeUnavailable()
+    _integer(window["throughSequence"]); _integer(window["membershipRevision"]); _integer(revision)
+    if (not 1 <= window["membershipRevision"] <= revision or type(window["operationId"]) is not str
+            or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", window["operationId"]) is None):
+        raise RuntimeUnavailable()
+    captured = window["capturedAt"]
+    if type(captured) is not str or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z", captured) is None:
+        raise RuntimeUnavailable()
+    try:
+        parsed = datetime.strptime(captured, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        raise RuntimeUnavailable() from None
+    if parsed.year < 1 or type(joined_at) is not str or not joined_at <= captured <= now_stamp:
+        raise RuntimeUnavailable()
+    return window
+
+
 def native_origin_sql(alias, *, member=False):
     """Exact server-built flat forms; original typed imports and {} never match."""
     origin = MEMBER_ORIGIN if member else MEETING_ORIGIN
     raw = alias + ".legacy_raw"
-    parts = [f"JSON_TYPE({raw}) = 'OBJECT'", f"JSON_LENGTH({raw}) = {1 if member else 2}",
+    parts = [f"JSON_TYPE({raw}) = 'OBJECT'",
         f"JSON_TYPE(JSON_EXTRACT({raw}, '$.origin')) = 'STRING'",
         f"CAST(JSON_UNQUOTE(JSON_EXTRACT({raw}, '$.origin')) AS BINARY) = CAST('{origin}' AS BINARY)"]
+    if member:
+        window = f"JSON_EXTRACT({raw}, '$.archiveWindow')"
+        extract = lambda key: f"JSON_EXTRACT({window}, '$.{key}')"
+        stamp = f"JSON_UNQUOTE({extract('capturedAt')})"
+        date_format = "'%%Y-%%m-%%dT%%H:%%i:%%s.%%fZ'"
+        bounds = [f"JSON_LENGTH({raw}) = 2", f"JSON_TYPE({window}) = 'OBJECT'", f"JSON_LENGTH({window}) = 4"]
+        for key, minimum, maximum in (("throughSequence", 0, str(2**63-1)), ("membershipRevision", 1, f"{alias}.membership_revision")):
+            value = extract(key)
+            bounds += [f"JSON_TYPE({value}) = 'INTEGER'", f"CAST(JSON_UNQUOTE({value}) AS DECIMAL(20,0)) BETWEEN {minimum} AND {maximum}"]
+        operation = extract('operationId')
+        bounds += [f"JSON_TYPE({operation}) = 'STRING'", f"OCTET_LENGTH(JSON_UNQUOTE({operation})) = 36",
+            f"REGEXP_LIKE(JSON_UNQUOTE({operation}), '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[1-8][0-9a-f]{{3}}-[89ab][0-9a-f]{{3}}-[0-9a-f]{{12}}$', 'c')",
+            f"JSON_TYPE({extract('capturedAt')}) = 'STRING'", f"OCTET_LENGTH({stamp}) = 27",
+            f"REGEXP_LIKE({stamp}, '^[0-9]{{4}}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9].[0-9]{{6}}Z$', 'c')",
+            f"SUBSTRING({stamp}, 20, 1) = '.'",
+            f"CAST(SUBSTRING({stamp}, 9, 2) AS UNSIGNED) <= DAYOFMONTH(LAST_DAY(CONCAT(SUBSTRING({stamp}, 1, 7), '-01')))",
+            f"{alias}.joined_at IS NOT NULL", f"CAST({stamp} AS BINARY) >= CAST(DATE_FORMAT({alias}.joined_at, {date_format}) AS BINARY)",
+            f"CAST({stamp} AS BINARY) <= CAST(DATE_FORMAT(UTC_TIMESTAMP(6), {date_format}) AS BINARY)"]
+        parts.append(f"(JSON_LENGTH({raw}) = 1 OR (" + " AND ".join(bounds) + "))")
+    else:
+        parts.append(f"JSON_LENGTH({raw}) = 2")
     if not member:
         date = f"JSON_EXTRACT({raw}, '$.localDatetime')"
         parts += [f"JSON_TYPE({date}) = 'STRING'", f"OCTET_LENGTH(JSON_UNQUOTE({date})) = 16", f"{alias}.starts_at IS NULL"]
@@ -152,9 +198,12 @@ def _check(cursor, execute, uid, request, row, operation_id, *, readonly=False):
         member = cursor.fetchone()
         if (not isinstance(member, (tuple, list)) or len(member) != 6 or member[0] != uid
                 or member[1] is None or member[2] is not None or member[3] is not None
-                or _raw(member[5]) != {"origin": MEMBER_ORIGIN}):
+                or type(_raw(member[5])) is not dict):
             raise RuntimeUnavailable()
         _integer(member[4])
+        raw_member = _raw(member[5])
+        if raw_member != {"origin": MEMBER_ORIGIN}:
+            member_archive_window(raw_member, member[4], member[1], _stamp(cursor, execute))
     except _PersonalFailure:
         raise RuntimeUnavailable() from None
 

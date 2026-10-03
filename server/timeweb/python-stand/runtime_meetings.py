@@ -354,6 +354,10 @@ class RuntimeMeetingsService:
         from runtime_meeting_chat import read_messages
         return read_messages(self, identity, meeting_id, limit=limit, cursor=cursor, access_token=access_token)
 
+    def archived_messages(self, identity, meeting_id, *, limit=30, cursor=None, access_token):
+        from runtime_meeting_archive import read_archive
+        return read_archive(self, identity, meeting_id, limit=limit, cursor=cursor, access_token=access_token)
+
     def meetings(self, identity, *, access_token, scope="group", limit=30, cursor=None,
                  country_code=None, region=None):
         self._limit(limit)

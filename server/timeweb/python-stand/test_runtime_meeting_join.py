@@ -4,7 +4,7 @@ import json
 import unittest
 
 from runtime_http import RuntimeMutationHttp
-from runtime_meeting_create import MEETING_ORIGIN, MEMBER_ORIGIN, MeetingAccessRejected, _meeting_id
+from runtime_meeting_create import MEETING_ORIGIN, MEMBER_ORIGIN, MeetingAccessRejected, _meeting_id, member_archive_window
 from runtime_meeting_join import JOIN_OPERATION, RuntimeMeetingJoinService, validate_join
 from runtime_meetings import MEETING_FIELDS, MEMBER_FIELDS
 from runtime_mutations import (RuntimeMutationStore, RuntimeInvalidRequest, RuntimeUnavailable,
@@ -43,7 +43,12 @@ class JoinCursor(MeetingCursor):
             assert len(params) == 4 and params[0] == params[1] == MID and params[2] == params[3]
             row = state["meeting_members"].get((MID, params[2]))
             if row:
-                data = {**row, "trusted": int(row["legacy_raw"] == {"origin": MEMBER_ORIGIN})}
+                try:
+                    member_archive_window(row["legacy_raw"], row["membershipRevision"], row["joinedAt"], STAMP)
+                    trusted = True
+                except RuntimeUnavailable:
+                    trusted = False
+                data = {**row, "trusted": int(trusted)}
                 self.rows = [tuple(data[key] for key in MEMBER_FIELDS)]
         return len(self.rows)
 
